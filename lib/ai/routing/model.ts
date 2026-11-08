@@ -1,0 +1,322 @@
+import { createOpenAI } from "@ai-sdk/openai";
+import type {
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4StreamPart,
+  LanguageModelV4Usage,
+} from "@ai-sdk/provider";
+import { z } from "zod";
+import { LUNA, type PremiumModelId, premiumModels, TERRA } from "./catalog";
+import { inputTokenBound, reserveCost } from "./cost";
+import { failureKind, ModelFailure, mayFallback } from "./policy";
+import type { InferenceSession } from "./session";
+
+/** Official API only. No Gateway, web session, hosted tool or provider fallback. */
+export function createPremiumAdapter(
+  key: string,
+  model: PremiumModelId,
+  fetcher: typeof fetch = fetch
+): LanguageModelV4 {
+  return createOpenAI({
+    apiKey: key,
+    baseURL: "https://api.openai.com/v1",
+    fetch: fetcher,
+  }).responses(model);
+}
+
+/** One request shares its exposure/tool/fallback boundary across all SDK steps and artifacts. */
+export function createRoutedModel(
+  initial: PremiumModelId,
+  session: InferenceSession,
+  factory: (id: PremiumModelId) => LanguageModelV4
+): LanguageModelV4 {
+  function options(
+    model: PremiumModelId,
+    params: LanguageModelV4CallOptions
+  ): LanguageModelV4CallOptions {
+    const maxOutputTokens = Math.min(
+      params.maxOutputTokens ?? premiumModels[model].outputLimit,
+      premiumModels[model].outputLimit
+    );
+    return {
+      ...params,
+      maxOutputTokens,
+      providerOptions: {
+        openai: {
+          // Deliberately override arbitrary provider options; no paid hosted tools,
+          // persistence, premium tiers, 12h cache writes or unbounded reasoning.
+          reasoningEffort: model === LUNA ? "low" : "medium",
+          store: false,
+          serviceTier: "default",
+          parallelToolCalls: false,
+          promptCacheOptions: { mode: "implicit", ttl: "30m" },
+        },
+      },
+    };
+  }
+  function recordedOutcome(model: PremiumModelId, error: unknown) {
+    const failure = failureKind(error);
+    if (failure !== "transient" && failure !== "structured") {
+      return failure;
+    }
+    if (session.toolBoundary) {
+      return `${failure}_after_tool`;
+    }
+    if (session.exposed) {
+      return `${failure}_after_output`;
+    }
+    if (model === LUNA && !session.available.includes(TERRA)) {
+      return `${failure}_terra_unavailable`;
+    }
+    if (session.fallbackUsed) {
+      return `${failure}_fallback_used`;
+    }
+    return failure;
+  }
+  function next(
+    model: PremiumModelId,
+    error: unknown,
+    params: LanguageModelV4CallOptions
+  ) {
+    const failure = failureKind(error);
+    if (
+      model !== LUNA ||
+      !mayFallback({
+        failure,
+        exposed: session.exposed,
+        toolBoundary: session.toolBoundary,
+        used: session.fallbackUsed,
+        available: session.available.includes(TERRA),
+        cancelled: params.abortSignal?.aborted ?? false,
+      })
+    ) {
+      throw new ModelFailure(failure);
+    }
+    session.fallbackUsed = true;
+    return failure;
+  }
+  function reserve(
+    model: PremiumModelId,
+    params: LanguageModelV4CallOptions,
+    fallbackReason?: string
+  ) {
+    params.abortSignal?.throwIfAborted();
+    if (
+      inputTokenBound({
+        prompt: params.prompt,
+        tools: params.tools,
+        responseFormat: params.responseFormat,
+      }) > 272_000
+    ) {
+      throw new ModelFailure("context");
+    }
+    if (params.tools?.some((tool) => tool.type !== "function")) {
+      throw new ModelFailure("tool");
+    }
+    return session.ledger.reserve({
+      model,
+      reserveUsd: reserveCost(
+        model,
+        {
+          prompt: params.prompt,
+          tools: params.tools,
+          responseFormat: params.responseFormat,
+        },
+        params.maxOutputTokens ?? premiumModels[model].outputLimit
+      ),
+      fallbackReason,
+    });
+  }
+  function exposed(part: LanguageModelV4StreamPart) {
+    if (
+      part.type.startsWith("tool-") ||
+      part.type === "tool-call" ||
+      part.type === "tool-result"
+    ) {
+      session.toolBoundary = true;
+    }
+    if (
+      (part.type === "text-delta" || part.type === "reasoning-delta") &&
+      part.delta
+    ) {
+      session.exposed = true;
+    }
+  }
+  return {
+    specificationVersion: "v4",
+    provider: "openai.responses",
+    modelId: initial,
+    supportedUrls: {},
+    async doGenerate(params) {
+      let model = initial;
+      let reason: string | undefined;
+      for (;;) {
+        const opts = options(model, params);
+        const id = await reserve(model, opts, reason);
+        let usage: LanguageModelV4Usage | undefined;
+        try {
+          const result = await factory(model).doGenerate(opts);
+          usage = result.usage;
+          if (
+            params.responseFormat?.type === "json" &&
+            params.responseFormat.schema
+          ) {
+            try {
+              z.fromJSONSchema(params.responseFormat.schema).parse(
+                JSON.parse(
+                  result.structuredOutputText ??
+                    result.content
+                      .filter((p) => p.type === "text")
+                      .map((p) => p.text)
+                      .join("")
+                )
+              );
+            } catch {
+              throw new ModelFailure("structured");
+            }
+          }
+          await session.ledger.settle(id, model, "completed", usage);
+          session.exposed = true;
+          if (result.content.some((p) => p.type === "tool-call")) {
+            session.toolBoundary = true;
+          }
+          return result;
+        } catch (error) {
+          await session.ledger.settle(
+            id,
+            model,
+            recordedOutcome(model, error),
+            usage
+          );
+          reason = next(model, error, params);
+          model = TERRA;
+        }
+      }
+    },
+    doStream(params) {
+      let currentReader:
+        | ReadableStreamDefaultReader<LanguageModelV4StreamPart>
+        | undefined;
+      let cancelled = false;
+      return Promise.resolve({
+        stream: new ReadableStream<LanguageModelV4StreamPart>({
+          async start(controller) {
+            let model = initial;
+            let reason: string | undefined;
+            for (;;) {
+              const opts = options(model, params);
+              let id: string | undefined;
+              let usage: LanguageModelV4Usage | undefined;
+              try {
+                id = await reserve(model, opts, reason);
+                const result = await factory(model).doStream(opts);
+                currentReader = result.stream.getReader();
+                const structured =
+                  params.responseFormat?.type === "json" &&
+                  params.responseFormat.schema;
+                const held: LanguageModelV4StreamPart[] = [];
+                let text = "";
+                let finished = false;
+                while (!cancelled) {
+                  params.abortSignal?.throwIfAborted();
+                  const item = await currentReader.read();
+                  if (item.done) {
+                    break;
+                  }
+                  const part = item.value;
+                  if (part.type === "error") {
+                    throw part.error;
+                  }
+                  if (part.type === "finish") {
+                    usage = part.usage;
+                    finished = true;
+                  }
+                  if (structured) {
+                    held.push(part);
+                    if (part.type === "text-delta") {
+                      text += part.delta;
+                    }
+                    if (text.length > 100_000 || held.length > 20_000) {
+                      throw new ModelFailure("structured");
+                    }
+                    // Never buffer or replay a tool call in structured mode.
+                    if (part.type.startsWith("tool-")) {
+                      session.toolBoundary = true;
+                      throw new ModelFailure("tool");
+                    }
+                  } else if (
+                    !session.exposed &&
+                    !session.toolBoundary &&
+                    [
+                      "stream-start",
+                      "response-metadata",
+                      "text-start",
+                      "reasoning-start",
+                    ].includes(part.type)
+                  ) {
+                    held.push(part);
+                  } else {
+                    exposed(part);
+                    for (const h of held.splice(0)) {
+                      controller.enqueue(h);
+                    }
+                    controller.enqueue(part);
+                  }
+                }
+                if (cancelled) {
+                  throw new ModelFailure("cancelled");
+                }
+                if (!finished) {
+                  throw new ModelFailure("unavailable");
+                }
+                if (structured) {
+                  try {
+                    z.fromJSONSchema(structured).parse(JSON.parse(text));
+                  } catch {
+                    throw new ModelFailure("structured");
+                  }
+                  session.exposed = true;
+                }
+                await session.ledger.settle(id, model, "completed", usage);
+                for (const h of held) {
+                  controller.enqueue(h);
+                }
+                controller.close();
+                return;
+              } catch (error) {
+                await currentReader?.cancel().catch(() => {
+                  /* Preserve the original failure. */
+                });
+                if (id) {
+                  await session.ledger.settle(
+                    id,
+                    model,
+                    recordedOutcome(model, error),
+                    usage
+                  );
+                }
+                if (cancelled) {
+                  return;
+                }
+                try {
+                  reason = next(model, error, params);
+                  model = TERRA;
+                } catch (safeError) {
+                  controller.error(safeError);
+                  return;
+                }
+              } finally {
+                currentReader?.releaseLock();
+                currentReader = undefined;
+              }
+            }
+          },
+          async cancel() {
+            cancelled = true;
+            await currentReader?.cancel();
+          },
+        }),
+      });
+    },
+  };
+}

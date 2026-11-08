@@ -129,6 +129,16 @@ export function budgetModelMessages({
   if (latestUser >= 0) {
     keepFrom = Math.min(keepFrom, latestUser);
   }
+  while (keepFrom > 0) {
+    let previous = keepFrom - 1;
+    while (previous > 0 && messages[previous]?.role === "tool") {
+      previous -= 1;
+    }
+    if (total(messages.slice(previous)) > requestBudget) {
+      break;
+    }
+    keepFrom = previous;
+  }
   const recent = messages.slice(keepFrom);
   const older = messages.slice(0, keepFrom);
   const digest = createOlderContext(older);

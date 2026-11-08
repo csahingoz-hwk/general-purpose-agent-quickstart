@@ -1,12 +1,17 @@
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { verifyGroqModels } from "../lib/ai/groq-verification";
+import { legacyEnabled, openAIEnabled } from "../lib/ai/routing/catalog";
 
 async function main() {
-  const verification = await verifyGroqModels(process.env.GROQ_API_KEY);
+  const verification = await verifyGroqModels(
+    legacyEnabled() ? process.env.GROQ_API_KEY : undefined
+  );
   // Only non-secret verification metadata is inlined. The key stays server-only.
   console.log(
-    `Chat readiness: ${verification.status}; verified candidates: ${verification.modelIds.length}; check: ${verification.diagnostic ?? "ok"}`
+    legacyEnabled()
+      ? `Legacy readiness: ${verification.status}; verified candidates: ${verification.modelIds.length}; check: ${verification.diagnostic ?? "ok"}`
+      : `OpenAI integration: ${openAIEnabled() ? "configured (access untested)" : "disabled or missing credentials"}; build does not perform inference`
   );
   const result = spawnSync(
     process.execPath,

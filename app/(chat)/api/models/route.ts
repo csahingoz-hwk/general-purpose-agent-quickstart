@@ -16,7 +16,7 @@ export async function GET() {
       ...availability,
       capabilities,
       notice:
-        "Free-account limits apply. Availability can change when quotas are reached.",
+        "Configured models only. Account quotas and the spending allowance still apply.",
     },
     { headers: { "Cache-Control": "private, no-store" } }
   );

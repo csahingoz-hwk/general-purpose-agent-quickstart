@@ -1,4 +1,5 @@
 import { estimateModelTokens } from "./context/budget";
+import { openAIEnabled } from "./routing/catalog";
 
 /** Nested artifact calls must obey the same provider/privacy policy as chat. */
 export function artifactSettings(
@@ -6,13 +7,21 @@ export function artifactSettings(
   prompt: string,
   signal?: AbortSignal
 ) {
-  if (estimateModelTokens({ instructions, prompt }) + 768 + 350 > 3400) {
+  const premium = openAIEnabled();
+  const maxOutputTokens = premium ? 2048 : 768;
+  if (
+    estimateModelTokens({ instructions, prompt }) + maxOutputTokens + 350 >
+    (premium ? 32_768 : 3400)
+  ) {
     throw new Error("chat_context_budget");
   }
   return {
     instructions,
     prompt,
-    maxOutputTokens: 768,
+    maxOutputTokens,
+    onError: () => {
+      /* Ledger and UI handle safe errors; never log upstream request bodies. */
+    },
     maxRetries: 0,
     abortSignal: AbortSignal.any([
       AbortSignal.timeout(30_000),

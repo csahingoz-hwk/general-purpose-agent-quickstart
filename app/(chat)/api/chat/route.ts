@@ -28,10 +28,13 @@ import {
   replyForStorage,
   safeUIStream,
 } from "@/lib/ai/conversation-state";
-import { parseVerification } from "@/lib/ai/groq-verification";
+import { getRequestModelAvailability } from "@/lib/ai/model-runtime";
 import { chatModels, getCapabilities } from "@/lib/ai/models";
 import { systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
+import { isPremiumModel, premiumModels } from "@/lib/ai/routing/catalog";
+import { createUsageLedger } from "@/lib/ai/routing/ledger";
+import { inferenceSession } from "@/lib/ai/routing/session";
 import { cancelSchedule } from "@/lib/ai/tools/cancel-schedule";
 import { createDocument } from "@/lib/ai/tools/create-document";
 import { demoInbox } from "@/lib/ai/tools/demo-inbox";
@@ -130,13 +133,11 @@ export async function POST(request: Request) {
       return new ChatbotError("unauthorized:chat").toResponse();
     }
 
-    // The verified allowlist already exists in protected environment settings.
-    // Never make an 8-second live model-catalogue request on every chat turn.
-    const verified = parseVerification(process.env.VERIFIED_GROQ_MODELS);
-    if (!process.env.GROQ_API_KEY || verified.status !== "ready") {
+    const availability = await getRequestModelAvailability();
+    if (availability.status !== "ready") {
       return new ChatbotError("offline:model_setup").toResponse();
     }
-    if (!verified.modelIds.includes(selectedChatModel)) {
+    if (!availability.models.some((model) => model.id === selectedChatModel)) {
       return new ChatbotError("bad_request:api").toResponse();
     }
     const chatModel = selectedChatModel;
@@ -254,116 +255,133 @@ export async function POST(request: Request) {
     });
     // A single text step may use most of the budget; a tool call and a
     // follow-up must share a minute on Groq's limited free account.
-    const requestBudget = requestedTools.length > 0 ? 3400 : 7000;
+    const premium = isPremiumModel(chatModel) ? premiumModels[chatModel] : null;
+    const requestBudget =
+      premium?.inferenceBudget ?? (requestedTools.length > 0 ? 3400 : 7000);
+    const replyTokens = premium?.outputLimit ?? DEFAULT_REPLY_TOKENS;
+    const execution = {
+      ledger: createUsageLedger(session.user.id, message?.id ?? generateUUID()),
+      available: availability.models
+        .map((model) => model.id)
+        .filter(isPremiumModel),
+      exposed: false,
+      toolBoundary: false,
+      fallbackUsed: false,
+    };
 
     const stream = createUIMessageStream<ChatMessage>({
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
-      execute: async ({ writer: dataStream }) => {
-        const localTools = {
-          demoInbox,
-          getWeather,
-          createDocument: createDocument({
-            session,
-            dataStream,
-            modelId: chatModel,
-          }),
-          editDocument: editDocument({ dataStream, session }),
-          updateDocument: updateDocument({
-            session,
-            dataStream,
-            modelId: chatModel,
-          }),
-          requestSuggestions: requestSuggestions({
-            session,
-            dataStream,
-            modelId: chatModel,
-          }),
-          listMySchedules: listMySchedules({ session }),
-          cancelSchedule: cancelSchedule({ session }),
-          ...(session.user.type !== "guest"
-            ? { setSoul: setSoul({ userId: session.user.id }) }
-            : {}),
-        };
-
-        // Only reviewed local tools are available. External integrations stay disconnected.
-        const tools = localTools;
-        const activeTools = requestedTools.filter(
-          (name) => name in tools
-        ) as Array<keyof typeof tools>;
-        const toolSchemaTokens = await estimateToolSchemaTokens(
-          tools,
-          activeTools
-        );
-        const convertedMessages = await convertToModelMessages(
-          sanitizeToolCallIds(uiMessages),
-          { tools, ignoreIncompleteToolCalls: true }
-        );
-        const prepared = budgetModelMessages({
-          messages: convertedMessages,
-          system: replySystemPrompt,
-          toolCount: activeTools.length,
-          toolSchemaTokens,
-          maxOutputTokens: DEFAULT_REPLY_TOKENS,
-          requestBudget,
-        });
-        if (prepared.tooLarge) {
-          throw new Error("chat_context_budget");
-        }
-        const result = streamText({
-          model: getLanguageModel(chatModel),
-          instructions: replySystemPrompt,
-          messages: prepared.messages,
-          stopWhen: isStepCount(activeTools.length > 0 ? 2 : 1),
-          maxOutputTokens: DEFAULT_REPLY_TOKENS,
-          maxRetries: 0,
-          abortSignal: AbortSignal.any([
-            request.signal,
-            AbortSignal.timeout(50_000),
-          ]),
-          activeTools,
-          prepareStep: ({ messages: stepMessages }) => {
-            const next = budgetModelMessages({
-              messages: stepMessages,
-              system: replySystemPrompt,
-              toolCount: activeTools.length,
-              toolSchemaTokens,
-              maxOutputTokens: DEFAULT_REPLY_TOKENS,
-              requestBudget,
-            });
-            if (next.tooLarge) {
-              throw new Error("chat_context_budget");
-            }
-            return { messages: next.messages };
-          },
-          providerOptions: {
-            ...(modelConfig?.reasoningEffort && {
-              openai: { reasoningEffort: modelConfig.reasoningEffort },
+      execute: ({ writer: dataStream }) =>
+        inferenceSession.run(execution, async () => {
+          const localTools = {
+            demoInbox,
+            getWeather,
+            createDocument: createDocument({
+              session,
+              dataStream,
+              modelId: chatModel,
             }),
-          },
-          tools,
-          telemetry: {
-            isEnabled: isProductionEnvironment,
-            recordInputs: false,
-            recordOutputs: false,
-            functionId: "stream-text",
-          },
-        });
+            editDocument: editDocument({ dataStream, session }),
+            updateDocument: updateDocument({
+              session,
+              dataStream,
+              modelId: chatModel,
+            }),
+            requestSuggestions: requestSuggestions({
+              session,
+              dataStream,
+              modelId: chatModel,
+            }),
+            listMySchedules: listMySchedules({ session }),
+            cancelSchedule: cancelSchedule({ session }),
+            ...(session.user.type !== "guest"
+              ? { setSoul: setSoul({ userId: session.user.id }) }
+              : {}),
+          };
 
-        dataStream.merge(
-          toUIMessageStream<typeof tools, ChatMessage>({
-            stream: result.stream,
-            onEnd: ({ outcome }) => dataStream.setOutcome(outcome),
-            sendReasoning: false,
-            onError: (error) => safeModelError(error, finalUserText),
-          }).pipeThrough(safeUIStream(finalUserText))
-        );
+          // Only reviewed local tools are available. External integrations stay disconnected.
+          const tools = localTools;
+          const activeTools = requestedTools.filter(
+            (name) => name in tools
+          ) as Array<keyof typeof tools>;
+          const toolSchemaTokens = await estimateToolSchemaTokens(
+            tools,
+            activeTools
+          );
+          const convertedMessages = await convertToModelMessages(
+            sanitizeToolCallIds(uiMessages),
+            { tools, ignoreIncompleteToolCalls: true }
+          );
+          const prepared = budgetModelMessages({
+            messages: convertedMessages,
+            system: replySystemPrompt,
+            toolCount: activeTools.length,
+            toolSchemaTokens,
+            maxOutputTokens: replyTokens,
+            requestBudget,
+          });
+          if (prepared.tooLarge) {
+            throw new Error("chat_context_budget");
+          }
+          const result = streamText({
+            model: getLanguageModel(chatModel),
+            instructions: replySystemPrompt,
+            messages: prepared.messages,
+            stopWhen: isStepCount(activeTools.length > 0 ? 2 : 1),
+            maxOutputTokens: replyTokens,
+            maxRetries: 0,
+            // The SDK default logs raw upstream errors, including request content.
+            onError: () => {
+              /* Ledger and UI handle safe errors; never log upstream request bodies. */
+            },
+            abortSignal: AbortSignal.any([
+              request.signal,
+              AbortSignal.timeout(50_000),
+            ]),
+            activeTools,
+            prepareStep: ({ messages: stepMessages }) => {
+              const next = budgetModelMessages({
+                messages: stepMessages,
+                system: replySystemPrompt,
+                toolCount: activeTools.length,
+                toolSchemaTokens,
+                maxOutputTokens: replyTokens,
+                requestBudget,
+              });
+              if (next.tooLarge) {
+                throw new Error("chat_context_budget");
+              }
+              return { messages: next.messages };
+            },
+            providerOptions: {
+              ...(modelConfig?.reasoningEffort && {
+                openai: { reasoningEffort: modelConfig.reasoningEffort },
+              }),
+            },
+            tools,
+            telemetry: {
+              isEnabled: isProductionEnvironment,
+              recordInputs: false,
+              recordOutputs: false,
+              functionId: "stream-text",
+            },
+          });
 
-        if (titlePromise) {
-          const title = await titlePromise;
-          dataStream.write({ type: "data-chat-title", data: title });
-          await updateChatTitleById({ chatId: id, title });
-        }
-      },
+          dataStream.merge(
+            toUIMessageStream<typeof tools, ChatMessage>({
+              stream: result.stream,
+              onEnd: ({ outcome }) => dataStream.setOutcome(outcome),
+              sendReasoning: false,
+              onError: (error) => safeModelError(error, finalUserText),
+            }).pipeThrough(safeUIStream(finalUserText))
+          );
+
+          if (titlePromise) {
+            const title = await titlePromise;
+            dataStream.write({ type: "data-chat-title", data: title });
+            await updateChatTitleById({ chatId: id, title });
+          }
+        }),
       generateId: () => replacementReplyId ?? generateUUID(),
       onEnd: async ({ responseMessage, outcome, isAborted, isCancelled }) => {
         try {

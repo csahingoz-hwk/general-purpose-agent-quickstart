@@ -7,6 +7,10 @@ import postgres from "postgres";
 import { acquireChatLock } from "../lib/db/chat-lock";
 import type { ChatMessage } from "../lib/types";
 
+const premiumTest = process.env.SDK7_PROVIDER === "openai";
+const everydayId = premiumTest ? "gpt-6-luna" : "openai/gpt-oss-20b";
+const detailedId = premiumTest ? "gpt-6.1-terra" : "openai/gpt-oss-120b";
+
 const origin = "http://localhost:3101";
 const userId = "97a9a7c5-e220-425d-9589-7e63b607ca75";
 const secret = "synthetic-readiness-ui-secret-with-at-least-32-characters";
@@ -98,7 +102,7 @@ test("real local chat routes: both models, bilingual streaming, weather, interac
       );
       assert.equal(
         submitted.selectedChatModel,
-        name === "Everyday chat" ? "openai/gpt-oss-20b" : "openai/gpt-oss-120b"
+        name === "Everyday chat" ? everydayId : detailedId
       );
       await expect(page.getByTestId("message-assistant").last()).toContainText(
         "English reply"
@@ -187,13 +191,14 @@ test("real local chat routes: both models, bilingual streaming, weather, interac
       await page.waitForURL(chatUrl);
       await expect(page.getByTestId("fictional-inbox-card")).toBeVisible();
       const artifactId = crypto.randomUUID();
+      const artifactMessageId = crypto.randomUUID();
       const artifactResponse = await context.request.post(
         `${origin}/api/chat`,
         {
           data: {
             id: artifactId,
             message: {
-              id: crypto.randomUUID(),
+              id: artifactMessageId,
               role: "user",
               parts: [
                 {
@@ -203,9 +208,7 @@ test("real local chat routes: both models, bilingual streaming, weather, interac
               ],
             },
             selectedChatModel:
-              name === "Everyday chat"
-                ? "openai/gpt-oss-20b"
-                : "openai/gpt-oss-120b",
+              name === "Everyday chat" ? everydayId : detailedId,
             selectedVisibilityType: "private",
           },
         }
@@ -225,6 +228,12 @@ test("real local chat routes: both models, bilingual streaming, weather, interac
       try {
         const docs =
           await sql`select content from "Document" where title='Synthetic artifact' and "userId"=${userId}`;
+        if (premiumTest) {
+          const invocations =
+            await sql`select "model", "usageReported" from "ModelUsage" where "requestId"=${artifactMessageId}`;
+          assert.equal(invocations.length, 3); // Tool plan + nested artifact + follow-up.
+          assert.ok(invocations.every((call) => call.usageReported));
+        }
         assert.ok(docs.length > 0);
         assert.ok(
           docs.every((doc) => doc.content === "A complete synthetic artifact.")
@@ -242,15 +251,12 @@ test("real local chat routes: both models, bilingual streaming, weather, interac
       .map((line) => JSON.parse(line));
     assert.ok(
       rows.some(
-        (r) =>
-          r.model === "openai/gpt-oss-20b" && r.prompt.includes("Please answer")
+        (r) => r.model === everydayId && r.prompt.includes("Please answer")
       )
     );
     assert.ok(
       rows.some(
-        (r) =>
-          r.model === "openai/gpt-oss-120b" &&
-          r.prompt.includes("Please answer")
+        (r) => r.model === detailedId && r.prompt.includes("Please answer")
       )
     );
     assert.ok(
@@ -342,7 +348,7 @@ test("real local retry recovers one persisted turn; repeated and simultaneous re
     const data = {
       id: chatId,
       message,
-      selectedChatModel: "openai/gpt-oss-20b",
+      selectedChatModel: everydayId,
       selectedVisibilityType: "private",
     };
     const results = await Promise.all([

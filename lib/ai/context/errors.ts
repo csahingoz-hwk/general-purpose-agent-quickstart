@@ -41,8 +41,48 @@ export function isTurkishMessage(text: string): boolean {
 }
 
 export function safeModelError(error: unknown, userText: string): string {
-  const code = classifyModelError(error);
+  const raw =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
   const tr = isTurkishMessage(userText);
+  if (
+    /model_(billing|spend)|spend_configuration|spending allowance or account credit limit|Kullanım bütçesi veya hesap kredisi/.test(
+      raw
+    )
+  ) {
+    return tr
+      ? "Kullanım bütçesi veya hesap kredisi sınırına ulaşıldı. Sohbetin kayıtlı; kapasite yeniden açıldığında buradan devam edebilirsin."
+      : "The spending allowance or account credit limit has been reached. Your conversation is saved; you can continue here when capacity is available.";
+  }
+  if (
+    /model_auth|account connection needs attention|Sohbet bağlantısının hesap ayarları/.test(
+      raw
+    )
+  ) {
+    return tr
+      ? "Sohbet bağlantısının hesap ayarları kontrol edilmeli. Mesajın kayıtlı."
+      : "Chat's account connection needs attention. Your message is saved.";
+  }
+  if (
+    /model_context|needs a shorter context|Bu istek mevcut bağlama/.test(raw)
+  ) {
+    return tr
+      ? "Bu istek mevcut bağlama sığmıyor. Sohbetin kayıtlı; daha kısa bir istekle devam edebilirsin."
+      : "This request needs a shorter context. Your conversation is saved; try a smaller request.";
+  }
+  if (
+    /model_rate|account.s current rate limit|Hesabın şu anki kullanım sınırına/.test(
+      raw
+    )
+  ) {
+    return tr
+      ? "Hesabın şu anki kullanım sınırına ulaşıldı. Biraz sonra aynı sohbetten yeniden deneyebilirsin."
+      : "The account's current rate limit was reached. Please retry in this conversation shortly.";
+  }
+  const code = classifyModelError(error);
   if (code === "size") {
     return tr
       ? "Sohbet bu modelin geçerli istek sınırını aştı. Daha kısa bir istek deneyebilir veya mevcut sohbetten devam edebilirsiniz. Ücretli modele geçilmedi."
