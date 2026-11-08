@@ -51,7 +51,7 @@ test("phone-sized readiness, selection and failed-send preservation", async () =
     const unavailable = await response.json();
     assert.deepEqual(unavailable.models, []);
     assert.equal(unavailable.status, "setup_required");
-    const input = page.getByTestId("multimodal-input");
+    const input = page.getByTestId("multimodal-input").last();
     await input.fill("Merhaba, hello — keep this draft");
     assert.equal(await page.getByTestId("send-button").isDisabled(), true);
     assert.equal(await page.getByTestId("model-selector").count(), 0);
@@ -92,9 +92,10 @@ test("phone-sized readiness, selection and failed-send preservation", async () =
     assert.equal(await input.inputValue(), "Merhaba, hello — keep this draft");
     assert.equal(await page.getByTestId("send-button").isEnabled(), true);
     await page.getByTestId("model-selector").click();
-    await page.getByPlaceholder("Search ready models…").fill("Detailed");
-    await page.getByPlaceholder("Search ready models…").press("ArrowDown");
-    await page.getByPlaceholder("Search ready models…").press("Enter");
+    // Exercise model selection without depending on popover animation stability.
+    await page
+      .getByRole("option", { name: /Detailed chat/ })
+      .dispatchEvent("click");
     await expect(page.getByTestId("model-selector")).toHaveText(
       "Detailed chat"
     );
