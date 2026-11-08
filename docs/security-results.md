@@ -1,5 +1,11 @@
 # Security milestone handoff
 
+> Current-state note (8 November 2026): this report retains the chronology of
+> earlier security work. Google identity settings were subsequently configured and
+> the client ID corrected; the latest matching security preview is READY. Real
+> owner sign-in and conversation persistence still need acceptance. Read
+> [CURRENT_STATE.md](CURRENT_STATE.md) for current evidence and remaining gates.
+
 Branch: `security/owner-only-hardening`.
 
 ## Results
