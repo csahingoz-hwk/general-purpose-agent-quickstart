@@ -24,6 +24,21 @@ export function createPremiumAdapter(
   }).responses(model);
 }
 
+/** Preserve the strict Responses interface while using AI Gateway OIDC billing.
+ * Only verified OpenAI provider/model IDs are sent upstream.
+ */
+export function createGatewayAdapter(
+  token: string,
+  model: PremiumModelId,
+  fetcher: typeof fetch = fetch
+): LanguageModelV4 {
+  return createOpenAI({
+    apiKey: token,
+    baseURL: "https://ai-gateway.vercel.sh/v1",
+    fetch: fetcher,
+  }).responses(`openai/${model}`);
+}
+
 /** One request shares its exposure/tool/fallback boundary across all SDK steps and artifacts. */
 export function createRoutedModel(
   initial: PremiumModelId,
