@@ -237,15 +237,15 @@ const PurePreviewMessage = ({
       // (ToolInput/JSON) while the model or the weather API is still working.
       return (
         <div
-          aria-label="Loading weather forecast"
           className={`${widthClass} space-y-3 rounded-2xl border border-border bg-muted/40 p-4`}
           key={toolCallId}
-          role="status"
         >
+          <output aria-label="Loading weather forecast" className="sr-only">
+            Preparing your weather card…
+          </output>
           <div className="h-3 w-28 animate-pulse rounded-full bg-muted-foreground/20 motion-reduce:animate-none" />
           <div className="h-8 w-24 animate-pulse rounded-lg bg-muted-foreground/20 motion-reduce:animate-none" />
           <div className="h-12 w-full animate-pulse rounded-xl bg-muted-foreground/10 motion-reduce:animate-none" />
-          <span className="sr-only">Preparing your weather card…</span>
         </div>
       );
     }
