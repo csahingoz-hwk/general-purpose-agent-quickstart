@@ -138,6 +138,9 @@ test("real local chat routes: both models, bilingual streaming, weather, interac
         .fill("Please show a fictional inbox demo chart.");
       await page.getByTestId("send-button").last().click();
       await expect(page.getByTestId("fictional-inbox-card")).toBeVisible();
+      // The card arrives in the tool step before its prose follow-up. Finish
+      // that existing model work before measuring calls caused by the slider.
+      await expect(page.getByTestId("stop-button")).toHaveCount(0);
       const callsBefore = readFileSync("/tmp/sdk7-provider-calls.jsonl", "utf8")
         .trim()
         .split("\n").length;
