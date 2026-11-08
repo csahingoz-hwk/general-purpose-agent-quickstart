@@ -389,9 +389,11 @@ test("pending weather tool displays a loading card instead of raw arguments", as
       })
     );
     await page.goto(`${origin}/chat/${chatId}`);
-    await expect(page.getByRole("status", {
-      name: "Loading weather forecast",
-    })).toBeVisible();
+    await expect(
+      page.getByRole("status", {
+        name: "Loading weather forecast",
+      })
+    ).toHaveCount(1);
     await expect(page.getByText("synthetic-weather-pending")).toHaveCount(0);
     await expect(page.locator("pre")).toHaveCount(0);
     await expect(page.getByText('"latitude"')).toHaveCount(0);
