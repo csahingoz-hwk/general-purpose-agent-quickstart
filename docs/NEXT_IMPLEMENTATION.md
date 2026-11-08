@@ -5,12 +5,12 @@ Phase 0 acceptance and a focused Phase 1 task must precede implementation.
 
 ## Phase 0 blocker before this proposal
 
-The first real chat attempt is blocked by AI Gateway payment verification. The
-owner requires usable models, preferably free, to be configured before normal
-chat—not activation prompts or an unverified catalogue. The smallest next coding
-task is therefore the focused text-chat readiness proposal in
-[MODEL_ACCESS.md](MODEL_ACCESS.md). No rich UI implementation begins until that
-blocker and Phase 0 acceptance are resolved.
+The earlier Gateway activation blocker is addressed by direct Groq and verified
+model readiness in draft security PR #1. Both candidates passed bounded cloud
+inference. The smallest next step is real-owner streamed reply and reload
+persistence acceptance on the security preview, followed by the remaining security
+checks. See [MODEL_ACCESS.md](MODEL_ACCESS.md). No rich UI implementation begins
+until Phase 0 acceptance is resolved.
 
 ## Immediate next action: close the security gate
 

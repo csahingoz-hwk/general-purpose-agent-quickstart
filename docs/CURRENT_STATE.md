@@ -1,256 +1,139 @@
 # Current Project State — verified 8 November 2026
 
-This is the shared handoff for future tasks. It combines the supplied context
-snapshot with inspection of code, GitHub and Vercel on this date. Aspirations in
-[PRODUCT_VISION.md](PRODUCT_VISION.md) are not implemented features. Update this
-file after each milestone and refresh live facts at the next task; never copy
-owner identity values, secrets, mail contents or connection strings into it.
+Read AGENTS.md, PRODUCT_VISION.md, ROADMAP.md and this file at each task start.
+This is the current handoff, not a list of implemented product aspirations.
+Earlier investigation/setup evidence is retained below and in Git history.
+Never copy identity values, keys, connection strings or private chat/mail into it.
 
 ## Current decision
 
-**Phase 0 is implemented on a feature branch, but acceptance is still pending.**
-Do not begin later implementation phases, merge PR #1, promote production or
-activate Gmail send as part of this documentation task. The next action is the
-model-readiness correction and review of a genuine free-tier text backend. The
-owner has rejected payment/provider activation as part of normal chat. The chat
-is accessible after sign-in, but the first reply test is blocked by the current
-AI Gateway verification requirement. Do not activate billing, purchase credits
-or silently replace the provider. See [MODEL_ACCESS.md](MODEL_ACCESS.md).
-The smallest subsequent implementation proposal is described in
-[NEXT_IMPLEMENTATION.md](NEXT_IMPLEMENTATION.md).
+**Phase 0 remains open for owner acceptance.** Google sign-in works according to
+the owner and their iPhone chat screenshot. The first reply previously triggered
+Gateway payment activation. The owner rejected this and authorized a free-first
+Groq setup. That correction is now implemented in draft PR #1, with both exact
+Groq candidates returning live synthetic greetings during its Vercel build.
 
-## Repository, branches and review
+Next: owner sends a bilingual greeting, refreshes the conversation and confirms
+both turns persist; then validates the optional second model and remaining
+security checks. Do not begin rich UI/voice/Gmail/schedules, merge either PR,
+promote production, activate billing or connect Gmail as an automatic next step.
 
-- Repository: `csahingoz-hwk/general-purpose-agent-quickstart`; default `main`;
-  upstream Composio quickstart with Vercel Chatbot foundation. Personal,
-  noncommercial use only; no corporate data/inbox integrations.
-- [Security PR #1](https://github.com/csahingoz-hwk/general-purpose-agent-quickstart/pull/1):
-  **open, draft, unmerged**, base `main`, head `security/owner-only-hardening`.
-  Inspected head: `ed90b3a04b1be7a981f53692a5567895e835b8d7`.
-- Security code is not on main. The long-term vision must not bypass or replace it.
-- [Documentation PR #2](https://github.com/csahingoz-hwk/general-purpose-agent-quickstart/pull/2):
-  `docs/product-direction`, based on that security head, open in draft.
-  It targets `security/owner-only-hardening` so the review shows documentation
-  only. This is a stacked documentation change, not a merge of the security PR.
-  Do not retarget/merge either PR automatically.
-- The supplied documents were initially imported verbatim. AGENTS.md now includes
-  the owner requirement for plain-language, step-by-step guidance and an explicit
-  next action in every update. PRODUCT_VISION.md and ROADMAP.md include the owner
-  requirement for free-first, verified model availability;
-  this current-state file replaces the supplied initial snapshot with checked facts.
-  Existing security documentation and application code are preserved. The security
-  report gets an additive note pointing readers to this newer handoff.
+## Branches and review
 
-## Verified deployment and configuration
+- [PR #1](https://github.com/csahingoz-hwk/general-purpose-agent-quickstart/pull/1):
+  `security/owner-only-hardening` → `main`, draft/unmerged. Runtime head
+  `22392142cff422b1cc8dca8600c0cb3753bc19cc` includes direct Groq/readiness.
+- [PR #2](https://github.com/csahingoz-hwk/general-purpose-agent-quickstart/pull/2):
+  `docs/product-direction` → security branch, draft/unmerged. Supplied AGENTS,
+  vision, roadmap and current state incorporated and extended without replacing
+  the security implementation. Security branch synchronized into the docs branch
+  so its review diff remains documentation-only. This is not a merge into main.
+- [Security results](security-results.md), [hardening](security-hardening.md),
+  [Google setup](google-sign-in-setup.md), [model policy](MODEL_ACCESS.md),
+  [runtime readiness](free-chat-readiness.md), [next proposal](NEXT_IMPLEMENTATION.md).
 
-- Existing Vercel project: `general-purpose-agent-quickstart`; existing Neon
-  PostgreSQL database and Auth.js/cron configuration retained.
-- Corrected security preview deployment:
-  `dpl_HqvCNiiDw9Mwc2kgNaJ93DUoB6q4`, **READY**, matching the inspected security
-  head above, preview target (not production).
-- Stable [security preview login](https://general-purpose-agent-quickstart-git-secu-1658d1-csahingoz-3779.vercel.app/login).
-  [Immutable deployment](https://general-purpose-agent-quickstart-he8u1o6y9-csahingoz-3779.vercel.app).
-- Vercel Deployment Protection remains enabled, reported as
-  `all_except_custom_domains`. This must not be mistaken for proof that every
-  production/custom domain is protected; current checks target the preview.
-- Earlier metadata checks confirmed server-only owner and Google identity settings
-  scoped to the security preview. Values are not recorded here. Existing
-  AUTH_SECRET, CRON_SECRET and database variables are retained. No settings were
-  changed or secrets read in this documentation task.
-- An earlier Google `invalid_client` error prompted correction of the confirmed
-  client ID without a URL scheme. The prior public authorization check reached
-  Google's normal sign-in page without client/redirect errors. That is evidence
-  of initiation only, not a successful OAuth callback or owner session.
-- Production is an older release and was not promoted or tested as the new
-  security release. No assertion of production hardening is made.
+## Cloud and credentials
 
-## Implemented foundation and actual gaps
+- Existing Vercel project `general-purpose-agent-quickstart`, Neon PostgreSQL,
+  AUTH_SECRET and CRON_SECRET retained. No schema/dependency change in the new
+  readiness slice. Vercel's existing migration step completed in the new build.
+- New security preview `dpl_7Yhv628KZp8DdTygmQFxbaXGmEza`, commit `2239214`.
+  Build verification: `Chat readiness: ready; verified candidates: 2; check: ok`.
+  Deployment is **READY**, with the stable security alias assigned; this is a
+  Preview deployment, not production.
+- Stable [security preview](https://general-purpose-agent-quickstart-git-secu-1658d1-csahingoz-3779.vercel.app).
+  [Immutable new preview](https://general-purpose-agent-quickstart-i9fkmkmxl-csahingoz-3779.vercel.app).
+  The preceding working Google preview was `dpl_HqvCNiiDw9Mwc2kgNaJ93DUoB6q4`
+  at `ed90b3a`; it was READY.
+- Deployment Protection remains enabled (`all_except_custom_domains` at the prior
+  inspection). Do not mistake preview protection for proof that an older
+  production/custom-domain release is secure. No production release was made.
+- Owner/Google settings are server-side and branch-scoped. Google invalid_client
+  was fixed by correcting the active public client ID without a URL scheme,
+  preserving the secret. The owner reports successful sign-in; screenshots show
+  identity-only consent and the chat. Google login grants no Gmail access.
+- The owner saved `GROQ_API_KEY` privately in Vercel. Its metadata initially showed
+  Production-only; scope was corrected to Preview on the security branch,
+  preserving the value without reading/decrypting it. No other secret changed.
+- Groq account screenshot showed zero usage and an Upgrade to Dev Plan option;
+  the owner reports enabling Inference APIs ZDR. No billing/retention API proof,
+  payment method or upgrade was added. Global ZDR/storage controls were untouched.
+- An earlier OAuth secret appeared in a screenshot. Replacement was requested and
+  the owner reported completion. Revocation is not independently verified; never
+  copy or restore that secret.
 
-| Area | What code currently does | What is not established |
+## Implemented versus remaining
+
+| Area | Implemented | Remaining |
 | --- | --- | --- |
-| Identity | Auth.js Google OIDC with identity-only scopes; verified email must match server-only owner setting; first owner login can create/reuse a database user ID. PKCE/state/nonce, JWT/session and request ownership checks are present. | The owner reports Google sign-in works and a subsequent iPhone screenshot shows the chat/model picker. Longer-lived session behavior and stable database identity remain unverified. Apple and app-native passkeys are not implemented. |
-| Chat and models | AI SDK **6.0.116**, Next.js 16.4.5, Auth.js beta.32; model selection, streaming and existing Neon chat/message storage are retained. | The first owner reply attempt shows an AI Gateway activation dialog; streaming, model switching and reload persistence remain unconfirmed. A model appearing in the menu does not establish funded/provider access. |
-| Integrations | Broad Composio/Supermemory loading removed; no Gmail OAuth/read/send implementation. Guest, public signup and password sign-in disabled. | Google identity login grants no Gmail access. No real email capability is claimed. |
-| Scheduled work | Cron requires a configured matching bearer secret and then returns disabled; Vercel cron declaration removed; schedule creation and Telegram execution disabled. Owner list/delete code remains. | No cloud recurring execution. Existing cron utilities/rows are not a working scheduler. |
-| Memory | Chat history and a per-user soul/profile prompt with editor/tool remain in code. | No validated general long-term memory/retrieval system. The paid memory demo is disabled. |
-| Rich UI | Existing text/tool/document artifact rendering and JSON message-parts storage provide reuse points. | No Open Intelligent UI/json-render integration or durable interactive answer contract. |
-| Voice, PWA and sandbox | iPhone Home Screen use is owner-reported. Client-side Python document artifacts remain. | No implemented realtime voice, validated polished/offline PWA, or isolated server sandbox. No dedicated manifest/service-worker source was found in this inspection. |
+| Identity | Owner-only Google verified email, server-configured owner; identity-only scopes, PKCE/state/nonce, stable existing-schema account linking; no guest/signup/password login. | Longer session, stable account/history and a real non-owner callback need acceptance. Apple/app-native passkeys absent. |
+| Chat | Existing AI SDK 6.0.116, Next 16.4.5, Auth.js beta.32 and Neon message storage retained. Direct Groq: Everyday chat (20B) preferred, Detailed chat (120B) optional. Same adapter passed bounded live inference; server rejects other IDs. | Real owner streaming, second-model reply, database reload persistence, quality/tool use and real Safari remain unverified. |
+| Readiness/cost | Only successful build-verified candidates appear after current credential/catalogue checks; no Gateway activation, paid fallback or paid title call. Missing setup disables send; failed sends restore text. Zero retries, 2,048 output-token cap and three tool steps per generation. | Model-list success cannot establish remaining quota or billing tier; free-account limits may change. Quota failure must stop. Rebuild after key/verification changes. |
+| Integrations | Broad Composio/Supermemory loaders and SDKs removed. Google sign-in stores no provider token. Narrow document/profile tools retained. | No Gmail OAuth/read/draft/send or external integration is connected. |
+| Execution | Cron requires a configured matching secret and returns disabled; cron declaration, schedule creation and Telegram execution disabled. Owner list/delete remains. | No working cloud recurring execution or remote shell. |
+| Memory/UI | Chat and per-user soul/profile editor remain; existing artifact rendering/message parts retained. | General long-term memory, safe rich UI contract, realtime voice, polished/offline PWA and isolated sandbox absent. Home Screen use is owner-reported. |
 
-## Verification evidence
+## Fresh validation for readiness change
 
-### Rechecked for this documentation task
+- TypeScript and Biome (166 files): PASS.
+- Eleven security/readiness cases: PASS, including five original owner/guest/cron/
+  verified-Google tests and six no-key/auth/quota/empty-response/allowlist cases.
+- Credential-free local production build: PASS; migration skips without local DB
+  configuration. It exposes no model and makes no inference call without a key.
+- Phone-sized Chromium: PASS for no-key disabled send, preserved draft, ready
+  two-model fixture, friendly-name search/selection, phone width and failed-send
+  input restoration with no payment dialog. Synthetic owner/model/BotID/error
+  fixtures are local-only; this is not a real Google/Groq/Neon/Safari test.
+- Production audit: zero findings. Full audit: one low development-only deepmerge
+  advisory through Ultracite, GHSA-gcqx-w48m-w2h4, no patch reported; no moderate,
+  high or critical findings. Review remains required.
+- External loader/Gateway execution scan and diff check: PASS. No new package.
+- Cloud build: existing migrations completed; both candidates returned nonempty
+  synthetic bilingual greetings through the actual SDK adapter. At most two
+  128-token probes, no retries/private conversation. No tool-use benchmark.
+- [GitHub run 42496421765](https://github.com/csahingoz-hwk/general-purpose-agent-quickstart/actions/runs/42496421765)
+  covers this runtime head, including the new phone-sized browser check: **success**,
+  independently checked through GitHub metadata.
 
-- Inspected PR #1, source, security docs, five security cases and CI workflow.
-- Inspected the matching READY Vercel preview and Deployment Protection metadata.
-- Authenticated Vercel fetch: `/login` **200**, Google button enabled;
-  `/api/auth/providers` **200**, only `google`, callback matches the stable alias;
-  `/api/auth/guest` **403**.
-- TypeScript, lint, all five security tests and a credential-free local production
-  build: **PASS in this task**. The build migration step
-  skips because POSTGRES_URL is not present in this workspace.
-- Dependency audits: production has zero findings; the full audit has one low
-  development-only `deepmerge` advisory through Ultracite,
-  [GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4).
-  No patched release was reported; review remains required. No moderate/high/
-  critical findings were reported at this check.
+Earlier retained evidence: the preceding security workflow run 42479183230 passed;
+local HTTP/OAuth smoke checks covered login, registration, owner access guards,
+identity scopes/PKCE/state/nonce and disabled routes. Previous protected-preview
+fetches confirmed login 200, enabled Google button, Google-only providers with
+stable callback and guest 403. Expected app 401s were sometimes classified as
+Deployment Protection failures by the fetch tool; those deployed checks remain
+separate from local assertions.
 
-### Earlier evidence preserved, not presented as newly rerun
+## Outstanding Phase 0 acceptance
 
-- [GitHub security workflow run 42479183230](https://github.com/csahingoz-hwk/general-purpose-agent-quickstart/actions/runs/42479183230)
-  for the inspected security head: **success**, freshly checked via GitHub metadata.
-- Earlier local HTTP/OAuth initiation tests checked provider selection, identity
-  scopes, PKCE S256/state/nonce, callback URI and disabled access paths using
-  synthetic credentials. An earlier phone-sized Chromium check found no password
-  field or horizontal overflow. Chromium emulation is not real iPhone Safari.
-- Neon integration/migrations succeeded earlier in the project discussion. No
-  live database query, owner callback or mail operation was performed here.
+- [x] Owner reports Google sign-in works; iPhone screenshots show identity-only
+  consent and assistant chat. No Gmail permission granted.
+- [x] Saved private Groq key; both allowlisted candidates pass bounded cloud
+  inference. No provider/payment activation in normal-chat code.
+- [x] New security preview READY and GitHub CI successful. Fresh deployed checks:
+  login 200, Google-only providers with the stable callback, guest 403.
+- [ ] Real bilingual owner message streams a response with Everyday chat.
+- [ ] Reload/reopen preserves both turns; stable account ID and old history remain.
+- [ ] Detailed chat produces a reply and uses the selected model.
+- [ ] Signed-out chat/history/models denial confirmed on deployment after
+  accounting for Vercel Protection; real non-owner Google callback rejected.
+- [ ] Deployed cron auth/disabled response distinguished from Vercel protection;
+  local regression coverage already passes.
+- [ ] Review advisory/overrides, owner linking, exposed-secret revocation history
+  and preservation of existing data.
+- [ ] Owner explicitly reviews/accepts Phase 0. Merge and production promotion
+  each require separate approval; acceptance alone authorizes neither.
 
-## Owner acceptance update — 8 November 2026
+## Smallest next implementation and collaboration
 
-The owner reports that the latest Google sign-in fix worked. Their iPhone
-screenshot shows Google's consent screen requesting name/profile picture and
-email address only. This confirms progress beyond the earlier invalid-client
-error and agrees with the identity-only scope boundary. No Gmail permission is
-shown. The initial screenshot did not show the callback or assistant chat. A subsequent
-iPhone screenshot now shows the chat and its model picker after sign-in, providing
-owner-supplied evidence that the chat opens. Message streaming, a model switch and
-reload persistence still need confirmation. No new code, credentials or deployment settings were changed for
-this status update. Existing test/build results above remain prior evidence;
-they were not rerun for this documentation-only edit.
+Complete real-owner chat/reload acceptance first; no later feature coding yet.
+After Phase 0 passes and Phase 1 is requested, propose one fictional inbox answer
+with chart, threshold slider and cards; validate a versioned spec and persist
+selection using existing messages. Deterministic data, no Gmail, no extra model
+call per interaction. Compare Open Intelligent UI/json-render adapters against
+AI SDK 6 before choosing a dependency. See NEXT_IMPLEMENTATION.md.
 
-## Outstanding Phase 0 acceptance checklist
-
-- [x] Google recognizes the client and presents identity-only consent on iPhone;
-      the owner reports the sign-in fix worked.
-
-- [x] Owner reports Google sign-in works and supplies an iPhone screenshot showing
-      the assistant chat/model picker. This is owner-supplied acceptance evidence;
-      no independent session/database inspection was performed.
-- [ ] Send a short English/Turkish message; an available model streams a response.
-- [ ] Refresh/reopen the same conversation and confirm both turns remain. Confirm
-      the account ID is stable and any existing history remains attached.
-- [ ] Select another available model and confirm a reply uses that selection.
-- [ ] Verify signed-out chat/history/model access is denied after accounting for
-      Vercel Deployment Protection. Unit tests cover signed non-owner/guest
-      cookies; a real non-owner callback remains untested.
-- [ ] Distinguish deployed application 401s from Vercel protection: the fetch tool
-      previously classified expected history/cron 401s as protection failures.
-      Deployment-level cron authorization/disabled-response checks remain
-      unverified; local tests do cover them in all environments.
-- [ ] Review the low development advisory, dependency overrides, owner linking,
-      secret exposure/rotation history and preservation of existing data. A secret
-      appeared in a prior screenshot; replacement was requested and the owner
-      reported completion. Revocation of the exposed secret has not been
-      independently verified. Do not restore or copy that value.
-- [ ] Owner reviews PR #1 and explicitly accepts Phase 0. Any merge and production
-      deployment require their own explicit authorization; neither follows
-      automatically from test results or an acceptance check.
-
-## Usability feedback — model choice
-
-The owner finds the long model menu confusing during the first chat test. The
-screenshot appears to show Claude Sonnet 4.6 selected; keep that selection for the
-first reply test rather than making the owner compare providers. Record a future
-UX recommendation for a clear default and an optional advanced model picker, with
-plain-language capability/cost information. This is feedback, not authorization
-to change the current model list, pricing assumptions or phase order. No model
-quality or cost benchmark has been performed for this recommendation.
-
-## Current blocker — AI Gateway activation (8 November 2026)
-
-The earlier suggestion to open gateway activation is superseded by the owner
-requirement below: finish provider setup outside normal chat and prefer genuinely
-free-tier access. No payment activation is currently authorized.
-
-The owner's first chat attempt displayed "Activate AI Gateway". Source inspection
-of `components/chat/shell.tsx`, `app/(chat)/api/chat/route.ts` and `lib/errors.ts`
-shows this dialog handles the gateway payment-method requirement and opens Vercel's
-add-card screen. A targeted preview log query returned no matching records, so no
-specific runtime error/status was independently recovered from logs.
-
-Current official [getting-started documentation](https://vercel.com/docs/ai-gateway/getting-started)
-requires a valid payment method to use free credits. The
-[FAQ](https://vercel.com/docs/ai-gateway/faq) describes
-`customer_verification_required` for missing verification. Switching models does
-not bypass this account requirement. The
-[pricing documentation](https://vercel.com/docs/ai-gateway/pricing) says free
-credits cover a subset of models and purchased credits transition the account
-to the paid tier; auto top-up can charge the saved payment method. No free-credit
-amount, account balance, charge or supported free model is assumed here.
-
-The owner must review the activation/credits screen privately and approve the
-relevant billing action before any activation or purchase. Proposed initial path:
-use available free credits with an eligible model and leave automatic top-ups
-and optional paid add-ons disabled. This proposal is not yet approval. No payment
-method, credits, keys, budgets or service configuration was changed, and no live
-model request was made by the agent. No new code or tests were added. Only the
-documentation diff check was run for this status update; earlier build/test
-results remain earlier evidence. Phase 0 stays open until a real reply and
-persistence checks can complete.
-
-## Updated owner requirement — usable models and free-first setup
-
-The owner rejects a payment/provider activation step inside normal app chat and
-expects "Available" to mean actually usable, preferably free. Source inspection
-confirmed that the model picker labels a static curated list "Available" without
-checking account readiness. This is a Phase 0 gap, not a completed model feature.
-
-PRODUCT_VISION.md and ROADMAP.md now record the required behavior; MODEL_ACCESS.md
-contains the researched options, source links, boundaries and next focused PR
-proposal. Groq is a candidate with separate Free/paid tiers, but account setup,
-free eligibility, English/Turkish quality, tools and privacy still need validation.
-Gemini's selected free models are another option with data-use/region terms to
-review. No free provider or model has been connected, benchmarked or claimed live.
-No production changes, payments, model calls, dependencies or credentials were
-made for this requirements update. Documentation links and diff checks passed;
-application tests/build results above are prior evidence, not newly rerun.
-
-## Collaboration preference and immediate owner step
-
-The owner is not a developer and explicitly requires step-by-step guidance with
-one clear next action at the end of each response. This is now a standing AGENTS.md
-instruction. If no owner input is needed, say so and continue authorized work.
-
-The owner has opened Groq Console and supplied a dashboard screenshot showing
-zero token usage and an "Upgrade to Dev Plan" option. This is owner-provided
-account-access evidence, not a completed backend integration or independent
-verification of billing/quotas. No API key has been provided or connected.
-
-The owner reports enabling Inference APIs Zero Data Retention after the supplied
-Data Controls screenshot showed it disabled. This is owner-confirmed configuration,
-not an independent API inspection. Global ZDR and storage-feature toggles were
-not requested to change. No API key is yet connected to the app.
-
-The owner reports creating the `personal-assistant-preview` API key. Its value
-has not been shared, read or connected. The owner asked for a private entry box;
-no secure secret-input tool is available in this chat. Use Vercel's private
-Secret/Sensitive environment field instead of a chat response or screenshot.
-
-Next guided owner step: privately save `GROQ_API_KEY` in Vercel for Preview,
-scoped to `security/owner-only-hardening`, and report completion without revealing
-the value. Do not redeploy merely for this variable yet: the currently deployed
-code still uses Gateway and needs a reviewed free-provider/readiness change.
-Do not upgrade, add a payment method, enable Workspace/Gmail connectors or send
-private mail data. Free-account model testing remains pending. Vercel AI Gateway activation remains deferred. This status update
-changes documentation only; its diff check passed and runtime tests were not rerun.
-
-## Smallest next implementation and costs
-
-First implement and validate the bounded Phase 0 model-readiness correction in
-MODEL_ACCESS.md through a focused reviewed PR. After Phase 0 passes and the owner
-confirms Phase 1, make one separate PR for a
-fictional inbox report inside the existing chat: chart, threshold slider and cards,
-with a validated versioned spec and persisted selection. Use deterministic data,
-instant local filtering, no Gmail or extra model calls per interaction. Compare
-current Open Intelligent UI and json-render adapters against the existing AI SDK 6
-before selecting a dependency; no adapter was evaluated or added in this task.
-See NEXT_IMPLEMENTATION.md for the contract, alternatives and acceptance criteria.
-
-No new services, dependencies, paid infrastructure or model calls are introduced
-by these documents. Ordinary repository CI/preview automation may consume existing
-GitHub/Vercel allowances. Voice cost, scheduler pricing and any $15/month planning
-example remain unmeasured; no guaranteed budget or new billing is implied.
-
-Read AGENTS.md, PRODUCT_VISION.md, ROADMAP.md and this file at every task start.
-After each milestone, replace stale statuses here with evidence, PR/deployment
-links, actual tests, cost impact, remaining risks and the next bounded decision.
+The owner is not a developer. Give one clear next action with a link, clicks and
+expected result at the end of every response. Never request secrets in chat or
+screenshots. If work can proceed independently, say no action is needed and
+continue. Groq/CI/preview tests consume existing allowances; no guaranteed forever
+free plan or measured voice budget is claimed. Update this handoff after milestones.

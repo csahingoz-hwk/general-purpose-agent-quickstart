@@ -155,3 +155,10 @@ checks passed. No new dependency or schema change was required.
 Cloud inference verification and the owner's real chat/persistence checks are
 separate acceptance gates. No merge, production release, Gmail connection or
 scheduled execution follows automatically from these checks.
+
+Current cloud follow-up: runtime `2239214`, Vercel preview
+`dpl_7Yhv628KZp8DdTygmQFxbaXGmEza` is READY. Both Groq candidates returned
+nonempty synthetic greetings during its build. GitHub run `42496421765`
+succeeded, including the new browser check. Fresh protected-deployment fetches
+confirmed login 200, Google-only providers with the stable callback and guest
+403. Owner streaming/reload persistence and security acceptance remain pending.

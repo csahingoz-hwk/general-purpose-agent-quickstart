@@ -1,8 +1,11 @@
 # Model access and first-run readiness
 
 Decision recorded 8 November 2026 from owner feedback. This is the required
-behavior and next bounded Phase 0 proposal, not a claim that the running preview
-already implements it. No provider has been switched or activated by this document.
+behavior. The initial direct Groq/readiness implementation is now in security
+PR #1 at `2239214`; this documentation PR adds no runtime changes. Both candidate
+models returned nonempty synthetic greetings during the protected Vercel build.
+Real owner streaming, persistence and Phase 0 acceptance remain pending. See
+[free-chat-readiness.md](free-chat-readiness.md) for the implementation and limits.
 
 ## Product requirement
 
@@ -24,26 +27,30 @@ free credits are not unlimited access. Premium models must not be advertised as
 free. Exhausted free quota should produce a temporary-unavailable state, not an
 automatic upgrade, purchased credit, different unapproved backend or paid fallback.
 
-## What the current code does
+## Current implementation
 
-- `lib/ai/models.ts` contains a static curated list and a premium default.
-- `components/chat/multimodal-input.tsx` puts curated entries in an "Available"
-  group without an account-readiness check.
-- `/api/models` returns public model capabilities, not this account's billing or
-  quota eligibility. A tool/vision icon is not proof of access.
-- Both conversation replies and title generation use Vercel AI Gateway.
-- The chat handles missing gateway payment verification by opening an activation
-  dialog. That path conflicts with the required first-run experience.
+- Exact Groq candidates GPT OSS 20B and 120B are build-verified with the same
+  AI SDK Chat Completions adapter as chat, using bounded synthetic greetings.
+- Everyday chat is preferred; Detailed chat is optional. Only successful,
+  server-allowlisted models appear. The endpoint is owner-only and checks current
+  credentials/catalogue again; catalogue visibility alone never enables a model.
+- No Gateway activation dialog, premium fallback catalogue or separate paid title
+  call remains. Titles are local. Missing setup disables send and preserves input;
+  failed sends restore text; provider errors disclose no raw details.
+- Key scope is only the protected security Preview. No key was read or committed.
+  No package or schema was added. Existing owner, storage and integration barriers
+  remain. There is no automatic paid/provider fallback.
 
-These are inspected source facts. No model inference or real account credit
-balance was queried to establish them.
+The previous static catalogue and payment dialog are historical findings, now
+corrected on the feature branch. Account plan/retention evidence remains
+owner-supplied, and no quality, tool-use or real iPhone benchmark is claimed.
 
 ## Verified provider information and remaining choices
 
 | Path | Evidence checked on 8 November 2026 | Tradeoff and decision |
 | --- | --- | --- |
 | Existing Vercel AI Gateway | Official getting-started docs require a payment method even for free credits; pricing says free credits cover a subset of models. | Preserves current routing, but cannot satisfy a no-card path. Do not ask the owner to activate it from chat or silently buy credits. Keep optional use subject to an explicit cost decision. |
-| Direct Groq free tier | Official billing FAQs distinguish Free and paid Developer tiers; a payment method is required for the paid upgrade. Rate-limit docs specify 429 on exhaustion. | Strong candidate for an initial quota-limited free text backend. Confirm the actual account's Free status, setup/card requirements, available models and quota before promising it works without a card. A private server-side key and live validation are still needed. |
+| Direct Groq free tier | Official billing FAQs distinguish Free and paid Developer tiers; a payment method is required for the paid upgrade. Rate-limit docs specify 429 on exhaustion. | Strong candidate for an initial quota-limited free text backend. Confirm the actual account's Free status, setup/card requirements, available models and quota before promising it works without a card. The owner saved the private key; both candidates passed live synthetic inference. Account quotas can still expire. |
 | Direct Gemini free tier | Official pricing lists free access for selected models and free-tier content-improvement terms. | Another candidate, but model/region availability, exact account terms and data use require review. Do not select it for personal mail based on price alone. |
 
 Groq's data documentation says inference content is not retained by default, with
@@ -56,13 +63,12 @@ conclusion. No provider has been approved for Gmail by this comparison.
 English/Turkish quality, tool calling, streamed output and SDK compatibility have
 not been benchmarked here. Do not choose a model ID or add a provider dependency
 from memory. Discover models with the configured account and verify support for
-the existing AI SDK 6.0.116 before implementation. A real provider account or key
-is not accessible through this documentation task; no new secret should be sent
-in chat.
+the existing AI SDK 6.0.116 when evaluating future changes. Credentials remain private in Vercel; no secret should be sent in chat.
 
-## Smallest implementation proposal
+## Implementation acceptance criteria
 
-One focused follow-up PR should make existing text chat genuinely ready before
+The initial correction is part of draft security PR #1. Complete real-owner
+acceptance of text chat before
 returning to the rich-answer roadmap. Use the same Vercel/Neon/Auth.js application,
 not a second backend or a persistent VM.
 
@@ -103,9 +109,9 @@ flowchart LR
 
 Acceptance: free-account readiness verified, one real bilingual streamed reply,
 refresh persistence, selection restricted on the server, no activation popup,
-quota/credential failures handled, five existing security tests retained, and
+quota/credential failures handled, five existing security tests plus six readiness cases retained, and
 relevant TypeScript/lint/build/targeted UI tests pass. Actual iPhone validation
-remains required. This PR has not been implemented or approved for live activation.
+remains required. The implementation is preview-only; no production release is approved.
 
 ## Official sources
 
