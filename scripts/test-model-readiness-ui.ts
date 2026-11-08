@@ -92,8 +92,7 @@ test("phone-sized readiness, selection and failed-send preservation", async () =
     assert.equal(await input.inputValue(), "Merhaba, hello — keep this draft");
     assert.equal(await page.getByTestId("send-button").isEnabled(), true);
     await page.getByTestId("model-selector").click();
-    await page.getByPlaceholder("Search ready models…").fill("Detailed");
-    await page.getByText("Detailed chat", { exact: true }).last().click();
+    await page.getByRole("option", { name: /Detailed chat/ }).click();
     await expect(page.getByTestId("model-selector")).toHaveText(
       "Detailed chat"
     );
