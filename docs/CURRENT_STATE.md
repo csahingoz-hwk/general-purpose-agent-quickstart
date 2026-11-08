@@ -39,7 +39,7 @@ was added; Next/React/Auth.js and the database schema were not upgraded.
 - Fixed approval-part over-trust, previous-tool carry-over on explicit topic
   changes, underestimated schema costs and impossible artifact prompt budgets.
 - Bounded nested artifact calls, cancellation and validated suggestion elements;
-  prevent empty/failed artifact saves and raw tool/provider errors in UI/traces.
+  prevent empty/failed artifact saves, sanitize UI errors and restrict trace capture.
 - Added a credential-isolated local PostgreSQL/SDK/mobile integration harness
   and CI coverage. No production authentication/testing bypass exists.
 
@@ -66,6 +66,10 @@ was added; Next/React/Auth.js and the database schema were not upgraded.
 
 ## Protected-preview acceptance — blocked on setup/session
 
+Runtime commit **8c70ca6** passed [GitHub run 42523660161](https://github.com/csahingoz-hwk/general-purpose-agent-quickstart/actions/runs/42523660161), including all 34 regressions and both browser suites. Protected Preview **dpl_BBzCbpNUFCvGhNPyKQvkzikGeFCm** is READY:
+[stable SDK 7 preview](https://general-purpose-agent-quickstart-git-feat-53ce7e-csahingoz-3779.vercel.app). Build logs confirm Node 24.x from package engines overrides the existing project default 26.x; project settings were not changed. Existing migrations completed, with no new schema migration. Deployment Protection remains enabled (`all_except_custom_domains`). Fresh protected fetches: login 200, providers `{}`, guest 403. Build model readiness is `not_configured`, zero verified candidates, as expected without the branch key. This verifies fail-closed deployment, not live inference.
+
+
 Metadata inspection showed **no** branch-specific owner, Google or Groq settings
 for `feature/ai-sdk7-migration`. The existing four settings remain scoped only to
 `security/owner-only-hardening`. Their values were not decrypted, moved or logged.
@@ -76,7 +80,8 @@ The owner was asked to save private copies of APP_OWNER_EMAIL, AUTH_GOOGLE_ID,
 AUTH_GOOGLE_SECRET and GROQ_API_KEY for Preview on this branch. After saving,
 rebuild and check bounded live model verification, then validate an actual owner
 session. The stable SDK preview callback may need adding to the existing Google
-OAuth client's authorized redirects. Do not expose values or broaden all preview
+OAuth client's authorized redirects:
+`https://general-purpose-agent-quickstart-git-feat-53ce7e-csahingoz-3779.vercel.app/api/auth/callback/google`. Do not expose values or broaden all preview
 branches as a shortcut. The session currently has no connected owner browser or
 app login; deployment-tool access alone is not an Auth.js owner session.
 

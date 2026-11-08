@@ -78,6 +78,8 @@ builds with synthetic inference and starts port 3101. Never point tests at Neon.
 Screenshots/provider request captures contain synthetic data only.
 
 **These are local/CI integration tests, not real Groq or iPhone Safari proof.**
+Runtime 8c70ca6 passed GitHub CI run 42523660161; its protected Preview is READY
+with missing credentials correctly reported as not configured.
 Protected-preview deployment/CI IDs and live acceptance are tracked in
 [CURRENT_STATE.md](CURRENT_STATE.md). A READY preview without credentials is not
 acceptance. The SDK 7 branch initially had no owner/Google/Groq preview settings;
@@ -91,7 +93,9 @@ Keep the existing UIMessage parts and Neon chat as the shared conversation.
 The fictional inbox remains its current trusted React tool card, not a new OpenUI
 implementation. The planned renderer boundary stays independent of model routing
 and can consume versioned data parts; no second chat shell/localStorage history,
-renderer package or privileged UI action is added. Published react-lang peer
+renderer package or privileged UI action is added. The official OpenUI framework guide confirms the backend can be retained with
+a different chat UI; we inspected that guide and its UIMessage adapter example.
+Published react-lang peer
 ranges accept our React/Zod versions, but peers and the vendor's SDK integration
 example are not a tested renderer integration. Re-evaluate the actual adapter
 when implementing the proposed OpenUI/json-render spike.
