@@ -4,7 +4,8 @@ import {
   createUIMessageStream,
   createUIMessageStreamResponse,
   generateId,
-  stepCountIs,
+  isStepCount,
+  toUIMessageStream,
   streamText,
 } from "ai";
 import { checkBotId } from "botid/server";
@@ -299,7 +300,7 @@ export async function POST(request: Request) {
         );
         const prepared = budgetModelMessages({
           messages: convertedMessages,
-          system: replySystemPrompt,
+          instructions: replySystemPrompt,
           toolCount: activeTools.length,
           maxOutputTokens: DEFAULT_REPLY_TOKENS,
           requestBudget,
@@ -311,7 +312,7 @@ export async function POST(request: Request) {
           model: getLanguageModel(chatModel),
           system: replySystemPrompt,
           messages: prepared.messages,
-          stopWhen: stepCountIs(activeTools.length > 0 ? 2 : 1),
+          stopWhen: isStepCount(activeTools.length > 0 ? 2 : 1),
           maxOutputTokens: DEFAULT_REPLY_TOKENS,
           maxRetries: 0,
           activeTools,
@@ -334,14 +335,15 @@ export async function POST(request: Request) {
             }),
           },
           tools,
-          experimental_telemetry: {
+          telemetry: {
             isEnabled: isProductionEnvironment,
             functionId: "stream-text",
           },
         });
 
         dataStream.merge(
-          result.toUIMessageStream({
+          toUIMessageStream({
+            stream: result.stream,
             sendReasoning: false,
             onError: (error) => safeModelError(error, finalUserText),
           })
