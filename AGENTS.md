@@ -39,4 +39,13 @@ This repository is a **personal, noncommercial, cloud-hosted English/Turkish AI 
 
 ## Communication expectations
 
+The owner is not a developer. Handle technical work autonomously within the
+approved scope and guide owner-only account/setup tasks in plain language, one
+manageable step at a time. Always end user-facing updates with **Next action for
+you**, including the exact link, what to click and what result to report when
+input is needed. If work can continue independently, say **No action needed from
+you right now** and continue; do not invent a confirmation step. Keep code and
+provider terminology out of simple setup guidance. Ask for screenshots only
+where useful and never request secrets or visible payment details in chat.
+
 Explain the product rationale, not just a code diff. For complicated issues, provide an architecture diagram (Mermaid is fine), acceptance criteria, user-facing behaviour and security/cost tradeoffs. Treat `docs/PRODUCT_VISION.md` as the user's product aspirations, not as features already implemented. If asked to make the experience feel like sophisticated ChatGPT-style visual responses, design the data/tool/component contract and stateful interaction—not just markdown charts.

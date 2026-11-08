@@ -33,8 +33,9 @@ The smallest subsequent implementation proposal is described in
   It targets `security/owner-only-hardening` so the review shows documentation
   only. This is a stacked documentation change, not a merge of the security PR.
   Do not retarget/merge either PR automatically.
-- The supplied documents were initially imported verbatim; AGENTS.md remains
-  unchanged, while PRODUCT_VISION.md and ROADMAP.md now include the owner
+- The supplied documents were initially imported verbatim. AGENTS.md now includes
+  the owner requirement for plain-language, step-by-step guidance and an explicit
+  next action in every update. PRODUCT_VISION.md and ROADMAP.md include the owner
   requirement for free-first, verified model availability;
   this current-state file replaces the supplied initial snapshot with checked facts.
   Existing security documentation and application code are preserved. The security
@@ -203,6 +204,20 @@ review. No free provider or model has been connected, benchmarked or claimed liv
 No production changes, payments, model calls, dependencies or credentials were
 made for this requirements update. Documentation links and diff checks passed;
 application tests/build results above are prior evidence, not newly rerun.
+
+## Collaboration preference and immediate owner step
+
+The owner is not a developer and explicitly requires step-by-step guidance with
+one clear next action at the end of each response. This is now a standing AGENTS.md
+instruction. If no owner input is needed, say so and continue authorized work.
+
+Recommended next owner step for evaluating the free-first route: open Groq Console
+and create/sign in to a free account. Do not add a card or upgrade. Report when the
+dashboard is open; provider eligibility/data controls and private key setup follow
+as separate guided steps. This is not evidence that an account, key or integration
+already exists, and does not authorize paid usage or sending sensitive integration
+data. Vercel AI Gateway activation remains deferred. Only documentation changed
+for this preference update; its diff check passed. Runtime tests were not rerun.
 
 ## Smallest next implementation and costs
 
