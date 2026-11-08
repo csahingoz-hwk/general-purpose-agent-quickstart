@@ -26,7 +26,7 @@ export function FictionalInboxCard({
     !Array.isArray(result.messages)
   ) {
     return (
-      <p role="alert" className="text-sm text-muted-foreground">
+      <p className="text-sm text-muted-foreground" role="alert">
         Demo data could not be displayed.
       </p>
     );
@@ -65,7 +65,7 @@ export function FictionalInboxCard({
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-2" aria-live="polite">
+      <div aria-live="polite" className="grid grid-cols-2 gap-2">
         <div className="rounded-xl bg-muted/50 p-3">
           <p className="text-muted-foreground text-xs">
             {tr ? "Seçilen mesajlar" : "Matching messages"}
@@ -120,7 +120,10 @@ export function FictionalInboxCard({
           ).length;
           const percent = (count / Math.max(1, filtered.length)) * 100;
           return (
-            <div className="grid grid-cols-[80px_1fr_24px] items-center gap-2 text-xs" key={category}>
+            <div
+              className="grid grid-cols-[80px_1fr_24px] items-center gap-2 text-xs"
+              key={category}
+            >
               <span>{categoryLabels[category]}</span>
               <div
                 aria-label={`${categoryLabels[category]}: ${count}`}
@@ -142,7 +145,10 @@ export function FictionalInboxCard({
         <p className="font-medium text-sm">
           {tr ? "Örnek mesajlar" : "Sample messages"}
         </p>
-        <ul className="max-h-56 space-y-2 overflow-auto" data-testid="demo-inbox-messages">
+        <ul
+          className="max-h-56 space-y-2 overflow-auto"
+          data-testid="demo-inbox-messages"
+        >
           {filtered.map((message) => (
             <li
               className="rounded-lg border border-border/60 p-2 text-sm"
