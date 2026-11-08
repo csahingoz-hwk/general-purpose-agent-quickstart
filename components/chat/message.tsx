@@ -250,7 +250,7 @@ const PurePreviewMessage = ({
       );
     }
 
-        if (type === "tool-createDocument") {
+    if (type === "tool-createDocument") {
       const { toolCallId } = part;
 
       if (part.output && "error" in part.output) {
