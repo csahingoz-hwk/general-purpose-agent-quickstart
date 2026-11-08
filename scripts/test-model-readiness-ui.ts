@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { encode } from "next-auth/jwt";
+import { createFictionalInbox } from "../lib/ai/tools/demo-inbox";
 
 const origin = "http://localhost:3100";
 const owner = "owner@example.test";
@@ -227,6 +228,101 @@ test("mobile History reliably reopens persisted messages after full navigation a
     await page.getByText("Synthetic Turkish answer").waitFor();
     console.log(
       "PASS: mobile History opens and reloads a saved conversation with both turns"
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("fictional inbox stays visible in a saved chat and responds locally", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      reducedMotion: "reduce",
+    });
+    const token = await encode({
+      secret,
+      salt: "authjs.session-token",
+      token: { id: userId, email: owner, type: "regular" },
+    });
+    await context.addCookies([
+      { name: "authjs.session-token", value: token, url: origin },
+    ]);
+
+    const chatId = "5de66f3f-104e-43d6-a7bb-6bfbf61060d8";
+    const now = new Date().toISOString();
+    const page = await context.newPage();
+    await page.route("**/a-4-a/c.js*", (route) =>
+      route.fulfill({
+        contentType: "application/javascript",
+        body: "window.V_C.push({b:1,d:0});",
+      })
+    );
+    await page.route("**/api/history*", (route) =>
+      route.fulfill({ json: { chats: [], hasMore: false } })
+    );
+    await page.route("**/api/messages?*", (route) =>
+      route.fulfill({
+        json: {
+          messages: [
+            {
+              id: "af60c3ae-21d3-493d-a871-14caebd31234",
+              role: "user",
+              parts: [
+                {
+                  type: "text",
+                  text: "Hayalî gelen kutusu demosunu göster.",
+                },
+              ],
+              metadata: { createdAt: now },
+            },
+            {
+              id: "9acbbff2-6063-4b4f-994a-2135eafda917",
+              role: "assistant",
+              parts: [
+                {
+                  type: "tool-demoInbox",
+                  toolCallId: "synthetic-demo",
+                  state: "output-available",
+                  input: { language: "tr" },
+                  output: createFictionalInbox("tr"),
+                },
+              ],
+              metadata: { createdAt: now },
+            },
+          ],
+          visibility: "private",
+          userId,
+          isReadonly: false,
+        },
+      })
+    );
+
+    await page.goto(`${origin}/chat/${chatId}`);
+    const card = page.getByTestId("fictional-inbox-card");
+    await card.waitFor();
+    await expect(card).toContainText("Gmail hesabına erişilmedi.");
+    await expect(page.getByTestId("demo-inbox-count")).toHaveText("7");
+
+    const slider = page.getByTestId("demo-inbox-slider");
+    await slider.focus();
+    await slider.press("End");
+    await expect(page.getByTestId("demo-inbox-priority")).toHaveText("5 / 5");
+    await expect(page.getByTestId("demo-inbox-count")).toHaveText("2");
+
+    await page.getByRole("button", {
+      name: "Gönderilmeyen örnek yanıtı göster",
+    }).click();
+    await expect(page.getByTestId("demo-inbox-draft")).toContainText(
+      "gönderilmedi"
+    );
+
+    await page.reload();
+    await card.waitFor();
+    await expect(page.getByTestId("demo-inbox-count")).toHaveText("7");
+    console.log(
+      "PASS: fictional inbox chart renders, filters locally, never sends, and survives chat reload"
     );
   } finally {
     await browser.close();
