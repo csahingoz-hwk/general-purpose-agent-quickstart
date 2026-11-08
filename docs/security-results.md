@@ -20,10 +20,9 @@ Branch: `security/owner-only-hardening`.
 
 ## Delivery status
 
-Git push and GitHub connector branch creation both returned HTTP 403, including
-retries after the owner granted full access. No remote PR URL exists yet. The
-commit, patch and Git bundle preserve the cloud work for an authenticated session.
-A draft PR description is provided in `docs/draft-pr.md`.
+GitHub write access was restored after installation of the ChatGPT Codex
+Connector. The tested feature branch is now pushed to GitHub. A draft PR is being
+prepared against main using the description in `docs/draft-pr.md`.
 
 No merge, production promotion, database mutation, live credential changes, paid
 integration connection, or later milestone work was performed. Existing Vercel
