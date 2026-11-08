@@ -142,3 +142,92 @@ test("phone-sized readiness, selection and failed-send preservation", async () =
     await browser.close();
   }
 });
+
+test("mobile History reliably reopens persisted messages after full navigation and reload", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      reducedMotion: "reduce",
+    });
+    const token = await encode({
+      secret,
+      salt: "authjs.session-token",
+      token: { id: userId, email: owner, type: "regular" },
+    });
+    await context.addCookies([
+      { name: "authjs.session-token", value: token, url: origin },
+    ]);
+    const chatId = "c29f203a-5732-4c57-988a-ae3e3a856e81";
+    const createdAt = new Date().toISOString();
+    const page = await context.newPage();
+    await page.route("**/a-4-a/c.js*", (route) =>
+      route.fulfill({
+        contentType: "application/javascript",
+        body: "window.V_C.push({b:1,d:0});",
+      })
+    );
+    await page.route("**/api/history*", (route) =>
+      route.fulfill({
+        json: {
+          chats: [
+            {
+              id: chatId,
+              userId,
+              title: "Saved synthetic chat",
+              visibility: "private",
+              createdAt,
+            },
+          ],
+          hasMore: false,
+        },
+      })
+    );
+    await page.route("**/api/messages?*", (route) => {
+      assert.equal(
+        new URL(route.request().url()).searchParams.get("chatId"),
+        chatId
+      );
+      return route.fulfill({
+        json: {
+          messages: [
+            {
+              id: "62d44e61-82f7-4e5a-9c28-43bcfb760360",
+              role: "user",
+              parts: [{ type: "text", text: "Synthetic Turkish question" }],
+              metadata: { createdAt },
+            },
+            {
+              id: "b9927664-4831-414c-97e1-e2eb021cf4c1",
+              role: "assistant",
+              parts: [{ type: "text", text: "Synthetic Turkish answer" }],
+              metadata: { createdAt },
+            },
+          ],
+          visibility: "private",
+          userId,
+          isReadonly: false,
+        },
+      });
+    });
+    await page.goto(origin);
+    await page.locator("header button").first().click();
+    const historyLink = page.getByRole("link", {
+      name: "Saved synthetic chat",
+    });
+    await historyLink.waitFor();
+    assert.equal(await historyLink.getAttribute("href"), `/chat/${chatId}`);
+    await historyLink.click();
+    await page.waitForURL(`**/chat/${chatId}`);
+    await page.getByText("Synthetic Turkish question").waitFor();
+    await page.getByText("Synthetic Turkish answer").waitFor();
+    await page.reload();
+    await page.getByText("Synthetic Turkish question").waitFor();
+    await page.getByText("Synthetic Turkish answer").waitFor();
+    console.log(
+      "PASS: mobile History opens and reloads a saved conversation with both turns"
+    );
+  } finally {
+    await browser.close();
+  }
+});
