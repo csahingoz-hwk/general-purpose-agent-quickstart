@@ -18,6 +18,7 @@ import { systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
 import { cancelSchedule } from "@/lib/ai/tools/cancel-schedule";
 import { createDocument } from "@/lib/ai/tools/create-document";
+import { demoInbox } from "@/lib/ai/tools/demo-inbox";
 import { editDocument } from "@/lib/ai/tools/edit-document";
 import { getWeather } from "@/lib/ai/tools/get-weather";
 import { listMySchedules } from "@/lib/ai/tools/list-my-schedules";
@@ -218,6 +219,7 @@ export async function POST(request: Request) {
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
       execute: async ({ writer: dataStream }) => {
         const localTools = {
+          demoInbox,
           getWeather,
           createDocument: createDocument({
             session,

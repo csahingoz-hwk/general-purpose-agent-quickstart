@@ -15,6 +15,7 @@ import {
 import { useDataStream } from "./data-stream-provider";
 import { DocumentToolResult } from "./document";
 import { DocumentPreview } from "./document-preview";
+import { FictionalInboxCard } from "./fictional-inbox-card";
 import { SparklesIcon } from "./icons";
 import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
@@ -125,6 +126,22 @@ const PurePreviewMessage = ({
         >
           <MessageResponse>{sanitizeText(part.text)}</MessageResponse>
         </MessageContent>
+      );
+    }
+
+    if (type === "tool-demoInbox") {
+      if (part.state === "output-available") {
+        return (
+          <FictionalInboxCard key={part.toolCallId} result={part.output} />
+        );
+      }
+
+      return (
+        <div className="text-muted-foreground text-sm" key={part.toolCallId}>
+          {part.state === "output-error"
+            ? "The fictional inbox demo could not be loaded."
+            : "Preparing fictional inbox demo…"}
+        </div>
       );
     }
 
