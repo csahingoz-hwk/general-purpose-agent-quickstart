@@ -11,9 +11,11 @@ owner identity values, secrets, mail contents or connection strings into it.
 **Phase 0 is implemented on a feature branch, but acceptance is still pending.**
 Do not begin later implementation phases, merge PR #1, promote production or
 activate Gmail send as part of this documentation task. The next action is the
-owner's decision on AI Gateway payment-method verification. The chat is
-accessible after sign-in, but the first reply test shows an Activate AI Gateway
-dialog. Do not activate billing or purchase credits without explicit approval.
+model-readiness correction and review of a genuine free-tier text backend. The
+owner has rejected payment/provider activation as part of normal chat. The chat
+is accessible after sign-in, but the first reply test is blocked by the current
+AI Gateway verification requirement. Do not activate billing, purchase credits
+or silently replace the provider. See [MODEL_ACCESS.md](MODEL_ACCESS.md).
 The smallest subsequent implementation proposal is described in
 [NEXT_IMPLEMENTATION.md](NEXT_IMPLEMENTATION.md).
 
@@ -31,7 +33,9 @@ The smallest subsequent implementation proposal is described in
   It targets `security/owner-only-hardening` so the review shows documentation
   only. This is a stacked documentation change, not a merge of the security PR.
   Do not retarget/merge either PR automatically.
-- The supplied AGENTS.md, PRODUCT_VISION.md and ROADMAP.md are retained verbatim;
+- The supplied documents were initially imported verbatim; AGENTS.md remains
+  unchanged, while PRODUCT_VISION.md and ROADMAP.md now include the owner
+  requirement for free-first, verified model availability;
   this current-state file replaces the supplied initial snapshot with checked facts.
   Existing security documentation and application code are preserved. The security
   report gets an additive note pointing readers to this newer handoff.
@@ -153,6 +157,10 @@ quality or cost benchmark has been performed for this recommendation.
 
 ## Current blocker — AI Gateway activation (8 November 2026)
 
+The earlier suggestion to open gateway activation is superseded by the owner
+requirement below: finish provider setup outside normal chat and prefer genuinely
+free-tier access. No payment activation is currently authorized.
+
 The owner's first chat attempt displayed "Activate AI Gateway". Source inspection
 of `components/chat/shell.tsx`, `app/(chat)/api/chat/route.ts` and `lib/errors.ts`
 shows this dialog handles the gateway payment-method requirement and opens Vercel's
@@ -179,9 +187,28 @@ documentation diff check was run for this status update; earlier build/test
 results remain earlier evidence. Phase 0 stays open until a real reply and
 persistence checks can complete.
 
+## Updated owner requirement — usable models and free-first setup
+
+The owner rejects a payment/provider activation step inside normal app chat and
+expects "Available" to mean actually usable, preferably free. Source inspection
+confirmed that the model picker labels a static curated list "Available" without
+checking account readiness. This is a Phase 0 gap, not a completed model feature.
+
+PRODUCT_VISION.md and ROADMAP.md now record the required behavior; MODEL_ACCESS.md
+contains the researched options, source links, boundaries and next focused PR
+proposal. Groq is a candidate with separate Free/paid tiers, but account setup,
+free eligibility, English/Turkish quality, tools and privacy still need validation.
+Gemini's selected free models are another option with data-use/region terms to
+review. No free provider or model has been connected, benchmarked or claimed live.
+No production changes, payments, model calls, dependencies or credentials were
+made for this requirements update. Documentation links and diff checks passed;
+application tests/build results above are prior evidence, not newly rerun.
+
 ## Smallest next implementation and costs
 
-After Phase 0 passes and the owner confirms Phase 1, make one separate PR for a
+First implement and validate the bounded Phase 0 model-readiness correction in
+MODEL_ACCESS.md through a focused reviewed PR. After Phase 0 passes and the owner
+confirms Phase 1, make one separate PR for a
 fictional inbox report inside the existing chat: chart, threshold slider and cards,
 with a validated versioned spec and persisted selection. Use deterministic data,
 instant local filtering, no Gmail or extra model calls per interaction. Compare

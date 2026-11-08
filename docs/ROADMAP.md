@@ -7,7 +7,12 @@
 - Owner-only Google OIDC login; no public registration/guest/password path.
 - Freeze broad external integrations, background email send, remote shell, Telegram and cron until separately reviewed.
 - Preserve database, private deployment, model selection, chat history, existing source and security tests.
-- **Gate:** real owner Google login works on iPhone protected preview; conversation is saved and persists after reload; available model streams; unauthorised route access is denied; security tests pass. Review draft PR #1 before merge. No automatic production promotion.
+- Model readiness is a Phase 0 acceptance requirement: normal chat offers one
+  verified default and only genuinely usable options, preferably through a
+  confirmed free-tier account. Fix the current static "Available" catalogue and
+  runtime activation popup before treating chat as ready. Account/key setup
+  happens separately; no automatic paid fallback. See [MODEL_ACCESS.md](MODEL_ACCESS.md).
+- **Gate:** model access is ready without a chat-time billing prompt; real owner Google login works on iPhone protected preview; conversation is saved and persists after reload; available model streams; unauthorised route access is denied; security tests pass. Review draft PR #1 before merge. No automatic production promotion.
 
 ## Phase 1 — First genuine rich interactive answer
 

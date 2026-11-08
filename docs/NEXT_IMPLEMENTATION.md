@@ -3,6 +3,15 @@
 Status: proposal, not implemented. Read [CURRENT_STATE.md](CURRENT_STATE.md) first.
 Phase 0 acceptance and a focused Phase 1 task must precede implementation.
 
+## Phase 0 blocker before this proposal
+
+The first real chat attempt is blocked by AI Gateway payment verification. The
+owner requires usable models, preferably free, to be configured before normal
+chat—not activation prompts or an unverified catalogue. The smallest next coding
+task is therefore the focused text-chat readiness proposal in
+[MODEL_ACCESS.md](MODEL_ACCESS.md). No rich UI implementation begins until that
+blocker and Phase 0 acceptance are resolved.
+
 ## Immediate next action: close the security gate
 
 Use the protected security preview on the owner's iPhone. Complete Google login,

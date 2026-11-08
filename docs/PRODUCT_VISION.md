@@ -16,6 +16,22 @@ The owner wants an assistant that is more capable and personal than another chat
 - Recurring personal tasks, such as an inbox briefing every weekday morning in `Europe/London`, run in the cloud when no device is on. Summaries are viewable when the owner opens the app. No automatic outbound emailing.
 - Conversations and visual state persist across devices, and account permissions, activity history and costs are understandable.
 
+## Model access and first-run experience
+
+Normal chat should work with one clear, verified default. "Available" means the
+configured account can actually use that model, not simply that a provider lists
+it. Prefer verified free-tier models with honest quota limits; do not present
+premium/unconfigured models as usable or free. Account/key setup belongs in a
+separate owner setup flow before chat, with no provider billing activation prompt
+during a normal conversation. Quota exhaustion must never trigger an automatic
+paid upgrade or fallback. Free hosting cannot be guaranteed indefinitely; changes
+in cost, model eligibility or data terms require an explicit decision.
+
+Vercel remains the hosting/Chatbot foundation. AI Gateway is an optional routing
+choice when its verification and cost requirements fit; a compatible direct free
+provider can be evaluated without replacing the application. See
+[MODEL_ACCESS.md](MODEL_ACCESS.md) for evidence, constraints and the bounded proposal.
+
 ## Essential capabilities
 
 ### 1 — Voice-first bilingual conversation
