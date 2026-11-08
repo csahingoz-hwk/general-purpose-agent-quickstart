@@ -311,9 +311,11 @@ test("fictional inbox stays visible in a saved chat and responds locally", async
     await expect(page.getByTestId("demo-inbox-priority")).toHaveText("5 / 5");
     await expect(page.getByTestId("demo-inbox-count")).toHaveText("2");
 
-    await page.getByRole("button", {
-      name: "Gönderilmeyen örnek yanıtı göster",
-    }).click();
+    await page
+      .getByRole("button", {
+        name: "Gönderilmeyen örnek yanıtı göster",
+      })
+      .click();
     await expect(page.getByTestId("demo-inbox-draft")).toContainText(
       "gönderilmedi"
     );
