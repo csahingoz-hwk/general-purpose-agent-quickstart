@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbo",
-    "build": "tsx lib/db/migrate && next build",
+    "build": "tsx lib/db/migrate && tsx scripts/build.ts",
     "start": "next start",
     "check": "biome check",
     "fix": "biome check --write",
@@ -16,7 +16,8 @@
     "db:check": "drizzle-kit check",
     "db:up": "drizzle-kit up",
     "test": "export PLAYWRIGHT=True && pnpm exec playwright test",
-    "test:security": "node --import tsx --test tests/security/*.test.ts"
+    "test:security": "node --import tsx --test tests/security/*.test.ts",
+    "test:readiness-ui": "node --import tsx scripts/test-model-readiness-ui.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.41",

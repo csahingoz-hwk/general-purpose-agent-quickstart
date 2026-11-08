@@ -3,13 +3,7 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
 import type { UIMessage } from "ai";
 import equal from "fast-deep-equal";
-import {
-  ArrowUpIcon,
-  BrainIcon,
-  EyeIcon,
-  LockIcon,
-  WrenchIcon,
-} from "lucide-react";
+import { ArrowUpIcon, BrainIcon, WrenchIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
@@ -32,16 +26,10 @@ import {
   ModelSelectorInput,
   ModelSelectorItem,
   ModelSelectorList,
-  ModelSelectorLogo,
   ModelSelectorName,
   ModelSelectorTrigger,
 } from "@/components/ai-elements/model-selector";
-import {
-  type ChatModel,
-  chatModels,
-  DEFAULT_CHAT_MODEL,
-  type ModelCapabilities,
-} from "@/lib/ai/models";
+import type { ChatModel, ModelCapabilities } from "@/lib/ai/models";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
@@ -108,6 +96,22 @@ function PureMultimodalInput({
   isLoading?: boolean;
 }) {
   const router = useRouter();
+  const { data: modelAvailability, isLoading: checkingModels } = useSWR(
+    `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/models`,
+    (url: string) =>
+      fetch(url).then((response) => {
+        if (!response.ok) {
+          throw new Error("Model check failed");
+        }
+        return response.json();
+      }),
+    { revalidateOnFocus: true, dedupingInterval: 60_000 }
+  );
+  const modelReady =
+    modelAvailability?.status === "ready" &&
+    modelAvailability.models?.some(
+      (model: ChatModel) => model.id === selectedModelId
+    );
   const { setTheme, resolvedTheme } = useTheme();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { width } = useWindowSize();
@@ -216,6 +220,10 @@ function PureMultimodalInput({
   const [slashIndex, setSlashIndex] = useState(0);
 
   const submitForm = useCallback(() => {
+    if (!modelReady) {
+      toast.error("Chat is not ready yet. Your message is kept here.");
+      return;
+    }
     window.history.pushState(
       {},
       "",
@@ -254,6 +262,7 @@ function PureMultimodalInput({
     setLocalStorageInput,
     width,
     chatId,
+    modelReady,
   ]);
 
   const uploadFile = useCallback(async (file: File) => {
@@ -387,6 +396,7 @@ function PureMultimodalInput({
       )}
 
       {!editingMessage &&
+        modelReady &&
         !isLoading &&
         messages.length === 0 &&
         attachments.length === 0 &&
@@ -418,6 +428,16 @@ function PureMultimodalInput({
         )}
       </div>
 
+      {!modelReady && (
+        <output
+          className="px-2 text-sm text-muted-foreground"
+          data-testid="model-readiness-status"
+        >
+          {checkingModels
+            ? "Checking chat availability…"
+            : "Chat setup is not complete yet. Your message will stay here until chat is ready."}
+        </output>
+      )}
       <PromptInput
         className="[&>div]:rounded-2xl [&>div]:border [&>div]:border-border/30 [&>div]:bg-card/70 [&>div]:shadow-[var(--shadow-composer)] [&>div]:transition-shadow [&>div]:duration-300 [&>div]:focus-within:shadow-[var(--shadow-composer-focus)]"
         onSubmit={() => {
@@ -539,7 +559,7 @@ function PureMultimodalInput({
                   : "bg-muted text-muted-foreground/25 cursor-not-allowed"
               )}
               data-testid="send-button"
-              disabled={!input.trim() || uploadQueue.length > 0}
+              disabled={!modelReady || !input.trim() || uploadQueue.length > 0}
               status={status}
               variant="secondary"
             >
@@ -634,155 +654,74 @@ function PureModelSelectorCompact({
   onModelChange?: (modelId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const { data: modelsData } = useSWR(
+  const { data } = useSWR(
     `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/models`,
-    (url: string) => fetch(url).then((r) => r.json()),
-    { revalidateOnFocus: false, dedupingInterval: 3_600_000 }
+    (url: string) =>
+      fetch(url).then((response) => {
+        if (!response.ok) {
+          throw new Error("Model check failed");
+        }
+        return response.json();
+      }),
+    { revalidateOnFocus: true, dedupingInterval: 60_000 }
   );
-
-  const capabilities: Record<string, ModelCapabilities> | undefined =
-    modelsData?.capabilities ?? modelsData;
-  const dynamicModels: ChatModel[] | undefined = modelsData?.models;
-  const activeModels = dynamicModels ?? chatModels;
-
-  const selectedModel =
-    activeModels.find((m: ChatModel) => m.id === selectedModelId) ??
-    activeModels.find((m: ChatModel) => m.id === DEFAULT_CHAT_MODEL) ??
-    activeModels[0];
-  const [provider] = selectedModel.id.split("/");
-
+  const models: ChatModel[] =
+    data?.status === "ready" ? (data.models ?? []) : [];
+  const selected = models.find((model) => model.id === selectedModelId);
+  if (!selected) {
+    return (
+      <span className="px-2 text-xs text-muted-foreground">Chat not ready</span>
+    );
+  }
   return (
     <ModelSelector onOpenChange={setOpen} open={open}>
       <ModelSelectorTrigger asChild>
         <Button
-          className="h-7 max-w-[200px] justify-between gap-1.5 rounded-lg px-2 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+          className="h-7 max-w-[200px] gap-1.5 rounded-lg px-2 text-xs text-muted-foreground"
           data-testid="model-selector"
           variant="ghost"
         >
-          {provider && <ModelSelectorLogo provider={provider} />}
-          <ModelSelectorName>{selectedModel.name}</ModelSelectorName>
+          <ModelSelectorName>{selected.name}</ModelSelectorName>
         </Button>
       </ModelSelectorTrigger>
       <ModelSelectorContent>
-        <ModelSelectorInput placeholder="Search models..." />
+        <ModelSelectorInput placeholder="Search ready models…" />
         <ModelSelectorList>
-          {(() => {
-            const curatedIds = new Set(chatModels.map((m) => m.id));
-            const allModels = dynamicModels
-              ? [
-                  ...chatModels,
-                  ...dynamicModels.filter((m) => !curatedIds.has(m.id)),
-                ]
-              : chatModels;
-
-            const grouped: Record<
-              string,
-              { model: ChatModel; curated: boolean }[]
-            > = {};
-            for (const model of allModels) {
-              const key = curatedIds.has(model.id)
-                ? "_available"
-                : model.provider;
-              if (!grouped[key]) {
-                grouped[key] = [];
-              }
-              grouped[key].push({ model, curated: curatedIds.has(model.id) });
-            }
-
-            const sortedKeys = Object.keys(grouped).sort((a, b) => {
-              if (a === "_available") {
-                return -1;
-              }
-              if (b === "_available") {
-                return 1;
-              }
-              return a.localeCompare(b);
-            });
-
-            const providerNames: Record<string, string> = {
-              alibaba: "Alibaba",
-              anthropic: "Anthropic",
-              "arcee-ai": "Arcee AI",
-              bytedance: "ByteDance",
-              cohere: "Cohere",
-              deepseek: "DeepSeek",
-              google: "Google",
-              inception: "Inception",
-              kwaipilot: "Kwaipilot",
-              meituan: "Meituan",
-              meta: "Meta",
-              minimax: "MiniMax",
-              mistral: "Mistral",
-              moonshotai: "Moonshot",
-              morph: "Morph",
-              nvidia: "Nvidia",
-              openai: "OpenAI",
-              perplexity: "Perplexity",
-              "prime-intellect": "Prime Intellect",
-              xiaomi: "Xiaomi",
-              xai: "xAI",
-              zai: "Zai",
-            };
-
-            return sortedKeys.map((key) => (
-              <ModelSelectorGroup
-                heading={
-                  key === "_available"
-                    ? "Available"
-                    : (providerNames[key] ?? key)
-                }
-                key={key}
+          <ModelSelectorGroup heading="Ready to use · free-account limits apply">
+            {models.map((model) => (
+              <ModelSelectorItem
+                key={model.id}
+                keywords={[model.name, model.description]}
+                onSelect={() => {
+                  onModelChange?.(model.id);
+                  setCookie("chat-model", model.id);
+                  setOpen(false);
+                }}
+                value={model.id}
               >
-                {grouped[key].map(({ model, curated }) => {
-                  const logoProvider = model.id.split("/")[0];
-                  return (
-                    <ModelSelectorItem
-                      className={cn(
-                        "flex w-full",
-                        model.id === selectedModel.id &&
-                          "border-b border-dashed border-foreground/50",
-                        !curated && "opacity-40 cursor-default"
-                      )}
-                      key={model.id}
-                      onSelect={() => {
-                        if (!curated) {
-                          return;
-                        }
-                        onModelChange?.(model.id);
-                        setCookie("chat-model", model.id);
-                        setOpen(false);
-                        setTimeout(() => {
-                          document
-                            .querySelector<HTMLTextAreaElement>(
-                              "[data-testid='multimodal-input']"
-                            )
-                            ?.focus();
-                        }, 50);
-                      }}
-                      value={model.id}
-                    >
-                      <ModelSelectorLogo provider={logoProvider} />
-                      <ModelSelectorName>{model.name}</ModelSelectorName>
-                      <div className="ml-auto flex items-center gap-2 text-foreground/70">
-                        {capabilities?.[model.id]?.tools && (
-                          <WrenchIcon className="size-3.5" />
-                        )}
-                        {capabilities?.[model.id]?.vision && (
-                          <EyeIcon className="size-3.5" />
-                        )}
-                        {capabilities?.[model.id]?.reasoning && (
-                          <BrainIcon className="size-3.5" />
-                        )}
-                        {!curated && (
-                          <LockIcon className="size-3 text-muted-foreground/50" />
-                        )}
-                      </div>
-                    </ModelSelectorItem>
-                  );
-                })}
-              </ModelSelectorGroup>
-            ));
-          })()}
+                <div>
+                  <ModelSelectorName>{model.name}</ModelSelectorName>
+                  <p className="text-xs text-muted-foreground">
+                    {model.description}
+                  </p>
+                </div>
+                <div className="ml-auto flex gap-2">
+                  {data.capabilities?.[model.id]?.tools && (
+                    <WrenchIcon
+                      aria-label="Supports tools"
+                      className="size-3.5"
+                    />
+                  )}
+                  {data.capabilities?.[model.id]?.reasoning && (
+                    <BrainIcon
+                      aria-label="Supports reasoning"
+                      className="size-3.5"
+                    />
+                  )}
+                </div>
+              </ModelSelectorItem>
+            ))}
+          </ModelSelectorGroup>
         </ModelSelectorList>
       </ModelSelectorContent>
     </ModelSelector>

@@ -128,3 +128,24 @@ See `docs/security-hardening.md` for cloud-only owner provisioning and setup.
 - `scripts/provision-owner.ts` (removed; Google provisions the verified owner)
 - `tests/security/access.test.ts`
 - `vercel.json`
+
+## Free-account chat readiness follow-up (8 November 2026)
+
+The owner reports working Google sign-in and supplied the iPhone chat screen.
+Their first reply was blocked by Gateway activation. The security branch now
+uses direct Groq with verified, bounded candidates and a clear default; see
+[free-chat-readiness.md](free-chat-readiness.md) for architecture and limitations.
+The newly saved key was scoped to the security Preview without reading its value.
+
+Fresh local results: TypeScript, Biome (166 files), 11 security/readiness cases,
+credential-free production build and phone-sized Chromium readiness/selection/
+failed-send recovery all PASS. The browser test uses synthetic owner, model,
+BotID and failed-response fixtures; it proves neither real Safari nor cloud chat
+persistence. CI now includes this browser check after its credential-free build.
+Production audit has zero findings; the full audit still has only the previously
+recorded low development advisory. External SDK/Gateway execution scan and diff
+checks passed. No new dependency or schema change was required.
+
+Cloud inference verification and the owner's real chat/persistence checks are
+separate acceptance gates. No merge, production release, Gmail connection or
+scheduled execution follows automatically from these checks.
