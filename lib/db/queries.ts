@@ -18,6 +18,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import type { ArtifactKind } from "@/components/chat/artifact";
 import type { VisibilityType } from "@/components/chat/visibility-selector";
+import { isOwnerEmail } from "../access-policy";
 import { ChatbotError } from "../errors";
 import { generateUUID } from "../utils";
 import {
@@ -54,6 +55,37 @@ export async function getUser(email: string): Promise<User[]> {
       "Failed to get user by email"
     );
   }
+}
+
+// Invoked only after a verified Google owner profile is authorized.
+export async function getOrCreateGoogleOwner(email: string) {
+  if (!isOwnerEmail(email)) {
+    throw new Error("Unauthorized");
+  }
+  const normalizedEmail = email.trim().toLowerCase();
+  return await db.transaction(async (tx) => {
+    // Serialize concurrent first sign-ins without changing the existing schema.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(748391002)`);
+    const existing = await tx
+      .select()
+      .from(user)
+      .where(sql`lower(${user.email}) = ${normalizedEmail}`);
+    if (existing.length > 1) {
+      throw new Error("Owner identity requires account review");
+    }
+    if (existing[0]) {
+      return existing[0];
+    }
+    const [created] = await tx
+      .insert(user)
+      .values({
+        email: normalizedEmail,
+        emailVerified: true,
+        isAnonymous: false,
+      })
+      .returning();
+    return created;
+  });
 }
 
 export async function createUser(email: string, password: string) {

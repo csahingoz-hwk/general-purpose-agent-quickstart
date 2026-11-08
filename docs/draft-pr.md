@@ -6,7 +6,7 @@ Previously, guests and public registrations could access the assistant, Composio
 loaded unrestricted tools in chat/cron/Telegram, and cron bypassed authorization
 outside production. Require server-configured APP_OWNER_EMAIL at authentication,
 JWT, server-session and request boundaries; remove guest/signup access and supply
-a cloud-only owner provisioning command. Missing configuration denies access.
+Google identity login and automatic verified owner provisioning. Missing configuration denies access.
 
 Remove Composio/Supermemory tool loading and SDKs, disable cron execution and
 schedule creation, remove the Vercel cron trigger, and disable Telegram execution
@@ -26,9 +26,9 @@ issues and existing lint failures. Generated migration metadata is untouched.
 
 ## Before approval
 
-Set APP_OWNER_EMAIL on the protected preview and verify owner password login,
+Set APP_OWNER_EMAIL on the protected preview and verify owner Google sign-in,
 existing history, new conversation persistence and model selection against Neon.
-Use the cloud provisioning command only if the owner account does not exist.
+Configure Google OAuth identity credentials privately using docs/google-sign-in-setup.md.
 Review the remaining dev-only advisory and dependency overrides.
 
 Keep this PR in draft. Do not merge or promote production automatically.

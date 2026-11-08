@@ -8,10 +8,10 @@ Branch: `security/owner-only-hardening`.
 - Lint (`biome check`, the configured Ultracite engine/presets): PASS, 159 files.
 - Production build (`pnpm build`, pnpm 10.32.1): PASS on Next.js 16.4.5.
   Migration step explicitly skipped because this workspace has no POSTGRES_URL.
-- Security regression tests: PASS, three cases covering owner/guest/cron policy.
+- Security regression tests: PASS, five cases covering owner/guest/cron policy and verified Google identity.
 - Built-app HTTP smoke checks: PASS, 15 assertions covering login/registration,
   unauthorized chat/history/models/documents/uploads/messages/demo requests,
-  disabled guests/Telegram, cron secret checks, and credentials-only providers.
+  disabled guests/Telegram, cron secret checks, and provider configuration.
 - Production dependency audit: PASS, zero vulnerabilities.
 - Full dependency audit: zero critical/high/moderate; one low development-only
   finding in deepmerge through Ultracite, GHSA-gcqx-w48m-w2h4, no patched release
@@ -28,9 +28,9 @@ Branch: `security/owner-only-hardening`.
   `/api/auth/guest` returned application-generated 403.
 - Expected 401 requests to history and cron were classified as protection errors
   by that tool, so those deployed application responses remain unverified.
-- Environment metadata confirms `APP_OWNER_EMAIL` is absent. The owner email and
-  whether an existing account exists have been requested. No identity was guessed,
-  secret value decrypted, or environment variable changed.
+- The owner supplied the allowed email. `APP_OWNER_EMAIL` is now configured only
+  for the security branch preview; it is not hardcoded in source. Google OAuth
+  client settings are still required. No secret values were decrypted.
 - Owner sign-in and Neon conversation persistence remain a gate before later
   milestones. Interactive UI, voice, Gmail and scheduling work has not started.
 - `.github/workflows/security.yml` now runs the security milestone checks on the
@@ -38,6 +38,27 @@ Branch: `security/owner-only-hardening`.
 - The lint script now invokes the pinned local Biome binary directly. The old
   Ultracite wrapper downloaded a newer Biome version that rejected the existing
   configuration; presets and lint rules remain unchanged.
+
+## Google sign-in update
+
+The owner requested Google/Apple/passkey login instead of a separate password.
+The security PR now uses Auth.js Google OIDC with `openid email profile` only.
+Only a Google-verified email matching server-side owner configuration may resolve
+or create the database account; existing IDs/history are preserved. Public signup,
+password login and guest providers are disabled. Provider tokens are not persisted
+in app sessions or the database. Apple/passkey login is not enabled or advertised.
+
+Google client credentials must be created in the owner's Google Cloud account and
+saved privately in the preview's Vercel settings. Follow
+`docs/google-sign-in-setup.md`. No Gmail API, email scopes or billing are required.
+Local production-build checks confirmed that only Google is exposed when configured,
+its authorization redirect requests only identity scopes and includes PKCE S256,
+state and nonce, and no offline access is requested. A phone-sized Chromium check
+confirmed an enabled Google button, no password field and no horizontal overflow.
+TypeScript, lint, the build and all five security regression cases pass.
+
+A real Google callback and Neon persistence cannot be claimed verified until that
+setup and the owner's sign-in are complete. Later milestones remain gated.
 
 ## Delivery status
 
@@ -55,6 +76,10 @@ is configured; no live service credentials are available in this workspace.
 See `docs/security-hardening.md` for cloud-only owner provisioning and setup.
 
 ## Changed files
+
+- `docs/google-sign-in-setup.md`
+- `lib/google-owner.ts`
+- `tests/security/google-owner.test.ts`
 
 - `.github/workflows/security.yml`
 
@@ -100,6 +125,6 @@ See `docs/security-hardening.md` for cloud-only owner provisioning and setup.
 - `pnpm-lock.yaml`
 - `pnpm-workspace.yaml`
 - `proxy.ts`
-- `scripts/provision-owner.ts`
+- `scripts/provision-owner.ts` (removed; Google provisions the verified owner)
 - `tests/security/access.test.ts`
 - `vercel.json`

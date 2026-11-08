@@ -1,10 +1,13 @@
-import { compare } from "bcrypt-ts";
 import NextAuth, { type DefaultSession } from "next-auth";
 import type { DefaultJWT } from "next-auth/jwt";
-import Credentials from "next-auth/providers/credentials";
-import { isOwnerEmail, isOwnerIdentity } from "@/lib/access-policy";
-import { DUMMY_PASSWORD } from "@/lib/constants";
-import { getUser } from "@/lib/db/queries";
+import Google from "next-auth/providers/google";
+import { isOwnerIdentity } from "@/lib/access-policy";
+import { getOrCreateGoogleOwner } from "@/lib/db/queries";
+import {
+  GOOGLE_IDENTITY_SCOPE,
+  isGoogleSignInConfigured,
+  resolveGoogleOwner,
+} from "@/lib/google-owner";
 import { authConfig } from "./auth.config";
 
 export type UserType = "guest" | "regular";
@@ -38,46 +41,31 @@ export const {
   signOut,
 } = NextAuth({
   ...authConfig,
-  providers: [
-    Credentials({
-      credentials: {
-        email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" },
-      },
-      async authorize(credentials) {
-        const email = String(credentials.email ?? "");
-        const password = String(credentials.password ?? "");
-        if (!isOwnerEmail(email)) {
-          await compare(password, DUMMY_PASSWORD);
-          return null;
-        }
-        const users = await getUser(email.trim());
-
-        if (users.length === 0) {
-          await compare(password, DUMMY_PASSWORD);
-          return null;
-        }
-
-        const [user] = users;
-
-        if (!user.password) {
-          await compare(password, DUMMY_PASSWORD);
-          return null;
-        }
-
-        const passwordsMatch = await compare(password, user.password);
-
-        if (!passwordsMatch) {
-          return null;
-        }
-
-        return { ...user, type: "regular" };
-      },
-    }),
-  ],
+  session: { strategy: "jwt" },
+  providers: isGoogleSignInConfigured()
+    ? [
+        Google({
+          clientId: process.env.AUTH_GOOGLE_ID,
+          clientSecret: process.env.AUTH_GOOGLE_SECRET,
+          authorization: {
+            params: { scope: GOOGLE_IDENTITY_SCOPE, prompt: "select_account" },
+          },
+          checks: ["pkce", "state", "nonce"],
+        }),
+      ]
+    : [],
   callbacks: {
-    signIn({ user }) {
-      return isOwnerIdentity(user);
+    async signIn({ user, account, profile }) {
+      if (account?.provider !== "google") {
+        return false;
+      }
+      const owner = await resolveGoogleOwner(profile, getOrCreateGoogleOwner);
+      if (!owner) {
+        return false;
+      }
+      // Keep database identity stable so existing conversations stay attached.
+      Object.assign(user, owner);
+      return true;
     },
     jwt({ token, user }) {
       if (user) {
