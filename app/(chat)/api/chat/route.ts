@@ -10,9 +10,11 @@ import {
 import { checkBotId } from "botid/server";
 import { after } from "next/server";
 import { createResumableStreamContext } from "resumable-stream";
-import { auth, type UserType } from "@/app/(auth)/auth";
-import { entitlementsByUserType } from "@/lib/ai/entitlements";
-import { getModelAvailability } from "@/lib/ai/model-runtime";
+import { auth } from "@/app/(auth)/auth";
+import { budgetModelMessages, DEFAULT_REPLY_TOKENS } from "@/lib/ai/context/budget";
+import { safeModelError } from "@/lib/ai/context/errors";
+import { needsArtifactInstructions, selectActiveTools } from "@/lib/ai/context/select-tools";
+import { parseVerification } from "@/lib/ai/groq-verification";
 import { chatModels, getCapabilities } from "@/lib/ai/models";
 import { systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
@@ -30,7 +32,6 @@ import {
   createStreamId,
   deleteChatById,
   getChatById,
-  getMessageCountByUserId,
   getMessagesByChatId,
   getUserSoul,
   saveChat,
@@ -106,27 +107,18 @@ export async function POST(request: Request) {
       return new ChatbotError("unauthorized:chat").toResponse();
     }
 
-    const availability = await getModelAvailability();
-    if (availability.status !== "ready") {
+    // The verified allowlist already exists in protected environment settings.
+    // Never make an 8-second live model-catalogue request on every chat turn.
+    const verified = parseVerification(process.env.VERIFIED_GROQ_MODELS);
+    if (!process.env.GROQ_API_KEY || verified.status !== "ready") {
       return new ChatbotError("offline:model_setup").toResponse();
     }
-    if (!availability.models.some((model) => model.id === selectedChatModel)) {
+    if (!verified.modelIds.includes(selectedChatModel)) {
       return new ChatbotError("bad_request:api").toResponse();
     }
     const chatModel = selectedChatModel;
 
     await checkIpRateLimit(ipAddress(request));
-
-    const userType: UserType = session.user.type;
-
-    const messageCount = await getMessageCountByUserId({
-      id: session.user.id,
-      differenceInHours: 1,
-    });
-
-    if (messageCount > entitlementsByUserType[userType].maxMessagesPerHour) {
-      return new ChatbotError("rate_limit:chat").toResponse();
-    }
 
     const isToolApprovalFlow = Boolean(messages);
 
@@ -208,12 +200,27 @@ export async function POST(request: Request) {
     const isReasoningModel = capabilities?.reasoning === true;
     const supportsTools = capabilities?.tools === true;
 
-    const modelMessages = await convertToModelMessages(
-      sanitizeToolCallIds(uiMessages)
-    );
-
     const soul = await getUserSoul({ userId: session.user.id });
     const needsOnboarding = !soul && session.user.type !== "guest";
+    const requestedTools = supportsTools
+      ? selectActiveTools(uiMessages, session.user.type !== "guest")
+      : [];
+    const finalUserText =
+      [...uiMessages]
+        .reverse()
+        .find((item) => item.role === "user")
+        ?.parts.filter((part) => part.type === "text")
+        .map((part) => part.text)
+        .join(" ") ?? "";
+    const replySystemPrompt = systemPrompt({
+      supportsTools,
+      soul,
+      needsOnboarding,
+      includeArtifacts: needsArtifactInstructions(requestedTools),
+    });
+    // A single text step may use most of the budget; a tool call and a
+    // follow-up must share a minute on Groq's limited free account.
+    const requestBudget = requestedTools.length > 0 ? 3400 : 7000;
 
     const stream = createUIMessageStream({
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
@@ -246,20 +253,44 @@ export async function POST(request: Request) {
 
         // Only reviewed local tools are available. External integrations stay disconnected.
         const tools = localTools;
+        const activeTools = requestedTools.filter(
+          (name) => name in tools
+        ) as Array<keyof typeof tools>;
+        const convertedMessages = await convertToModelMessages(
+          sanitizeToolCallIds(uiMessages),
+          { tools, ignoreIncompleteToolCalls: true }
+        );
+        const prepared = budgetModelMessages({
+          messages: convertedMessages,
+          system: replySystemPrompt,
+          toolCount: activeTools.length,
+          maxOutputTokens: DEFAULT_REPLY_TOKENS,
+          requestBudget,
+        });
+        if (prepared.tooLarge) {
+          throw new Error("chat_context_budget");
+        }
         const result = streamText({
           model: getLanguageModel(chatModel),
-          system: systemPrompt({
-            supportsTools,
-            soul,
-            needsOnboarding,
-          }),
-          messages: modelMessages,
-          stopWhen: stepCountIs(3),
-          maxOutputTokens: 2048,
+          system: replySystemPrompt,
+          messages: prepared.messages,
+          stopWhen: stepCountIs(activeTools.length > 0 ? 2 : 1),
+          maxOutputTokens: DEFAULT_REPLY_TOKENS,
           maxRetries: 0,
-          ...(isReasoningModel && !supportsTools
-            ? { experimental_activeTools: [] }
-            : {}),
+          activeTools,
+          prepareStep: ({ messages: stepMessages }) => {
+            const next = budgetModelMessages({
+              messages: stepMessages,
+              system: replySystemPrompt,
+              toolCount: activeTools.length,
+              maxOutputTokens: DEFAULT_REPLY_TOKENS,
+              requestBudget,
+            });
+            if (next.tooLarge) {
+              throw new Error("chat_context_budget");
+            }
+            return { messages: next.messages };
+          },
           providerOptions: {
             ...(modelConfig?.reasoningEffort && {
               openai: { reasoningEffort: modelConfig.reasoningEffort },
@@ -273,7 +304,10 @@ export async function POST(request: Request) {
         });
 
         dataStream.merge(
-          result.toUIMessageStream({ sendReasoning: isReasoningModel })
+          result.toUIMessageStream({
+            sendReasoning: false,
+            onError: (error) => safeModelError(error, finalUserText),
+          })
         );
 
         if (titlePromise) {
@@ -320,15 +354,7 @@ export async function POST(request: Request) {
           });
         }
       },
-      onError: (error) => {
-        const statusCode =
-          error && typeof error === "object" && "statusCode" in error
-            ? error.statusCode
-            : null;
-        return statusCode === 429
-          ? "The free model limit has been reached. Please try again later. No paid fallback was used."
-          : "The chat model is temporarily unavailable. Please try again later.";
-      },
+      onError: (error) => safeModelError(error, finalUserText),
     });
 
     return createUIMessageStreamResponse({
