@@ -5,6 +5,14 @@ This is the current handoff, not a list of implemented product aspirations.
 Earlier investigation/setup evidence is retained below and in Git history.
 Never copy identity values, keys, connection strings or private chat/mail into it.
 
+## Holistic architecture review — 8 November 2026
+
+**Documentation proposal only; not implemented or accepted.** [ADR-0001](architecture/ADR-0001-unified-conversation-openui.md) proposes keeping the current secured Vercel Chatbot as the sole chat/auth/Neon history, using a restricted OpenUI Lang renderer for optional grounded interactive responses (to be benchmarked against json-render), and adding voice later as another transport to the *same* conversation. [Experience benchmark](architecture/EXPERIENCE-BENCHMARK.md) covers Groq GPT-OSS 20B/120B, EN/TR follow-ups, actual UI structural and numerical accuracy, reload state, iPhone interactions, safe actions, latency and usage. **These model/renderer combinations have not been tested here; no winner has been declared.**
+
+Current PR #1's direct Groq readiness work remains intact. PR #2 remains stacked on PR #1. Architecture documentation is on a **separate branch stacked on PR #2** (`docs/holistic-ui-model-architecture`), for owner review; do not merge/promote/activate providers or touch Gmail automatically.
+
+**Immediate live gate is unchanged:** actual owner English/Turkish streamed reply, second-model reply, refresh/persistence, route/security checks. Then a small fictional, safe visual-response spike in the *existing* message stream should measure models and OpenUI-vs-json-render with the same typed fixture. Keep the previous security and paid-inference constraints.
+
 ## Current decision
 
 **Phase 0 remains open for owner acceptance.** Google sign-in works according to
