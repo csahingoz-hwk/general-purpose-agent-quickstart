@@ -34,7 +34,9 @@ function safeExcerpt(content: string, maxChars = 125): string {
 
 function createOlderContext(messages: ModelMessage[]): ModelMessage | null {
   const priorTurns = messages
-    .filter((message) => message.role === "user" || message.role === "assistant")
+    .filter(
+      (message) => message.role === "user" || message.role === "assistant"
+    )
     .map((message) => {
       const raw = excerpt(message.content);
       if (!raw.trim()) {
@@ -76,12 +78,16 @@ export function budgetModelMessages({
   toolCount: number;
   maxOutputTokens?: number;
   requestBudget?: number;
-}): { messages: ModelMessage[]; estimatedRequestTokens: number; compacted: boolean; tooLarge: boolean } {
+}): {
+  messages: ModelMessage[];
+  estimatedRequestTokens: number;
+  compacted: boolean;
+  tooLarge: boolean;
+} {
   // Allow space for tool JSON schema/protocol, reply, and tokenizer variance.
   const fixedCost =
     estimateModelTokens(system) + maxOutputTokens + 350 + toolCount * 270;
-  const total = (msgs: ModelMessage[]) =>
-    fixedCost + estimateModelTokens(msgs);
+  const total = (msgs: ModelMessage[]) => fixedCost + estimateModelTokens(msgs);
 
   if (total(messages) <= requestBudget) {
     return {
