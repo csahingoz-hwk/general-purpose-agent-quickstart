@@ -216,12 +216,17 @@ zero token usage and an "Upgrade to Dev Plan" option. This is owner-provided
 account-access evidence, not a completed backend integration or independent
 verification of billing/quotas. No API key has been provided or connected.
 
-Next guided owner step: open Groq Data Controls and inspect/enable Zero Data
-Retention before creating a key. Official Groq documentation says this control
-is available to all customers; the actual account setting remains unverified.
+The owner reports enabling Inference APIs Zero Data Retention after the supplied
+Data Controls screenshot showed it disabled. This is owner-confirmed configuration,
+not an independent API inspection. Global ZDR and storage-feature toggles were
+not requested to change. No API key is yet connected to the app.
+
+Next guided owner step: API Keys → Create API Key, named
+`personal-assistant-preview`, keeping its value private and the creation dialog
+open until it is saved in Vercel. Do not share the key in chat or screenshots.
 Do not upgrade, add a payment method, enable Workspace/Gmail connectors or send
-private mail data. Private key setup and free-account model testing follow as
-separate steps. Vercel AI Gateway activation remains deferred. This status update
+private mail data. Private Vercel configuration and free-account model testing
+follow as separate steps. Vercel AI Gateway activation remains deferred. This status update
 changes documentation only; its diff check passed and runtime tests were not rerun.
 
 ## Smallest next implementation and costs
