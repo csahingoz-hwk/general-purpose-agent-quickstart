@@ -11,8 +11,8 @@ owner identity values, secrets, mail contents or connection strings into it.
 **Phase 0 is implemented on a feature branch, but acceptance is still pending.**
 Do not begin later implementation phases, merge PR #1, promote production or
 activate Gmail send as part of this documentation task. The next action is the
-owner's confirmation that Google consent returns to the assistant, followed by
-the chat persistence/model test in the protected preview.
+owner's chat response and persistence/model test in the protected preview;
+a subsequent iPhone screenshot now shows the chat and model selector after sign-in.
 The smallest subsequent implementation proposal is described in
 [NEXT_IMPLEMENTATION.md](NEXT_IMPLEMENTATION.md).
 
@@ -62,7 +62,7 @@ The smallest subsequent implementation proposal is described in
 
 | Area | What code currently does | What is not established |
 | --- | --- | --- |
-| Identity | Auth.js Google OIDC with identity-only scopes; verified email must match server-only owner setting; first owner login can create/reuse a database user ID. PKCE/state/nonce, JWT/session and request ownership checks are present. | The owner reports Google sign-in now works; the supplied iPhone screenshot shows identity consent. Return to the assistant, account provisioning and session behavior remain unconfirmed. Apple and app-native passkeys are not implemented. |
+| Identity | Auth.js Google OIDC with identity-only scopes; verified email must match server-only owner setting; first owner login can create/reuse a database user ID. PKCE/state/nonce, JWT/session and request ownership checks are present. | The owner reports Google sign-in works and a subsequent iPhone screenshot shows the chat/model picker. Longer-lived session behavior and stable database identity remain unverified. Apple and app-native passkeys are not implemented. |
 | Chat and models | AI SDK **6.0.116**, Next.js 16.4.5, Auth.js beta.32; model selection, streaming and existing Neon chat/message storage are retained. | A real authenticated cloud reply, model switch and reload persistence remain unconfirmed. |
 | Integrations | Broad Composio/Supermemory loading removed; no Gmail OAuth/read/send implementation. Guest, public signup and password sign-in disabled. | Google identity login grants no Gmail access. No real email capability is claimed. |
 | Scheduled work | Cron requires a configured matching bearer secret and then returns disabled; Vercel cron declaration removed; schedule creation and Telegram execution disabled. Owner list/delete code remains. | No cloud recurring execution. Existing cron utilities/rows are not a working scheduler. |
@@ -105,9 +105,10 @@ The owner reports that the latest Google sign-in fix worked. Their iPhone
 screenshot shows Google's consent screen requesting name/profile picture and
 email address only. This confirms progress beyond the earlier invalid-client
 error and agrees with the identity-only scope boundary. No Gmail permission is
-shown. The screenshot does not show the completed callback or assistant chat;
-those, message streaming, model selection and reload persistence still need
-confirmation. No new code, credentials or deployment settings were changed for
+shown. The initial screenshot did not show the callback or assistant chat. A subsequent
+iPhone screenshot now shows the chat and its model picker after sign-in, providing
+owner-supplied evidence that the chat opens. Message streaming, a model switch and
+reload persistence still need confirmation. No new code, credentials or deployment settings were changed for
 this status update. Existing test/build results above remain prior evidence;
 they were not rerun for this documentation-only edit.
 
@@ -116,8 +117,9 @@ they were not rerun for this documentation-only edit.
 - [x] Google recognizes the client and presents identity-only consent on iPhone;
       the owner reports the sign-in fix worked.
 
-- [ ] Owner signs in with Google on the protected preview in iPhone Safari/PWA;
-      callback succeeds and the expected chat opens. Confirm no stale error tab.
+- [x] Owner reports Google sign-in works and supplies an iPhone screenshot showing
+      the assistant chat/model picker. This is owner-supplied acceptance evidence;
+      no independent session/database inspection was performed.
 - [ ] Send a short English/Turkish message; an available model streams a response.
 - [ ] Refresh/reopen the same conversation and confirm both turns remain. Confirm
       the account ID is stable and any existing history remains attached.
@@ -137,6 +139,16 @@ they were not rerun for this documentation-only edit.
 - [ ] Owner reviews PR #1 and explicitly accepts Phase 0. Any merge and production
       deployment require their own explicit authorization; neither follows
       automatically from test results or an acceptance check.
+
+## Usability feedback — model choice
+
+The owner finds the long model menu confusing during the first chat test. The
+screenshot appears to show Claude Sonnet 4.6 selected; keep that selection for the
+first reply test rather than making the owner compare providers. Record a future
+UX recommendation for a clear default and an optional advanced model picker, with
+plain-language capability/cost information. This is feedback, not authorization
+to change the current model list, pricing assumptions or phase order. No model
+quality or cost benchmark has been performed for this recommendation.
 
 ## Smallest next implementation and costs
 
