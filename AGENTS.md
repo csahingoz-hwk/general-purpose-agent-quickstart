@@ -37,6 +37,14 @@ This repository is a **personal, noncommercial, cloud-hosted English/Turkish AI 
 - Cloud schedules: compare native Vercel Schedules against simpler cron/workflows at implementation time. Don't assume beta behaviour or cost limits are permanent.
 - Sandbox, GitHub automation and Mac control are **optional later**; the owner already uses another coding harness and does not need an assistant to replace it.
 
+## Cross-phase architecture before implementing models, UI or voice
+
+A preliminary end-to-end decision and evaluation contract now live in:
+- `docs/architecture/ADR-0001-unified-conversation-openui.md`
+- `docs/architecture/EXPERIENCE-BENCHMARK.md`
+
+**Read both** before changing `lib/ai/models.ts`, `lib/ai/providers.ts`, the chat API/renderer, realtime speech, or any tool approvals. **ADR status is proposed**, not a library selection or model quality claim. Keep the existing authenticated chat and Neon message parts as the authoritative shared conversation. Do not transplant the Open Intelligent UI demonstration's separate chat shell, endpoint or localStorage storage; OpenUI-first is a *hypothesis to measure* against json-render. Benchmark Groq GPT-OSS 20B and 120B on bilingual conversation, structured output validity, actual chart-data correctness, persistence, Safari UX and measured token/latency costs before assuming either qualifies. Preserve plain-text fallback and server-verified real-world actions. Do not make a free-tier-only model or any visual protocol the architectural lock-in.
+
 ## Communication expectations
 
 The owner is not a developer. Handle technical work autonomously within the
