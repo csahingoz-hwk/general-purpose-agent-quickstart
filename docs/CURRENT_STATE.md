@@ -24,8 +24,9 @@ The smallest subsequent implementation proposal is described in
   **open, draft, unmerged**, base `main`, head `security/owner-only-hardening`.
   Inspected head: `ed90b3a04b1be7a981f53692a5567895e835b8d7`.
 - Security code is not on main. The long-term vision must not bypass or replace it.
-- Documentation work: `docs/product-direction`, based on that security head.
-  Its PR targets `security/owner-only-hardening` so the review shows documentation
+- [Documentation PR #2](https://github.com/csahingoz-hwk/general-purpose-agent-quickstart/pull/2):
+  `docs/product-direction`, based on that security head, open in draft.
+  It targets `security/owner-only-hardening` so the review shows documentation
   only. This is a stacked documentation change, not a merge of the security PR.
   Do not retarget/merge either PR automatically.
 - The supplied AGENTS.md, PRODUCT_VISION.md and ROADMAP.md are retained verbatim;
