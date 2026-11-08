@@ -35,6 +35,9 @@ Branch: `security/owner-only-hardening`.
   milestones. Interactive UI, voice, Gmail and scheduling work has not started.
 - `.github/workflows/security.yml` now runs the security milestone checks on the
   PR without deployment credentials. Actions are pinned to immutable commit SHAs.
+- The lint script now invokes the pinned local Biome binary directly. The old
+  Ultracite wrapper downloaded a newer Biome version that rejected the existing
+  configuration; presets and lint rules remain unchanged.
 
 ## Delivery status
 
