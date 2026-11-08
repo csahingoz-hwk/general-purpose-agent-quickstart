@@ -149,15 +149,16 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
           ? [...request.messages].reverse().find((msg) => msg.role === "user")
           : undefined;
         const isToolApprovalContinuation =
-          !isRetry && (lastMessage?.role !== "user" ||
-          request.messages.some((msg) =>
-            msg.parts?.some((part) => {
-              const state = (part as { state?: string }).state;
-              return (
-                state === "approval-responded" || state === "output-denied"
-              );
-            })
-          ));
+          !isRetry &&
+          (lastMessage?.role !== "user" ||
+            request.messages.some((msg) =>
+              msg.parts?.some((part) => {
+                const state = (part as { state?: string }).state;
+                return (
+                  state === "approval-responded" || state === "output-denied"
+                );
+              })
+            ));
 
         return {
           body: {
