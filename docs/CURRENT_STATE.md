@@ -211,13 +211,18 @@ The owner is not a developer and explicitly requires step-by-step guidance with
 one clear next action at the end of each response. This is now a standing AGENTS.md
 instruction. If no owner input is needed, say so and continue authorized work.
 
-Recommended next owner step for evaluating the free-first route: open Groq Console
-and create/sign in to a free account. Do not add a card or upgrade. Report when the
-dashboard is open; provider eligibility/data controls and private key setup follow
-as separate guided steps. This is not evidence that an account, key or integration
-already exists, and does not authorize paid usage or sending sensitive integration
-data. Vercel AI Gateway activation remains deferred. Only documentation changed
-for this preference update; its diff check passed. Runtime tests were not rerun.
+The owner has opened Groq Console and supplied a dashboard screenshot showing
+zero token usage and an "Upgrade to Dev Plan" option. This is owner-provided
+account-access evidence, not a completed backend integration or independent
+verification of billing/quotas. No API key has been provided or connected.
+
+Next guided owner step: open Groq Data Controls and inspect/enable Zero Data
+Retention before creating a key. Official Groq documentation says this control
+is available to all customers; the actual account setting remains unverified.
+Do not upgrade, add a payment method, enable Workspace/Gmail connectors or send
+private mail data. Private key setup and free-account model testing follow as
+separate steps. Vercel AI Gateway activation remains deferred. This status update
+changes documentation only; its diff check passed and runtime tests were not rerun.
 
 ## Smallest next implementation and costs
 
