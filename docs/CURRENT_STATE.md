@@ -44,7 +44,7 @@ chats, asserts the drawer's real bounds and clicks the saved conversation.
 Measure slider-triggered calls after the existing tool/prose steps finish; a
 visible tool card does not mean its follow-up generation has ended.
 
-Latest baseline: `ea6fd35`; final CI run **42527245768** (see PR checks for status).
+Latest baseline: `ea6fd35`; final CI run **42527245768 passed every check**.
 The prior original migration protections remain: explicit composed-stream outcome,
 canonical/single-turn retry, direct PostgreSQL chat lock, same-ID partial-text
 replacement, no automatic tool-effect replay, constrained approvals, compact
@@ -53,7 +53,8 @@ model-facing tool results/full stored UI data, bounded artifacts and safe errors
 ## Phase B — separate premium-routing branch
 
 `feature/openai-premium-model-routing` is stacked on the verified SDK branch;
-its separate draft PR targets `feature/ai-sdk7-migration`. Production is untouched.
+[draft PR #10](https://github.com/csahingoz-hwk/general-purpose-agent-quickstart/pull/10)
+targets `feature/ai-sdk7-migration`. Production is untouched.
 See [implemented routing, official sources, prices, policy and setup](MODEL_ROUTING.md).
 
 - Default `gpt-6-luna`, selective `gpt-6.1-terra`: official OpenAI Responses API
@@ -85,7 +86,7 @@ See [implemented routing, official sources, prices, policy and setup](MODEL_ROUT
 - Locked install, TypeScript, Biome and production audit: PASS. Production audit
   zero findings; full graph retains one inherited low dev-only deepmerge/Ultracite
   advisory GHSA-gcqx-w48m-w2h4, no patch reported, no moderate/high/critical finding.
-- Security/SDK/premium policy regressions: **44/44 PASS**, including Responses
+- Security/SDK/premium policy regressions: **45/45 PASS**, including Responses
   adapter shape, token/cache accounting, schema validation before exposure,
   cancellation, actual multi-step tool no-replay and long inference context.
 - Integrated browser suites run actual Next routes, SDK adapters and PostgreSQL
@@ -96,6 +97,16 @@ See [implemented routing, official sources, prices, policy and setup](MODEL_ROUT
   transient fallback, billing exhaustion, retained messages, allowance stop before
   inference and atomic cross-request spending. See PR checks for final exact-head
   CI/mobile/build results; do not infer cloud acceptance from synthetic tests.
+- Local existing mobile suite 3/3, legacy integrated mobile 3/3, OpenAI integrated
+  mobile 3/3, spending tests 2/2, credential-free build and diff checks: PASS.
+  Token-limited output is treated as interrupted, with reported usage retained,
+  rather than silently accepting a truncated reply as complete.
+- Initial premium preview provisioning failed before compilation (no build logs):
+  Vercel reported `Resource provisioning failed`. A same-commit Preview-only retry
+  failed identically (`dpl_H1cbyLQzAjDiJ79gEYXiipddf81n`), still before build.
+  This is an unresolved Vercel provisioning blocker, not a compiler error or
+  evidence of live acceptance. No production/environment/credential configuration
+  changed, and no paid capacity was enabled.
 
 Real OpenAI inference, account quota/credit availability, real owner Google OAuth,
 Neon cloud acceptance, latency/bilingual quality and iPhone Safari remain pending.

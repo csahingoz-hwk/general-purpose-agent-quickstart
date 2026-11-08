@@ -473,3 +473,23 @@ test("cancelling a live provider stream stops generation and retains unknown-usa
   assert.equal(f.settled[0].outcome, "cancelled");
   assert.equal(f.settled[0].usage, undefined);
 });
+
+test("a token-limited partial reply remains interrupted and cannot silently fallback", async () => {
+  const f = fixture();
+  let calls = 0;
+  const model = createRoutedModel(LUNA, f.session, () => {
+    calls++;
+    return mock([
+      ...text("A partial answer").slice(0, -1),
+      {
+        ...complete,
+        finishReason: { unified: "length", raw: "max_output_tokens" },
+      },
+    ]);
+  });
+  await assert.rejects(collect(model), /model_unavailable/);
+  assert.equal(calls, 1);
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.settled[0].usage, usage);
+  assert.equal(f.settled[0].outcome, "unavailable");
+});

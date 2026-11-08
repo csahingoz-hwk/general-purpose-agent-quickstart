@@ -63,7 +63,8 @@ chat shell, Gmail connection, external action or voice service is introduced.
   Terra, or after text/reasoning/tool events are emitted. Once any tool call is
   emitted, the entire request is ineligible, including subsequent SDK steps and
   artifacts. This is deliberately conservative even for read-only tools.
-- Partial text remains visible/persisted as interrupted. Recovery uses the
+- Partial text remains visible/persisted as interrupted, including token-limit
+  finishes (not just transport disconnects). Reported usage is still charged. Recovery uses the
   existing explicit Retry action and canonical saved user input/same assistant
   ID; completed or tool-effect turns cannot automatically replay. Tool work needs
   a follow-up. A new provider does not erase these SDK 7 invariants.

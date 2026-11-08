@@ -158,6 +158,16 @@ export function createRoutedModel(
           const result = await factory(model).doGenerate(opts);
           usage = result.usage;
           if (
+            result.finishReason.unified === "length" ||
+            result.finishReason.unified === "error"
+          ) {
+            throw new ModelFailure(
+              params.responseFormat?.type === "json"
+                ? "structured"
+                : "unavailable"
+            );
+          }
+          if (
             params.responseFormat?.type === "json" &&
             params.responseFormat.schema
           ) {
@@ -229,6 +239,14 @@ export function createRoutedModel(
                   }
                   if (part.type === "finish") {
                     usage = part.usage;
+                    if (
+                      part.finishReason.unified === "length" ||
+                      part.finishReason.unified === "error"
+                    ) {
+                      throw new ModelFailure(
+                        structured ? "structured" : "unavailable"
+                      );
+                    }
                     finished = true;
                   }
                   if (structured) {
