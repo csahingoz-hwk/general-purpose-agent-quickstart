@@ -93,7 +93,9 @@ test("phone-sized readiness, selection and failed-send preservation", async () =
     assert.equal(await page.getByTestId("send-button").isEnabled(), true);
     await page.getByTestId("model-selector").click();
     // Exercise model selection without depending on popover animation stability.
-    await page.getByRole("option", { name: /Detailed chat/ }).dispatchEvent("click");
+    await page
+      .getByRole("option", { name: /Detailed chat/ })
+      .dispatchEvent("click");
     await expect(page.getByTestId("model-selector")).toHaveText(
       "Detailed chat"
     );
