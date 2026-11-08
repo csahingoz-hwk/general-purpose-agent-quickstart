@@ -54,7 +54,10 @@ test("phone-sized readiness, selection and failed-send preservation", async () =
     assert.equal(unavailable.status, "setup_required");
     const input = page.getByTestId("multimodal-input").last();
     await input.fill("Merhaba, hello — keep this draft");
-    assert.equal(await page.getByTestId("send-button").isDisabled(), true);
+    assert.equal(
+      await page.getByTestId("send-button").last().isDisabled(),
+      true
+    );
     assert.equal(await page.getByTestId("model-selector").count(), 0);
     assert.equal(
       await page.getByText("Activate AI Gateway", { exact: true }).count(),
@@ -91,7 +94,10 @@ test("phone-sized readiness, selection and failed-send preservation", async () =
     await page.reload();
     await page.getByTestId("model-selector").waitFor();
     assert.equal(await input.inputValue(), "Merhaba, hello — keep this draft");
-    assert.equal(await page.getByTestId("send-button").isEnabled(), true);
+    assert.equal(
+      await page.getByTestId("send-button").last().isEnabled(),
+      true
+    );
     await page.getByTestId("model-selector").click();
     // Exercise model selection without depending on popover animation stability.
     await page
@@ -126,7 +132,7 @@ test("phone-sized readiness, selection and failed-send preservation", async () =
     const failedResponse = page.waitForResponse(
       (r) => r.url().endsWith("/api/chat") && r.status() === 503
     );
-    await page.getByTestId("send-button").click();
+    await page.getByTestId("send-button").last().click();
     await failedResponse;
     await page
       .getByText(/Chat is not ready yet/)
@@ -326,6 +332,78 @@ test("fictional inbox stays visible in a saved chat and responds locally", async
     console.log(
       "PASS: fictional inbox chart renders, filters locally, never sends, and survives chat reload"
     );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("pending weather tool displays a loading card instead of raw arguments", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      reducedMotion: "reduce",
+    });
+    const token = await encode({
+      secret,
+      salt: "authjs.session-token",
+      token: { id: userId, email: owner, type: "regular" },
+    });
+    await context.addCookies([
+      { name: "authjs.session-token", value: token, url: origin },
+    ]);
+    const chatId = "105ab43c-cf80-41b7-a098-31c2db5fad41";
+    const createdAt = new Date().toISOString();
+    const page = await context.newPage();
+    await page.route("**/a-4-a/c.js*", (route) =>
+      route.fulfill({
+        contentType: "application/javascript",
+        body: "window.V_C.push({b:1,d:0});",
+      })
+    );
+    await page.route("**/api/history*", (route) =>
+      route.fulfill({ json: { chats: [], hasMore: false } })
+    );
+    await page.route("**/api/messages?*", (route) =>
+      route.fulfill({
+        json: {
+          messages: [
+            {
+              id: "0abc29fa-8490-42fc-a0b7-dab4fb3d9bbb",
+              role: "user",
+              parts: [{ type: "text", text: "Weather for London" }],
+              metadata: { createdAt },
+            },
+            {
+              id: "1abc29fa-8490-42fc-a0b7-dab4fb3d9bbb",
+              role: "assistant",
+              parts: [
+                {
+                  type: "tool-getWeather",
+                  toolCallId: "synthetic-weather-pending",
+                  state: "input-available",
+                  input: { city: "London", latitude: 51.5 },
+                },
+              ],
+              metadata: { createdAt },
+            },
+          ],
+          visibility: "private",
+          userId,
+          isReadonly: false,
+        },
+      })
+    );
+    await page.goto(`${origin}/chat/${chatId}`);
+    await expect(
+      page.getByRole("status", {
+        name: "Loading weather forecast",
+      })
+    ).toHaveCount(1);
+    await expect(page.getByText("synthetic-weather-pending")).toHaveCount(0);
+    await expect(page.locator("pre")).toHaveCount(0);
+    await expect(page.getByText('"latitude"')).toHaveCount(0);
+    console.log("PASS: weather lookup displays no raw tool arguments");
   } finally {
     await browser.close();
   }

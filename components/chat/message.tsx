@@ -156,6 +156,19 @@ const PurePreviewMessage = ({
       const widthClass = "w-[min(100%,450px)]";
 
       if (state === "output-available") {
+        if ("error" in part.output) {
+          return (
+            <p
+              className={`${widthClass} rounded-xl border border-border bg-muted/50 p-3 text-sm text-muted-foreground`}
+              key={toolCallId}
+              role="alert"
+            >
+              The weather forecast could not be loaded. Please try another
+              location.
+            </p>
+          );
+        }
+
         return (
           <div className={widthClass} key={toolCallId}>
             <Weather weatherAtLocation={part.output} />
@@ -165,72 +178,74 @@ const PurePreviewMessage = ({
 
       if (isDenied) {
         return (
-          <div className={widthClass} key={toolCallId}>
-            <Tool className="w-full" defaultOpen={true}>
-              <ToolHeader state="output-denied" type="tool-getWeather" />
-              <ToolContent>
-                <div className="px-4 py-3 text-muted-foreground text-sm">
-                  Weather lookup was denied.
-                </div>
-              </ToolContent>
-            </Tool>
-          </div>
+          <p
+            className={`${widthClass} rounded-xl bg-muted/50 p-3 text-sm text-muted-foreground`}
+            key={toolCallId}
+          >
+            Weather lookup was denied.
+          </p>
         );
       }
 
-      if (state === "approval-responded") {
+      if (state === "output-error") {
+        return (
+          <p
+            className={`${widthClass} rounded-xl border border-border bg-muted/50 p-3 text-sm text-muted-foreground`}
+            key={toolCallId}
+            role="alert"
+          >
+            The weather forecast could not be loaded. Please try again.
+          </p>
+        );
+      }
+
+      if (state === "approval-requested" && approvalId) {
         return (
           <div className={widthClass} key={toolCallId}>
-            <Tool className="w-full" defaultOpen={true}>
-              <ToolHeader state={state} type="tool-getWeather" />
-              <ToolContent>
-                <ToolInput input={part.input} />
-              </ToolContent>
-            </Tool>
+            <div className="rounded-xl border border-border bg-card p-3">
+              <p className="mb-3 text-sm">Allow this weather lookup?</p>
+              <div className="flex justify-end gap-2">
+                <button
+                  className="rounded-md border border-border px-3 py-2 text-sm"
+                  onClick={() =>
+                    addToolApprovalResponse({
+                      id: approvalId,
+                      approved: false,
+                      reason: "User denied weather lookup",
+                    })
+                  }
+                  type="button"
+                >
+                  Deny
+                </button>
+                <button
+                  className="rounded-md bg-primary px-3 py-2 text-primary-foreground text-sm"
+                  onClick={() =>
+                    addToolApprovalResponse({ id: approvalId, approved: true })
+                  }
+                  type="button"
+                >
+                  Allow
+                </button>
+              </div>
+            </div>
           </div>
         );
       }
 
+      // An unfinished tool call is not the answer: never show raw arguments
+      // (ToolInput/JSON) while the model or the weather API is still working.
       return (
-        <div className={widthClass} key={toolCallId}>
-          <Tool className="w-full" defaultOpen={true}>
-            <ToolHeader state={state} type="tool-getWeather" />
-            <ToolContent>
-              {(state === "input-available" ||
-                state === "approval-requested") && (
-                <ToolInput input={part.input} />
-              )}
-              {state === "approval-requested" && approvalId && (
-                <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
-                  <button
-                    className="rounded-md px-3 py-1.5 text-muted-foreground text-sm transition-colors hover:bg-muted hover:text-foreground"
-                    onClick={() => {
-                      addToolApprovalResponse({
-                        id: approvalId,
-                        approved: false,
-                        reason: "User denied weather lookup",
-                      });
-                    }}
-                    type="button"
-                  >
-                    Deny
-                  </button>
-                  <button
-                    className="rounded-md bg-primary px-3 py-1.5 text-primary-foreground text-sm transition-colors hover:bg-primary/90"
-                    onClick={() => {
-                      addToolApprovalResponse({
-                        id: approvalId,
-                        approved: true,
-                      });
-                    }}
-                    type="button"
-                  >
-                    Allow
-                  </button>
-                </div>
-              )}
-            </ToolContent>
-          </Tool>
+        <div
+          className={`${widthClass} space-y-3 rounded-2xl border border-border bg-muted/40 p-4`}
+          key={toolCallId}
+        >
+          <output aria-label="Loading weather forecast" className="sr-only">
+            Preparing your weather card…
+          </output>
+          <div className="h-3 w-28 animate-pulse rounded-full bg-muted-foreground/20 motion-reduce:animate-none" />
+          <div className="h-8 w-24 animate-pulse rounded-lg bg-muted-foreground/20 motion-reduce:animate-none" />
+          <div className="h-12 w-full animate-pulse rounded-xl bg-muted-foreground/10 motion-reduce:animate-none" />
         </div>
       );
     }
