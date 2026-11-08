@@ -16,6 +16,7 @@ export type FictionalInboxMessage = {
 
 export type FictionalInboxResult = {
   kind: "fictional-inbox";
+  language: "en" | "tr";
   fixtureId: "inbox-demo-v1";
   disclaimer: string;
   messages: FictionalInboxMessage[];
@@ -36,9 +37,12 @@ const FIXTURE: FictionalInboxMessage[] = [
   { id: "demo-12", sender: "support@example.test", subject: "Help article", category: "Personal", priority: 2, needsReply: false },
 ];
 
-export function createFictionalInbox(): FictionalInboxResult {
+export function createFictionalInbox(
+  language: "en" | "tr" = "en"
+): FictionalInboxResult {
   return {
     kind: "fictional-inbox",
+    language,
     fixtureId: "inbox-demo-v1",
     disclaimer: "Fictional sample data. No personal Gmail or other account was accessed.",
     messages: FIXTURE.map((item) => ({ ...item })),
@@ -48,6 +52,8 @@ export function createFictionalInbox(): FictionalInboxResult {
 export const demoInbox = tool({
   description:
     "Display an INTERACTIVE DEMO of a completely fictional email inbox containing 12 sample messages. Use only if the user explicitly asks to see a fictional/mock/test inbox, a demo chart, or an interactive inbox UI experiment. NEVER use this for a question about the user's actual emails. This does NOT connect to Gmail.",
-  inputSchema: z.object({}),
-  execute: async () => createFictionalInbox(),
+  inputSchema: z.object({
+    language: z.enum(["en", "tr"]).optional().describe("Use tr for a Turkish request, otherwise en."),
+  }),
+  execute: async ({ language }) => createFictionalInbox(language),
 });
