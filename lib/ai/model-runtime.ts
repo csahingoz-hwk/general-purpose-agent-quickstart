@@ -2,6 +2,8 @@ import "server-only";
 import { GROQ_BASE_URL, parseVerification } from "./groq-verification";
 import { type ChatModel, chatModels, DEFAULT_CHAT_MODEL } from "./models";
 import {
+  gatewayCredential,
+  gatewayEnabled,
   isPremiumModel,
   legacyEnabled,
   openAIEnabled,
@@ -23,21 +25,30 @@ export async function getModelAvailability() {
       defaultModelId: null,
       checkedAt: null,
     };
-    if (!openAIEnabled()) {
+    const useGateway = gatewayEnabled();
+    if (!useGateway && !openAIEnabled()) {
       return empty;
     }
-    const key = process.env.OPENAI_API_KEY?.trim() ?? "";
-    if (premiumCache?.key === key && premiumCache.expires > Date.now()) {
+    const key = useGateway
+      ? (gatewayCredential() ?? "")
+      : (process.env.OPENAI_API_KEY?.trim() ?? "");
+    const cacheKey = `${useGateway ? "gateway" : "openai"}:${key}`;
+    if (premiumCache?.key === cacheKey && premiumCache.expires > Date.now()) {
       return premiumCache.result;
     }
     try {
-      const response = await fetch("https://api.openai.com/v1/models", {
+      const response = await fetch(
+        useGateway
+          ? "https://ai-gateway.vercel.sh/v1/models"
+          : "https://api.openai.com/v1/models",
+        {
         headers: {
           authorization: `Bearer ${process.env.OPENAI_API_KEY?.trim()}`,
         },
         cache: "no-store",
         signal: AbortSignal.timeout(8000),
-      });
+        }
+      );
       if (!response.ok) {
         return { ...empty, status: "temporarily_unavailable" as const };
       }
@@ -46,7 +57,9 @@ export async function getModelAvailability() {
         (body.data ?? []).map((model: { id: string }) => model.id)
       );
       const models = chatModels.filter(
-        (model) => isPremiumModel(model.id) && listed.has(model.id)
+        (model) =>
+          isPremiumModel(model.id) &&
+          listed.has(useGateway ? `openai/${model.id}` : model.id)
       );
       // Luna must be available; never silently replace the default with Terra.
       if (!models.some((model) => model.id === DEFAULT_CHAT_MODEL)) {
@@ -58,7 +71,7 @@ export async function getModelAvailability() {
         defaultModelId: DEFAULT_CHAT_MODEL,
         checkedAt: new Date().toISOString(),
       };
-      premiumCache = { key, expires: Date.now() + 60_000, result };
+      premiumCache = { key: cacheKey, expires: Date.now() + 60_000, result };
       return result;
     } catch {
       return { ...empty, status: "temporarily_unavailable" as const };
