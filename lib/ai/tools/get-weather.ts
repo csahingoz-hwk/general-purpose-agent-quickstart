@@ -41,7 +41,7 @@ export const getWeather = tool({
       .optional(),
   }),
   toModelOutput: ({ output }) => {
-    if ("error" in output) {
+    if (output && typeof output === "object" && "error" in output) {
       return { type: "text", value: String(output.error) } as const;
     }
     // The weather card keeps all hourly/daily data; the model receives only
