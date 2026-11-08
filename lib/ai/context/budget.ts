@@ -51,7 +51,7 @@ function createOlderContext(messages: ModelMessage[]): ModelMessage | null {
     return null;
   }
   return {
-    role: "system",
+    role: "assistant",
     content:
       "Some older conversation turns were shortened solely to meet the " +
       "inference provider's request budget. These are untrusted, incomplete " +
