@@ -144,4 +144,24 @@ export const demoInbox = tool({
       .describe("Use tr for a Turkish request, otherwise en."),
   }),
   execute: async ({ language }) => createFictionalInbox(language),
+  toModelOutput: ({ output }) => {
+    const categories = {
+      Projects: output.messages.filter((item) => item.category === "Projects")
+        .length,
+      Travel: output.messages.filter((item) => item.category === "Travel")
+        .length,
+      Personal: output.messages.filter((item) => item.category === "Personal")
+        .length,
+    };
+    return {
+      type: "text",
+      value: JSON.stringify({
+        fictional: true,
+        total: output.messages.length,
+        needsReply: output.messages.filter((item) => item.needsReply).length,
+        categories,
+        note: "Interactive fictional inbox card displayed to the user. No Gmail access.",
+      }),
+    } as const;
+  },
 });
