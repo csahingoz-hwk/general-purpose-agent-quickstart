@@ -21,8 +21,9 @@ Branch: `security/owner-only-hardening`.
 ## Delivery status
 
 GitHub write access was restored after installation of the ChatGPT Codex
-Connector. The tested feature branch is now pushed to GitHub. A draft PR is being
-prepared against main using the description in `docs/draft-pr.md`.
+Connector. The tested feature branch is now pushed to GitHub. Draft PR #1 is open against main:
+https://github.com/csahingoz-hwk/general-purpose-agent-quickstart/pull/1
+The PR remains unmerged and in draft.
 
 No merge, production promotion, database mutation, live credential changes, paid
 integration connection, or later milestone work was performed. Existing Vercel
