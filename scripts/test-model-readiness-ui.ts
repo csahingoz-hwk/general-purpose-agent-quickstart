@@ -143,7 +143,6 @@ test("phone-sized readiness, selection and failed-send preservation", async () =
   }
 });
 
-
 test("mobile History reliably reopens persisted messages after full navigation and reload", async () => {
   const browser = await chromium.launch({ headless: true });
   try {
