@@ -31,7 +31,10 @@ test("ordinary chat sends no expensive tool schema", () => {
     ["getWeather"]
   );
   assert.deepEqual(
-    selectActiveTools([user("Can you show a fictional inbox demo chart?")], true),
+    selectActiveTools(
+      [user("Can you show a fictional inbox demo chart?")],
+      true
+    ),
     ["demoInbox"]
   );
 });
@@ -91,7 +94,7 @@ test("long chats shrink only the model copy and retain latest user message", () 
 
 test("budget detects a genuinely oversized latest request instead of truncating it", () => {
   const result = budgetModelMessages({
-    messages: [{ role: "user", content: "A".repeat(15000) }],
+    messages: [{ role: "user", content: "A".repeat(15_000) }],
     system: "Helpful assistant",
     toolCount: 1,
     requestBudget: 3400,
@@ -116,9 +119,15 @@ test("provider errors become brief bilingual messages without private details", 
     assert.ok(!value.includes("8266"));
     assert.ok(value.length < 260);
   }
-  assert.match(safeModelError(upstream, "Türkçe cevap verir misin?"), /sınırını/);
   assert.match(
-    safeModelError(Object.assign(new Error("rate limit"), { statusCode: 429 }), "Hello"),
+    safeModelError(upstream, "Türkçe cevap verir misin?"),
+    /sınırını/
+  );
+  assert.match(
+    safeModelError(
+      Object.assign(new Error("rate limit"), { statusCode: 429 }),
+      "Hello"
+    ),
     /limit/
   );
 });
