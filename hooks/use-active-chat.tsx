@@ -185,7 +185,8 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       // composer would create a second turn when sent again.
       toast({
         type: "error",
-        description: "Couldn't finish this reply. Tap Retry response to continue.",
+        description:
+          "Couldn't finish this reply. Tap Retry response to continue.",
       });
     },
   });
