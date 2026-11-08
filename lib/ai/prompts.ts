@@ -89,10 +89,12 @@ export const systemPrompt = ({
   supportsTools,
   soul,
   needsOnboarding = false,
+  includeArtifacts = true,
 }: {
   supportsTools: boolean;
   soul?: string | null;
   needsOnboarding?: boolean;
+  includeArtifacts?: boolean;
 }) => {
   const soulBlock = buildSoulPrompt(soul);
   const onboardingBlock = needsOnboarding ? `${ONBOARDING_PROMPT}\n\n` : "";
@@ -101,7 +103,7 @@ export const systemPrompt = ({
     return `${onboardingBlock}${soulBlock}\n\n${regularPrompt}`;
   }
 
-  return `${onboardingBlock}${soulBlock}\n\n${regularPrompt}\n\n${artifactsPrompt}`;
+  return `${onboardingBlock}${soulBlock}\n\n${regularPrompt}${includeArtifacts ? `\n\n${artifactsPrompt}` : ""}`;
 };
 
 export const codePrompt = `

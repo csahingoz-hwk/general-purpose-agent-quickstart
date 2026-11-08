@@ -77,7 +77,6 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
   }, [currentModelId]);
 
   const [input, setInput] = useState("");
-  const lastSubmittedText = useRef("");
   const { data: modelAvailability } = useSWR(
     `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/models`,
     fetcher,
@@ -145,29 +144,30 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       fetch: fetchWithErrorHandlers,
       prepareSendMessagesRequest(request) {
         const lastMessage = request.messages.at(-1);
-        if (lastMessage?.role === "user") {
-          lastSubmittedText.current = lastMessage.parts
-            .filter((part) => part.type === "text")
-            .map((part) => part.text)
-            .join("\n");
-        }
+        const isRetry = request.trigger === "regenerate-message";
+        const retryUserMessage = isRetry
+          ? [...request.messages].reverse().find((msg) => msg.role === "user")
+          : undefined;
         const isToolApprovalContinuation =
-          lastMessage?.role !== "user" ||
-          request.messages.some((msg) =>
-            msg.parts?.some((part) => {
-              const state = (part as { state?: string }).state;
-              return (
-                state === "approval-responded" || state === "output-denied"
-              );
-            })
-          );
+          !isRetry &&
+          (lastMessage?.role !== "user" ||
+            request.messages.some((msg) =>
+              msg.parts?.some((part) => {
+                const state = (part as { state?: string }).state;
+                return (
+                  state === "approval-responded" || state === "output-denied"
+                );
+              })
+            ));
 
         return {
           body: {
             id: request.id,
-            ...(isToolApprovalContinuation
-              ? { messages: request.messages }
-              : { message: lastMessage }),
+            ...(isRetry
+              ? { message: retryUserMessage, retry: true }
+              : isToolApprovalContinuation
+                ? { messages: request.messages }
+                : { message: lastMessage }),
             selectedChatModel: currentModelIdRef.current,
             selectedVisibilityType: visibility,
             ...request.body,
@@ -181,13 +181,13 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
     onFinish: () => {
       mutate(unstable_serialize(getChatHistoryPaginationKey));
     },
-    onError: (error) => {
-      setInput((current) => current || lastSubmittedText.current);
+    onError: () => {
+      // The message was already persisted by the API. Restoring it to the
+      // composer would create a second turn when sent again.
       toast({
         type: "error",
         description:
-          error.message ||
-          "The chat model is temporarily unavailable. Your message is preserved.",
+          "Couldn't finish this reply. Tap Retry response to continue.",
       });
     },
   });

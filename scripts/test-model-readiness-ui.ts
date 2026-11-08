@@ -54,7 +54,10 @@ test("phone-sized readiness, selection and failed-send preservation", async () =
     assert.equal(unavailable.status, "setup_required");
     const input = page.getByTestId("multimodal-input").last();
     await input.fill("Merhaba, hello — keep this draft");
-    assert.equal(await page.getByTestId("send-button").isDisabled(), true);
+    assert.equal(
+      await page.getByTestId("send-button").last().isDisabled(),
+      true
+    );
     assert.equal(await page.getByTestId("model-selector").count(), 0);
     assert.equal(
       await page.getByText("Activate AI Gateway", { exact: true }).count(),
@@ -91,7 +94,10 @@ test("phone-sized readiness, selection and failed-send preservation", async () =
     await page.reload();
     await page.getByTestId("model-selector").waitFor();
     assert.equal(await input.inputValue(), "Merhaba, hello — keep this draft");
-    assert.equal(await page.getByTestId("send-button").isEnabled(), true);
+    assert.equal(
+      await page.getByTestId("send-button").last().isEnabled(),
+      true
+    );
     await page.getByTestId("model-selector").click();
     // Exercise model selection without depending on popover animation stability.
     await page
@@ -126,19 +132,21 @@ test("phone-sized readiness, selection and failed-send preservation", async () =
     const failedResponse = page.waitForResponse(
       (r) => r.url().endsWith("/api/chat") && r.status() === 503
     );
-    await page.getByTestId("send-button").click();
+    await page.getByTestId("send-button").last().click();
     await failedResponse;
     await page
-      .getByText(/Chat is not ready yet/)
+      .getByText(/Couldn't finish this reply/)
       .first()
       .waitFor();
-    assert.equal(await input.inputValue(), "Merhaba, hello — keep this draft");
+    await page.getByTestId("retry-response").waitFor();
+    assert.equal(await page.getByTestId("message-user").count(), 1);
+    assert.equal(await input.inputValue(), "");
     assert.equal(
       await page.getByText("Activate AI Gateway", { exact: true }).count(),
       0
     );
     console.log(
-      "PASS: a failed send restores input and does not offer billing activation"
+      "PASS: failed send exposes one Retry action, no duplicate user turn, no billing activation"
     );
   } finally {
     await browser.close();

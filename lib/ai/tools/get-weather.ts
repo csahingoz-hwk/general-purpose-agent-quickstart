@@ -40,6 +40,31 @@ export const getWeather = tool({
       .describe("City name (e.g., 'San Francisco', 'New York', 'London')")
       .optional(),
   }),
+  toModelOutput: ({ output }) => {
+    if (output && typeof output === "object" && "error" in output) {
+      return { type: "text", value: String(output.error) } as const;
+    }
+    // The weather card keeps all hourly/daily data; the model receives only
+    // the essential forecast so later turns don't replay huge JSON arrays.
+    const forecast = output as {
+      cityName?: string;
+      current?: { time?: string; temperature_2m?: number };
+      current_units?: { temperature_2m?: string };
+      daily?: { sunrise?: string[]; sunset?: string[] };
+    };
+    return {
+      type: "text",
+      value: JSON.stringify({
+        city: forecast.cityName ?? "requested location",
+        time: forecast.current?.time,
+        temperature: forecast.current?.temperature_2m,
+        unit: forecast.current_units?.temperature_2m,
+        sunrise: forecast.daily?.sunrise?.[0],
+        sunset: forecast.daily?.sunset?.[0],
+        note: "Full forecast available to the client weather card.",
+      }),
+    } as const;
+  },
   execute: async (input) => {
     let latitude: number;
     let longitude: number;
