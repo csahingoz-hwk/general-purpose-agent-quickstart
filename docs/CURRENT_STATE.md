@@ -11,8 +11,9 @@ owner identity values, secrets, mail contents or connection strings into it.
 **Phase 0 is implemented on a feature branch, but acceptance is still pending.**
 Do not begin later implementation phases, merge PR #1, promote production or
 activate Gmail send as part of this documentation task. The next action is the
-owner's chat response and persistence/model test in the protected preview;
-a subsequent iPhone screenshot now shows the chat and model selector after sign-in.
+owner's decision on AI Gateway payment-method verification. The chat is
+accessible after sign-in, but the first reply test shows an Activate AI Gateway
+dialog. Do not activate billing or purchase credits without explicit approval.
 The smallest subsequent implementation proposal is described in
 [NEXT_IMPLEMENTATION.md](NEXT_IMPLEMENTATION.md).
 
@@ -63,7 +64,7 @@ The smallest subsequent implementation proposal is described in
 | Area | What code currently does | What is not established |
 | --- | --- | --- |
 | Identity | Auth.js Google OIDC with identity-only scopes; verified email must match server-only owner setting; first owner login can create/reuse a database user ID. PKCE/state/nonce, JWT/session and request ownership checks are present. | The owner reports Google sign-in works and a subsequent iPhone screenshot shows the chat/model picker. Longer-lived session behavior and stable database identity remain unverified. Apple and app-native passkeys are not implemented. |
-| Chat and models | AI SDK **6.0.116**, Next.js 16.4.5, Auth.js beta.32; model selection, streaming and existing Neon chat/message storage are retained. | A real authenticated cloud reply, model switch and reload persistence remain unconfirmed. |
+| Chat and models | AI SDK **6.0.116**, Next.js 16.4.5, Auth.js beta.32; model selection, streaming and existing Neon chat/message storage are retained. | The first owner reply attempt shows an AI Gateway activation dialog; streaming, model switching and reload persistence remain unconfirmed. A model appearing in the menu does not establish funded/provider access. |
 | Integrations | Broad Composio/Supermemory loading removed; no Gmail OAuth/read/send implementation. Guest, public signup and password sign-in disabled. | Google identity login grants no Gmail access. No real email capability is claimed. |
 | Scheduled work | Cron requires a configured matching bearer secret and then returns disabled; Vercel cron declaration removed; schedule creation and Telegram execution disabled. Owner list/delete code remains. | No cloud recurring execution. Existing cron utilities/rows are not a working scheduler. |
 | Memory | Chat history and a per-user soul/profile prompt with editor/tool remain in code. | No validated general long-term memory/retrieval system. The paid memory demo is disabled. |
@@ -149,6 +150,34 @@ UX recommendation for a clear default and an optional advanced model picker, wit
 plain-language capability/cost information. This is feedback, not authorization
 to change the current model list, pricing assumptions or phase order. No model
 quality or cost benchmark has been performed for this recommendation.
+
+## Current blocker — AI Gateway activation (8 November 2026)
+
+The owner's first chat attempt displayed "Activate AI Gateway". Source inspection
+of `components/chat/shell.tsx`, `app/(chat)/api/chat/route.ts` and `lib/errors.ts`
+shows this dialog handles the gateway payment-method requirement and opens Vercel's
+add-card screen. A targeted preview log query returned no matching records, so no
+specific runtime error/status was independently recovered from logs.
+
+Current official [getting-started documentation](https://vercel.com/docs/ai-gateway/getting-started)
+requires a valid payment method to use free credits. The
+[FAQ](https://vercel.com/docs/ai-gateway/faq) describes
+`customer_verification_required` for missing verification. Switching models does
+not bypass this account requirement. The
+[pricing documentation](https://vercel.com/docs/ai-gateway/pricing) says free
+credits cover a subset of models and purchased credits transition the account
+to the paid tier; auto top-up can charge the saved payment method. No free-credit
+amount, account balance, charge or supported free model is assumed here.
+
+The owner must review the activation/credits screen privately and approve the
+relevant billing action before any activation or purchase. Proposed initial path:
+use available free credits with an eligible model and leave automatic top-ups
+and optional paid add-ons disabled. This proposal is not yet approval. No payment
+method, credits, keys, budgets or service configuration was changed, and no live
+model request was made by the agent. No new code or tests were added. Only the
+documentation diff check was run for this status update; earlier build/test
+results remain earlier evidence. Phase 0 stays open until a real reply and
+persistence checks can complete.
 
 ## Smallest next implementation and costs
 
