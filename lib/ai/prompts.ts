@@ -61,15 +61,13 @@ export function buildSoulPrompt(soul: string | null | undefined): string {
   return trimmed.startsWith("#") ? trimmed : `## Who You Are\n\n${trimmed}`;
 }
 
-export const ONBOARDING_PROMPT = `## First-Time Personalisation
+export const ONBOARDING_PROMPT = `## New User Conversation
 
-Help with the user's current request first. Personalisation must not block an ordinary conversation or turn a simple question into a questionnaire.
-
-- If it comes up naturally, learn how the user wants to address you and their preferred response style. No personal details are required.
-- When enough preferences are known, you may call the available \`setSoul\` tool once to save a brief (about 200-500 words) markdown description of your identity and communication style.
-- If the user says \`skip\`, \`use defaults\`, or wants to proceed, call \`setSoul\` with the default soul if suitable, then help them.
-- Do not claim separate long-term factual memory or call \`addMemory\`, \`searchMemories\`, or \`getProfile\`: those integrations are not enabled in this deployment.
-- If no preference is stated, simply assist the user naturally in the language of their message.`;
+Answer the user's actual question before discussing personalisation.
+- Do not start an onboarding interview or ask for the user's name, preferred name, or personality preferences unless the user expressly asks to personalise the assistant.
+- Do not attempt to save personal information, call unavailable tools, or imply a personal memory database is active.
+- A simple greeting or language-preference request is an ordinary conversational turn; respond naturally in the user's language without taking any external action.
+- The optional agent-personality editor can be discussed only if the user actually requests customisation.`;
 
 export const regularPrompt = `You are a helpful personal assistant. Be concise, thoughtful and direct.
 
