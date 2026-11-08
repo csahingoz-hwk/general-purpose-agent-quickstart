@@ -1,5 +1,5 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
-import { ArrowDownIcon } from "lucide-react";
+import { ArrowDownIcon, RotateCcwIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useMessages } from "@/hooks/use-messages";
 import type { Vote } from "@/lib/db/schema";
@@ -98,6 +98,24 @@ function PureMessages({
               }
             />
           ))}
+
+          {!isReadonly &&
+            (status === "error" ||
+              (status === "ready" &&
+                messages.length > 0 &&
+                messages.at(-1)?.role === "user")) && (
+              <div className="flex justify-start pl-10">
+                <button
+                  className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-muted"
+                  data-testid="retry-response"
+                  onClick={() => regenerate({ body: { retry: true } })}
+                  type="button"
+                >
+                  <RotateCcwIcon className="size-4" />
+                  Retry response
+                </button>
+              </div>
+            )}
 
           {status === "submitted" && messages.at(-1)?.role !== "assistant" && (
             <ThinkingMessage />
