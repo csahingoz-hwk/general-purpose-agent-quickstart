@@ -33,7 +33,8 @@ export function failureKind(error: unknown): Failure {
   }
   const code = e?.data?.error?.code ?? e?.code ?? e?.data?.error?.type ?? "";
   if (
-    /insufficient_quota|credit_balance|spend_limit|usage_limit|billing/.test(
+    e?.statusCode === 402 ||
+    /insufficient_funds|quota_for_entity_exceeded|customer_verification_required|insufficient_quota|credit_balance|spend_limit|usage_limit|billing/.test(
       code
     )
   ) {
