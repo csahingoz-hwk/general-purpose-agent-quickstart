@@ -315,6 +315,9 @@ test("fictional inbox stays visible in a saved chat and responds locally", async
 
     const slider = page.getByTestId("demo-inbox-slider");
     await slider.focus();
+    // The composer's delayed autofocus used to steal focus from this card.
+    await page.waitForTimeout(200);
+    await expect(slider).toBeFocused();
     await slider.press("End");
     await expect(page.getByTestId("demo-inbox-priority")).toHaveText("5 / 5");
     await expect(page.getByTestId("demo-inbox-count")).toHaveText("2");

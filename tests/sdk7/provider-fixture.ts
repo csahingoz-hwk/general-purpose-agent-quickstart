@@ -142,9 +142,21 @@ globalThis.fetch = async (input, options) => {
           controller.error(new Error("org_private123 upstream disconnected"));
           return;
         }
-        controller.enqueue(
-          new TextEncoder().encode(`${payload}data: [DONE]\n\n`)
-        );
+        // Keep the stream open after visible text, as real providers do while
+        // finishing usage/stop frames. This exposes early-follow-up UI races.
+        if (/Merhaba/.test(prompt) && !name) {
+          controller.enqueue(
+            new TextEncoder().encode(chunk({ content: text }))
+          );
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+          controller.enqueue(
+            new TextEncoder().encode(`${chunk({}, "stop")}data: [DONE]\n\n`)
+          );
+        } else {
+          controller.enqueue(
+            new TextEncoder().encode(`${payload}data: [DONE]\n\n`)
+          );
+        }
         controller.close();
       },
     }),

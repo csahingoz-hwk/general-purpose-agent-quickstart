@@ -111,3 +111,34 @@ setup if needed. Continue cloud acceptance afterward; no merge/production action
 is implied. The owner is not a developer: always end each response with one clear
 next action, never ask for credentials in chat, and say no action is needed while
 work can continue independently. Update this file after the next milestone.
+
+## Phase A follow-up — lost bilingual follow-up diagnosis
+
+Run 42524007091 **failed** (the earlier handoff's pending status was not a pass).
+Reproduced its exact Turkish-response assertion by delaying provider finish frames
+1.2 seconds after emitting the visible text. Request tracing showed only the
+Turkish POST: the English follow-up never reached the API/model/database. The
+composer displayed an enabled send arrow during `streaming`, but its form handler
+correctly refused submission until `ready`. This mismatched UI state lost the
+test's attempted submission; it was not an authentication, context, retry, model
+language, persistence or message-ID failure.
+
+Fix: show the existing Stop control for **both submitted and streaming** states.
+The regression now asserts Stop/no Send during the delayed tail, drafts an English
+follow-up and tries Enter, verifies the draft remains and only one user turn
+exists, waits for the real send control, checks POST 200/latest English input/model,
+then verifies English output and exactly four persisted messages. Original strict
+English and database assertions remain. Local integrated suite: 3/3 PASS; 34/34
+security/SDK checks, TypeScript, Biome and production audit pass. No paid calls.
+
+The current mission supersedes the earlier request to configure Groq on this
+preview: Groq live acceptance is no longer a prerequisite for the next stacked
+OpenAI implementation. Keep its working testing URL and private settings untouched.
+Real Google OAuth/Neon/provider acceptance is still unverified here.
+
+The full credential-free browser suite also exposed delayed composer autofocus
+stealing keyboard focus from the inbox slider. Autofocus now runs only while the
+body still has focus; the regression waits past that timer and asserts slider
+focus plus the original priority/count changes. Final credential-free build and
+existing mobile suite: 3/3 PASS. Production audit zero; full audit one inherited
+low development finding. CI will validate the exact pushed head.

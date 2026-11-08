@@ -59,14 +59,41 @@ test("real local chat routes: both models, bilingual streaming, weather, interac
       await expect(page.getByTestId("message-assistant")).toContainText(
         "Türkçe yanıt"
       );
+      // Visible text is not stream completion. Keep a draft while the
+      // provider emits its delayed finish frames; Enter must not send it.
+      await expect(page.getByTestId("stop-button").last()).toBeVisible();
+      await expect(page.getByTestId("send-button")).toHaveCount(0);
       await page
         .getByTestId("multimodal-input")
         .last()
         .fill("Please answer in English now.");
+      await page.getByTestId("multimodal-input").last().press("Enter");
+      await expect(page.getByTestId("message-user")).toHaveCount(1);
+      await expect(page.getByTestId("multimodal-input").last()).toHaveValue(
+        "Please answer in English now."
+      );
+      const followUp = page.waitForResponse(
+        (response) =>
+          response.url().endsWith("/api/chat") &&
+          response.request().method() === "POST"
+      );
+      // This waits for the real ready state, not a timeout or text heuristic.
       await page.getByTestId("send-button").last().click();
+      const accepted = await followUp;
+      assert.equal(accepted.status(), 200);
+      const submitted = accepted.request().postDataJSON();
+      assert.equal(
+        submitted.message.parts[0].text,
+        "Please answer in English now."
+      );
+      assert.equal(
+        submitted.selectedChatModel,
+        name === "Everyday chat" ? "openai/gpt-oss-20b" : "openai/gpt-oss-120b"
+      );
       await expect(page.getByTestId("message-assistant").last()).toContainText(
         "English reply"
       );
+      await expect(page.getByTestId("stop-button")).toHaveCount(0);
       const chatUrl = page.url();
       await page.reload();
       await expect(page.getByTestId("message-user")).toHaveCount(2);
@@ -94,6 +121,7 @@ test("real local chat routes: both models, bilingual streaming, weather, interac
       await expect(page.getByTestId("message-assistant").last()).toContainText(
         "Here is the result"
       );
+      await expect(page.getByTestId("stop-button")).toHaveCount(0);
       await page
         .getByTestId("multimodal-input")
         .last()
@@ -111,6 +139,7 @@ test("real local chat routes: both models, bilingual streaming, weather, interac
           .split("\n").length,
         callsBefore
       );
+      await expect(page.getByTestId("stop-button")).toHaveCount(0);
       await page.reload();
       await expect(page.getByTestId("fictional-inbox-card")).toBeVisible();
       const history = await context.request.get(

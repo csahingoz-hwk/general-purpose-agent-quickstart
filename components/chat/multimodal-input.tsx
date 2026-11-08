@@ -119,7 +119,11 @@ function PureMultimodalInput({
   useEffect(() => {
     if (!hasAutoFocused.current && width) {
       const timer = setTimeout(() => {
-        textareaRef.current?.focus();
+        // A late autofocus must not steal focus from a card or another
+        // control the user has already selected during hydration.
+        if (document.activeElement === document.body) {
+          textareaRef.current?.focus();
+        }
         hasAutoFocused.current = true;
       }, 100);
       return () => clearTimeout(timer);
@@ -548,7 +552,7 @@ function PureMultimodalInput({
             />
           </PromptInputTools>
 
-          {status === "submitted" ? (
+          {status === "submitted" || status === "streaming" ? (
             <StopButton setMessages={setMessages} stop={stop} />
           ) : (
             <PromptInputSubmit
