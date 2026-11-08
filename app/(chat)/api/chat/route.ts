@@ -187,7 +187,9 @@ export async function POST(request: Request) {
     } else {
       uiMessages = [
         ...convertToUIMessages(messagesFromDb),
-        message as ChatMessage,
+        // The retry target is already in the database. Don't repeat the user
+        // turn in model context, even though no new DB row will be inserted.
+        ...(retry ? [] : [message as ChatMessage]),
       ];
     }
 
