@@ -2,6 +2,25 @@
 
 **Important:** Phases below are design intentions, not evidence of completed features. Before taking a new task, read `docs/CURRENT_STATE.md`, actual GitHub PRs and the existing test suite. Confirm the current phase with the owner; avoid implementing all phases in one task.
 
+## Cross-phase architecture contract — before any new feature work
+
+**Proposed ADR:** [One conversation, model-aware Intelligent UI and voice](architecture/ADR-0001-unified-conversation-openui.md)  
+**Evaluation plan:** [Experience benchmark](architecture/EXPERIENCE-BENCHMARK.md)
+
+These stages are *implementation slices*, **not independent feature choices**. The model must be tested together with interactive UI generation, bilingual responses, streaming/persistence, tools and the future voice transport. Our shared invariants:
+
+- **One signed-in user, one authenticated chat, one Neon-backed message history and one tool-permission boundary.** An OpenUI demo/fork cannot replace existing chat storage or bypass Auth.js.
+- **Simple questions remain text-first.** Visual answers use grounded, validated, versioned structured message parts with a small trusted React catalogue, safe state changes and a readable text fallback.
+- **OpenUI Lang is the first proposed visual protocol**, *not accepted yet*; compare it with current json-render using the same fictional fixture and our existing approved Groq 20B/120B models. Published benchmarks do not measure our exact models or experience.
+- **Voice is another transport to the same conversation**, not a separate agent with an independent memory. Speech uses concise summaries when rich on-screen UI is present.
+- **Quality-first, cost-controlled:** model access works before normal chat; do not choose model/provider solely for free quota. Approved premium comparator requires separate owner opt-in and an explicit spending cap. No paid fallback by default.
+- **Meaningful progress is end-to-end:** every phase retains login, text reply, persistence, local UI interaction and safety. Features pass only when tested *together* in the authenticated iPhone experience.
+- **Trust boundaries stay server-side:** Gmail send, scheduling and any real-world side effect require specific approvals, never a generated widget/tool instruction.
+
+**Immediate sequencing:** complete Phase 0 live bilingual-chat/persistence checks → benchmark and implement a narrow fictional inbox visual response in existing chat → bring tested English/Turkish voice into the same history → connect Gmail read/draft and separately-approved actions → scheduled jobs. Prototype interfaces/contracts across stages now, without prematurely activating real services.
+
+---
+
 ## Phase 0 — Secure foundation (ACTIVE: PR #1 in review)
 
 - Owner-only Google OIDC login; no public registration/guest/password path.
