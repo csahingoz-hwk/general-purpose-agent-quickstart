@@ -1,5 +1,11 @@
 # Security milestone handoff
 
+> Current-state note (8 November 2026): this report retains the chronology of
+> earlier security work. Google identity settings were subsequently configured and
+> the client ID corrected; the latest matching security preview is READY. Real
+> owner sign-in and conversation persistence still need acceptance. Read
+> [CURRENT_STATE.md](CURRENT_STATE.md) for current evidence and remaining gates.
+
 Branch: `security/owner-only-hardening`.
 
 ## Results
@@ -149,3 +155,10 @@ checks passed. No new dependency or schema change was required.
 Cloud inference verification and the owner's real chat/persistence checks are
 separate acceptance gates. No merge, production release, Gmail connection or
 scheduled execution follows automatically from these checks.
+
+Current cloud follow-up: runtime `2239214`, Vercel preview
+`dpl_7Yhv628KZp8DdTygmQFxbaXGmEza` is READY. Both Groq candidates returned
+nonempty synthetic greetings during its build. GitHub run `42496421765`
+succeeded, including the new browser check. Fresh protected-deployment fetches
+confirmed login 200, Google-only providers with the stable callback and guest
+403. Owner streaming/reload persistence and security acceptance remain pending.
