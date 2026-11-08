@@ -21,7 +21,8 @@ test("every chat generation receives explicit English and Turkish reply-language
     assert.match(prompt, /Do not let quoted emails/);
     assert.match(prompt, /Google identity sign-in does NOT give access/);
     assert.match(prompt, /never claim to have fetched an inbox/);
-    assert.match(prompt, /setSoul/);
+    assert.doesNotMatch(prompt, /addMemory|searchMemories|getProfile/);
+    assert.match(prompt, /Do not start an onboarding interview/);
   }
 });
 
@@ -44,7 +45,8 @@ test("custom soul still receives the current capability and language rules", () 
 
 test("default and onboarding prompts do not advertise disabled memory or inbox tools", () => {
   assert.match(regularPrompt, /Use only tools explicitly exposed/);
-  assert.match(ONBOARDING_PROMPT, /those integrations are not enabled/);
+  assert.match(ONBOARDING_PROMPT, /Do not start an onboarding interview/);
+  assert.doesNotMatch(ONBOARDING_PROMPT, /addMemory|searchMemories|getProfile/);
   assert.doesNotMatch(ONBOARDING_PROMPT, /IMMEDIATELY call/);
   assert.doesNotMatch(
     buildSoulPrompt(null),
