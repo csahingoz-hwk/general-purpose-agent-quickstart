@@ -18,6 +18,24 @@ Branch: `security/owner-only-hardening`.
   reported. This remaining advisory needs review.
 - External integration / remote execution import scan and `git diff --check`: PASS.
 
+## Protected preview verification (2026-11-08)
+
+- GitHub Vercel check for commit `2d3a6a4`: success.
+- Vercel deployment `dpl_441Wn1vYFVJzeQKcDXFFWWmVyfnE`: READY, matching
+  `security/owner-only-hardening` and the expected commit.
+- Deployment Protection: enabled (`all_except_custom_domains`); unchanged.
+- Through the authenticated Vercel fetch tool: `/login` returned 200 and
+  `/api/auth/guest` returned application-generated 403.
+- Expected 401 requests to history and cron were classified as protection errors
+  by that tool, so those deployed application responses remain unverified.
+- Environment metadata confirms `APP_OWNER_EMAIL` is absent. The owner email and
+  whether an existing account exists have been requested. No identity was guessed,
+  secret value decrypted, or environment variable changed.
+- Owner sign-in and Neon conversation persistence remain a gate before later
+  milestones. Interactive UI, voice, Gmail and scheduling work has not started.
+- `.github/workflows/security.yml` now runs the security milestone checks on the
+  PR without deployment credentials. Actions are pinned to immutable commit SHAs.
+
 ## Delivery status
 
 GitHub write access was restored after installation of the ChatGPT Codex
@@ -34,6 +52,8 @@ is configured; no live service credentials are available in this workspace.
 See `docs/security-hardening.md` for cloud-only owner provisioning and setup.
 
 ## Changed files
+
+- `.github/workflows/security.yml`
 
 - `.env.example`
 - `app/(auth)/actions.ts`
