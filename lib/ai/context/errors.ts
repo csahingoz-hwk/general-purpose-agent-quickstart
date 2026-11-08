@@ -1,5 +1,7 @@
 /** Never pass raw upstream error JSON, API URLs or organisation IDs to the UI. */
-export function classifyModelError(error: unknown): "size" | "rate" | "unavailable" {
+export function classifyModelError(
+  error: unknown
+): "size" | "rate" | "unavailable" {
   const status =
     error && typeof error === "object" && "statusCode" in error
       ? Number(error.statusCode)
@@ -18,7 +20,10 @@ export function classifyModelError(error: unknown): "size" | "rate" | "unavailab
   ) {
     return "size";
   }
-  if (status === 429 || /rate.limit|tokens per minute|quota exceeded/i.test(text)) {
+  if (
+    status === 429 ||
+    /rate.limit|tokens per minute|quota exceeded/i.test(text)
+  ) {
     return "rate";
   }
   return "unavailable";
