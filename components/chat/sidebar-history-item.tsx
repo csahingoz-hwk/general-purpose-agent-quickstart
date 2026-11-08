@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { memo } from "react";
 import { useChatVisibility } from "@/hooks/use-chat-visibility";
 import type { Chat } from "@/lib/db/schema";
@@ -30,12 +29,10 @@ const PureChatItem = ({
   chat,
   isActive,
   onDelete,
-  setOpenMobile,
 }: {
   chat: Chat;
   isActive: boolean;
   onDelete: (chatId: string) => void;
-  setOpenMobile: (open: boolean) => void;
 }) => {
   const { visibilityType, setVisibilityType } = useChatVisibility({
     chatId: chat.id,
@@ -49,9 +46,9 @@ const PureChatItem = ({
         className="h-8 rounded-none text-[13px] text-sidebar-foreground/50 transition-all duration-150 hover:bg-transparent hover:text-sidebar-foreground data-active:bg-transparent data-active:font-normal data-active:text-sidebar-foreground/50 data-[active=true]:text-sidebar-foreground data-[active=true]:font-medium data-[active=true]:border-b data-[active=true]:border-dashed data-[active=true]:border-sidebar-foreground/50"
         isActive={isActive}
       >
-        <Link href={`/chat/${chat.id}`} onClick={() => setOpenMobile(false)}>
+        <a href={`/chat/${chat.id}`}>
           <span className="truncate">{chat.title}</span>
-        </Link>
+        </a>
       </SidebarMenuButton>
 
       <DropdownMenu modal={true}>
