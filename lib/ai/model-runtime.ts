@@ -42,11 +42,9 @@ export async function getModelAvailability() {
           ? "https://ai-gateway.vercel.sh/v1/models"
           : "https://api.openai.com/v1/models",
         {
-        headers: {
-          authorization: `Bearer ${process.env.OPENAI_API_KEY?.trim()}`,
-        },
-        cache: "no-store",
-        signal: AbortSignal.timeout(8000),
+          headers: { authorization: `Bearer ${key}` },
+          cache: "no-store",
+          signal: AbortSignal.timeout(8000),
         }
       );
       if (!response.ok) {
