@@ -1,9 +1,13 @@
-import { compare } from "bcrypt-ts";
 import NextAuth, { type DefaultSession } from "next-auth";
 import type { DefaultJWT } from "next-auth/jwt";
-import Credentials from "next-auth/providers/credentials";
-import { DUMMY_PASSWORD } from "@/lib/constants";
-import { createGuestUser, getUser } from "@/lib/db/queries";
+import Google from "next-auth/providers/google";
+import { isOwnerIdentity } from "@/lib/access-policy";
+import { getOrCreateGoogleOwner } from "@/lib/db/queries";
+import {
+  GOOGLE_IDENTITY_SCOPE,
+  isGoogleSignInConfigured,
+  resolveGoogleOwner,
+} from "@/lib/google-owner";
 import { authConfig } from "./auth.config";
 
 export type UserType = "guest" | "regular";
@@ -32,60 +36,44 @@ declare module "next-auth/jwt" {
 
 export const {
   handlers: { GET, POST },
-  auth,
+  auth: rawAuth,
   signIn,
   signOut,
 } = NextAuth({
   ...authConfig,
-  providers: [
-    Credentials({
-      credentials: {
-        email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" },
-      },
-      async authorize(credentials) {
-        const email = String(credentials.email ?? "");
-        const password = String(credentials.password ?? "");
-        const users = await getUser(email);
-
-        if (users.length === 0) {
-          await compare(password, DUMMY_PASSWORD);
-          return null;
-        }
-
-        const [user] = users;
-
-        if (!user.password) {
-          await compare(password, DUMMY_PASSWORD);
-          return null;
-        }
-
-        const passwordsMatch = await compare(password, user.password);
-
-        if (!passwordsMatch) {
-          return null;
-        }
-
-        return { ...user, type: "regular" };
-      },
-    }),
-    Credentials({
-      id: "guest",
-      credentials: {},
-      async authorize() {
-        const [guestUser] = await createGuestUser();
-        return { ...guestUser, type: "guest" };
-      },
-    }),
-  ],
+  session: { strategy: "jwt" },
+  providers: isGoogleSignInConfigured()
+    ? [
+        Google({
+          clientId: process.env.AUTH_GOOGLE_ID,
+          clientSecret: process.env.AUTH_GOOGLE_SECRET,
+          authorization: {
+            params: { scope: GOOGLE_IDENTITY_SCOPE, prompt: "select_account" },
+          },
+          checks: ["pkce", "state", "nonce"],
+        }),
+      ]
+    : [],
   callbacks: {
+    async signIn({ user, account, profile }) {
+      if (account?.provider !== "google") {
+        return false;
+      }
+      const owner = await resolveGoogleOwner(profile, getOrCreateGoogleOwner);
+      if (!owner) {
+        return false;
+      }
+      // Keep database identity stable so existing conversations stay attached.
+      Object.assign(user, owner);
+      return true;
+    },
     jwt({ token, user }) {
       if (user) {
         token.id = user.id as string;
         token.type = user.type;
       }
 
-      return token;
+      return isOwnerIdentity(token) ? token : null;
     },
     session({ session, token }) {
       if (session.user) {
@@ -97,3 +85,9 @@ export const {
     },
   },
 });
+
+// All route handlers and server actions recheck policy, including existing sessions.
+export async function auth() {
+  const session = await rawAuth();
+  return isOwnerIdentity(session?.user) ? session : null;
+}

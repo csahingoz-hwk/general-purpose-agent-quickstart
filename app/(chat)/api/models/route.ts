@@ -1,20 +1,23 @@
-import { getAllGatewayModels, getCapabilities, isDemo } from "@/lib/ai/models";
+import { auth } from "@/app/(auth)/auth";
+import { getModelAvailability } from "@/lib/ai/model-runtime";
+import { getCapabilities } from "@/lib/ai/models";
 
 export async function GET() {
-  const headers = {
-    "Cache-Control": "public, max-age=86400, s-maxage=86400",
-  };
-
-  const curatedCapabilities = await getCapabilities();
-
-  if (isDemo) {
-    const models = await getAllGatewayModels();
-    const capabilities = Object.fromEntries(
-      models.map((m) => [m.id, curatedCapabilities[m.id] ?? m.capabilities])
-    );
-
-    return Response.json({ capabilities, models }, { headers });
+  if (!(await auth())) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-
-  return Response.json(curatedCapabilities, { headers });
+  const availability = await getModelAvailability();
+  const allCapabilities = await getCapabilities();
+  const capabilities = Object.fromEntries(
+    availability.models.map((model) => [model.id, allCapabilities[model.id]])
+  );
+  return Response.json(
+    {
+      ...availability,
+      capabilities,
+      notice:
+        "Free-account limits apply. Availability can change when quotas are reached.",
+    },
+    { headers: { "Cache-Control": "private, no-store" } }
+  );
 }

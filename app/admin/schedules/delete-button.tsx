@@ -8,6 +8,7 @@ export function DeleteScheduleButton({ id }: { id: string }) {
   const [pending, setPending] = useState(false);
 
   const handleDelete = async () => {
+    // biome-ignore lint/suspicious/noAlert: Retain explicit confirmation for this destructive action.
     if (!confirm("Delete this schedule?")) {
       return;
     }
@@ -15,6 +16,7 @@ export function DeleteScheduleButton({ id }: { id: string }) {
     try {
       const res = await fetch(`/api/schedules/${id}`, { method: "DELETE" });
       if (!res.ok) {
+        // biome-ignore lint/suspicious/noAlert: Existing admin error feedback.
         alert("Failed to delete schedule");
         return;
       }

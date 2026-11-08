@@ -2,11 +2,16 @@ import "server-only";
 
 function getApiBase(): string {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token) throw new Error("TELEGRAM_BOT_TOKEN is not set");
+  if (!token) {
+    throw new Error("TELEGRAM_BOT_TOKEN is not set");
+  }
   return `https://api.telegram.org/bot${token}`;
 }
 
-export async function sendTelegramMessage(chatId: string, text: string): Promise<void> {
+export async function sendTelegramMessage(
+  chatId: string,
+  text: string
+): Promise<void> {
   const base = getApiBase();
 
   // Try Markdown first, fall back to plain text
@@ -16,7 +21,9 @@ export async function sendTelegramMessage(chatId: string, text: string): Promise
     body: JSON.stringify({ chat_id: chatId, text, parse_mode: "Markdown" }),
   });
 
-  if (mdRes.ok) return;
+  if (mdRes.ok) {
+    return;
+  }
 
   const plainRes = await fetch(`${base}/sendMessage`, {
     method: "POST",
@@ -26,7 +33,9 @@ export async function sendTelegramMessage(chatId: string, text: string): Promise
 
   if (!plainRes.ok) {
     const body = await plainRes.text().catch(() => "(no body)");
-    throw new Error(`Telegram sendMessage failed: ${plainRes.status} — ${body}`);
+    throw new Error(
+      `Telegram sendMessage failed: ${plainRes.status} — ${body}`
+    );
   }
 }
 
@@ -36,11 +45,18 @@ export async function getWebhookInfo(): Promise<Record<string, unknown>> {
   return json as Record<string, unknown>;
 }
 
-export async function setWebhook(url: string, secret: string): Promise<Record<string, unknown>> {
+export async function setWebhook(
+  url: string,
+  secret: string
+): Promise<Record<string, unknown>> {
   const res = await fetch(`${getApiBase()}/setWebhook`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url, secret_token: secret, allowed_updates: ["message"] }),
+    body: JSON.stringify({
+      url,
+      secret_token: secret,
+      allowed_updates: ["message"],
+    }),
   });
   const json = await res.json();
   return json as Record<string, unknown>;

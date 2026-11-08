@@ -6,28 +6,23 @@ import {
   generateId,
   stepCountIs,
   streamText,
-  type ToolSet,
 } from "ai";
 import { checkBotId } from "botid/server";
 import { after } from "next/server";
 import { createResumableStreamContext } from "resumable-stream";
 import { auth, type UserType } from "@/app/(auth)/auth";
 import { entitlementsByUserType } from "@/lib/ai/entitlements";
-import {
-  allowedModelIds,
-  chatModels,
-  DEFAULT_CHAT_MODEL,
-  getCapabilities,
-} from "@/lib/ai/models";
+import { getModelAvailability } from "@/lib/ai/model-runtime";
+import { chatModels, getCapabilities } from "@/lib/ai/models";
 import { systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
 import { cancelSchedule } from "@/lib/ai/tools/cancel-schedule";
 import { createDocument } from "@/lib/ai/tools/create-document";
+import { demoInbox } from "@/lib/ai/tools/demo-inbox";
 import { editDocument } from "@/lib/ai/tools/edit-document";
 import { getWeather } from "@/lib/ai/tools/get-weather";
 import { listMySchedules } from "@/lib/ai/tools/list-my-schedules";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
-import { scheduleTask } from "@/lib/ai/tools/schedule-task";
 import { setSoul } from "@/lib/ai/tools/set-soul";
 import { updateDocument } from "@/lib/ai/tools/update-document";
 import { isProductionEnvironment } from "@/lib/constants";
@@ -45,9 +40,6 @@ import {
 } from "@/lib/db/queries";
 import type { DBMessage } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
-import { Composio } from "@composio/core";
-import { VercelProvider } from "@composio/vercel";
-import { supermemoryTools } from "@supermemory/tools/ai-sdk";
 import { checkIpRateLimit } from "@/lib/ratelimit";
 import type { ChatMessage } from "@/lib/types";
 import { convertToUIMessages, generateUUID } from "@/lib/utils";
@@ -55,7 +47,6 @@ import { generateTitleFromUserMessage } from "../../actions";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
 export const maxDuration = 60;
-
 
 // When using Model = Sonnet 4.6 we get a bug: ""
 // Composio generates tool call IDs that can contain characters outside the
@@ -115,9 +106,14 @@ export async function POST(request: Request) {
       return new ChatbotError("unauthorized:chat").toResponse();
     }
 
-    const chatModel = allowedModelIds.has(selectedChatModel)
-      ? selectedChatModel
-      : DEFAULT_CHAT_MODEL;
+    const availability = await getModelAvailability();
+    if (availability.status !== "ready") {
+      return new ChatbotError("offline:model_setup").toResponse();
+    }
+    if (!availability.models.some((model) => model.id === selectedChatModel)) {
+      return new ChatbotError("bad_request:api").toResponse();
+    }
+    const chatModel = selectedChatModel;
 
     await checkIpRateLimit(ipAddress(request));
 
@@ -223,6 +219,7 @@ export async function POST(request: Request) {
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
       execute: async ({ writer: dataStream }) => {
         const localTools = {
+          demoInbox,
           getWeather,
           createDocument: createDocument({
             session,
@@ -240,7 +237,6 @@ export async function POST(request: Request) {
             dataStream,
             modelId: chatModel,
           }),
-          scheduleTask: scheduleTask({ session }),
           listMySchedules: listMySchedules({ session }),
           cancelSchedule: cancelSchedule({ session }),
           ...(session.user.type !== "guest"
@@ -248,34 +244,8 @@ export async function POST(request: Request) {
             : {}),
         };
 
-        let composioTools: ToolSet = {};
-        let memoryTools: ToolSet = {};
-
-        if (process.env.COMPOSIO_API_KEY && session.user.type !== "guest") {
-          try {
-            const composio = new Composio({ provider: new VercelProvider() });
-            const composioSession = await composio.create(session.user.id);
-            composioTools = (await composioSession.tools()) as unknown as ToolSet;
-          } catch (error) {
-            console.error("Composio tool initialization failed:", error);
-          }
-        }
-
-        if (process.env.SUPERMEMORY_API_KEY && session.user.type !== "guest") {
-          try {
-            memoryTools = supermemoryTools(process.env.SUPERMEMORY_API_KEY, {
-              containerTags: [session.user.id],
-            }) as unknown as ToolSet;
-          } catch (error) {
-            console.error("Supermemory tool initialization failed:", error);
-          }
-        }
-
-        const tools = {
-          ...localTools,
-          ...composioTools,
-          ...memoryTools,
-        };
+        // Only reviewed local tools are available. External integrations stay disconnected.
+        const tools = localTools;
         const result = streamText({
           model: getLanguageModel(chatModel),
           system: systemPrompt({
@@ -284,14 +254,13 @@ export async function POST(request: Request) {
             needsOnboarding,
           }),
           messages: modelMessages,
-          stopWhen: stepCountIs(5),
+          stopWhen: stepCountIs(3),
+          maxOutputTokens: 2048,
+          maxRetries: 0,
           ...(isReasoningModel && !supportsTools
             ? { experimental_activeTools: [] }
             : {}),
           providerOptions: {
-            ...(modelConfig?.gatewayOrder && {
-              gateway: { order: modelConfig.gatewayOrder },
-            }),
             ...(modelConfig?.reasoningEffort && {
               openai: { reasoningEffort: modelConfig.reasoningEffort },
             }),
@@ -352,15 +321,13 @@ export async function POST(request: Request) {
         }
       },
       onError: (error) => {
-        if (
-          error instanceof Error &&
-          error.message?.includes(
-            "AI Gateway requires a valid credit card on file to service requests"
-          )
-        ) {
-          return "AI Gateway requires a valid credit card on file to service requests. Please visit https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%3Fmodal%3Dadd-credit-card to add a card and unlock your free credits.";
-        }
-        return "Oops, an error occurred!";
+        const statusCode =
+          error && typeof error === "object" && "statusCode" in error
+            ? error.statusCode
+            : null;
+        return statusCode === 429
+          ? "The free model limit has been reached. Please try again later. No paid fallback was used."
+          : "The chat model is temporarily unavailable. Please try again later.";
       },
     });
 
@@ -392,16 +359,7 @@ export async function POST(request: Request) {
       return error.toResponse();
     }
 
-    if (
-      error instanceof Error &&
-      error.message?.includes(
-        "AI Gateway requires a valid credit card on file to service requests"
-      )
-    ) {
-      return new ChatbotError("bad_request:activate_gateway").toResponse();
-    }
-
-    console.error("Unhandled error in chat API:", error, { vercelId });
+    console.error("Chat request failed", { vercelId });
     return new ChatbotError("offline:chat").toResponse();
   }
 }

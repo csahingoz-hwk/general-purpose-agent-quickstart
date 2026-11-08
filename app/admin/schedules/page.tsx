@@ -1,6 +1,6 @@
-import { Suspense } from "react";
-import { connection } from "next/server";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
+import { Suspense } from "react";
 import { auth } from "@/app/(auth)/auth";
 import { getCronJobsByUserId } from "@/lib/db/queries";
 import { DeleteScheduleButton } from "./delete-button";
@@ -57,10 +57,7 @@ async function SchedulesContent() {
       ) : (
         <div className="space-y-3">
           {jobs.map((job) => (
-            <div
-              className="rounded-xl border bg-card p-5"
-              key={job.id}
-            >
+            <div className="rounded-xl border bg-card p-5" key={job.id}>
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">

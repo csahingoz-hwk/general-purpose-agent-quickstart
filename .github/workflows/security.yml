@@ -1,0 +1,62 @@
+name: Security milestone checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - security/owner-only-hardening
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '24'
+      - name: Install pinned pnpm
+        run: npm install --global pnpm@10.32.1
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check TypeScript
+        run: pnpm exec tsc --noEmit
+      - name: Check lint and formatting
+        run: pnpm check
+      - name: Verify access and disabled execution
+        run: pnpm test:security
+      - name: Audit production dependencies
+        run: pnpm audit --prod
+      - name: Audit all dependencies at moderate severity or higher
+        run: pnpm audit --audit-level=moderate
+      - name: Build without service credentials
+        run: pnpm build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+      - name: Install test browser
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Verify phone-sized model readiness and draft recovery
+        env:
+          PORT: '3100'
+          AUTH_SECRET: synthetic-readiness-ui-secret-with-at-least-32-characters
+          APP_OWNER_EMAIL: owner@example.test
+        run: |
+          pnpm start > /tmp/readiness-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://localhost:3100/login > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          pnpm test:readiness-ui

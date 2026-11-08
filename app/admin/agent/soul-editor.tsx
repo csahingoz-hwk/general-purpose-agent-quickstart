@@ -102,8 +102,8 @@ export function SoulEditor({
       <section className="rounded-xl border p-5">
         <div className="font-medium text-sm">Default soul (read-only)</div>
         <p className="mt-1 text-muted-foreground text-xs">
-          Used when your custom soul is empty. Click into the textarea above
-          and paste this if you want a starting point.
+          Used when your custom soul is empty. Click into the textarea above and
+          paste this if you want a starting point.
         </p>
         <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap rounded-lg bg-muted/40 p-3 font-mono text-xs leading-relaxed">
           {defaultSoul}
