@@ -1,8 +1,12 @@
+import { auth } from "@/app/(auth)/auth";
 import { getAllGatewayModels, getCapabilities, isDemo } from "@/lib/ai/models";
 
 export async function GET() {
+  if (!(await auth())) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const headers = {
-    "Cache-Control": "public, max-age=86400, s-maxage=86400",
+    "Cache-Control": "private, no-store",
   };
 
   const curatedCapabilities = await getCapabilities();

@@ -306,13 +306,18 @@ const PurePreviewMessage = ({
         toolCallId: string;
         state: string;
       };
-      const input = "input" in part ? (part.input as Record<string, unknown>) : undefined;
+      const input =
+        "input" in part ? (part.input as Record<string, unknown>) : undefined;
       const output = "output" in part ? part.output : undefined;
       const errorText =
         "errorText" in part ? (part.errorText as string) : undefined;
 
       return (
-        <Tool className="w-[min(100%,450px)]" defaultOpen={false} key={toolCallId}>
+        <Tool
+          className="w-[min(100%,450px)]"
+          defaultOpen={false}
+          key={toolCallId}
+        >
           <ToolHeader state={state as any} type={type as any} />
           <ToolContent>
             {input && <ToolInput input={input} />}

@@ -6,7 +6,6 @@ import {
   generateId,
   stepCountIs,
   streamText,
-  type ToolSet,
 } from "ai";
 import { checkBotId } from "botid/server";
 import { after } from "next/server";
@@ -27,7 +26,6 @@ import { editDocument } from "@/lib/ai/tools/edit-document";
 import { getWeather } from "@/lib/ai/tools/get-weather";
 import { listMySchedules } from "@/lib/ai/tools/list-my-schedules";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
-import { scheduleTask } from "@/lib/ai/tools/schedule-task";
 import { setSoul } from "@/lib/ai/tools/set-soul";
 import { updateDocument } from "@/lib/ai/tools/update-document";
 import { isProductionEnvironment } from "@/lib/constants";
@@ -45,9 +43,6 @@ import {
 } from "@/lib/db/queries";
 import type { DBMessage } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
-import { Composio } from "@composio/core";
-import { VercelProvider } from "@composio/vercel";
-import { supermemoryTools } from "@supermemory/tools/ai-sdk";
 import { checkIpRateLimit } from "@/lib/ratelimit";
 import type { ChatMessage } from "@/lib/types";
 import { convertToUIMessages, generateUUID } from "@/lib/utils";
@@ -55,7 +50,6 @@ import { generateTitleFromUserMessage } from "../../actions";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
 export const maxDuration = 60;
-
 
 // When using Model = Sonnet 4.6 we get a bug: ""
 // Composio generates tool call IDs that can contain characters outside the
@@ -240,7 +234,6 @@ export async function POST(request: Request) {
             dataStream,
             modelId: chatModel,
           }),
-          scheduleTask: scheduleTask({ session }),
           listMySchedules: listMySchedules({ session }),
           cancelSchedule: cancelSchedule({ session }),
           ...(session.user.type !== "guest"
@@ -248,34 +241,8 @@ export async function POST(request: Request) {
             : {}),
         };
 
-        let composioTools: ToolSet = {};
-        let memoryTools: ToolSet = {};
-
-        if (process.env.COMPOSIO_API_KEY && session.user.type !== "guest") {
-          try {
-            const composio = new Composio({ provider: new VercelProvider() });
-            const composioSession = await composio.create(session.user.id);
-            composioTools = (await composioSession.tools()) as unknown as ToolSet;
-          } catch (error) {
-            console.error("Composio tool initialization failed:", error);
-          }
-        }
-
-        if (process.env.SUPERMEMORY_API_KEY && session.user.type !== "guest") {
-          try {
-            memoryTools = supermemoryTools(process.env.SUPERMEMORY_API_KEY, {
-              containerTags: [session.user.id],
-            }) as unknown as ToolSet;
-          } catch (error) {
-            console.error("Supermemory tool initialization failed:", error);
-          }
-        }
-
-        const tools = {
-          ...localTools,
-          ...composioTools,
-          ...memoryTools,
-        };
+        // Only reviewed local tools are available. External integrations stay disconnected.
+        const tools = localTools;
         const result = streamText({
           model: getLanguageModel(chatModel),
           system: systemPrompt({

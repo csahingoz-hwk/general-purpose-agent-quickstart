@@ -16,6 +16,9 @@ import {
 import { getTextFromMessage } from "@/lib/utils";
 
 export async function saveChatModelAsCookie(model: string) {
+  if (!(await auth())) {
+    throw new Error("Unauthorized");
+  }
   const cookieStore = await cookies();
   cookieStore.set("chat-model", model);
 }
@@ -25,6 +28,9 @@ export async function generateTitleFromUserMessage({
 }: {
   message: UIMessage;
 }) {
+  if (!(await auth())) {
+    throw new Error("Unauthorized");
+  }
   const { text } = await generateText({
     model: getTitleModel(),
     system: titlePrompt,

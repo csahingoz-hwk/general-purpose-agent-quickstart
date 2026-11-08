@@ -12,6 +12,7 @@ import {
   lt,
   lte,
   type SQL,
+  sql,
 } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
@@ -21,8 +22,8 @@ import { ChatbotError } from "../errors";
 import { generateUUID } from "../utils";
 import {
   type Chat,
-  chat,
   type CronJob,
+  chat,
   cronJob,
   type DBMessage,
   document,
@@ -43,7 +44,10 @@ const db = drizzle(client);
 
 export async function getUser(email: string): Promise<User[]> {
   try {
-    return await db.select().from(user).where(eq(user.email, email));
+    return await db
+      .select()
+      .from(user)
+      .where(sql`lower(${user.email}) = ${email.trim().toLowerCase()}`);
   } catch (_error) {
     throw new ChatbotError(
       "bad_request:database",
@@ -638,10 +642,7 @@ export async function createCronJob({
       .returning();
     return row;
   } catch (_error) {
-    throw new ChatbotError(
-      "bad_request:database",
-      "Failed to create cron job"
-    );
+    throw new ChatbotError("bad_request:database", "Failed to create cron job");
   }
 }
 
@@ -819,10 +820,7 @@ export async function unlinkTelegram({
       })
       .where(eq(user.id, userId));
   } catch (_error) {
-    throw new ChatbotError(
-      "bad_request:database",
-      "Failed to unlink telegram"
-    );
+    throw new ChatbotError("bad_request:database", "Failed to unlink telegram");
   }
 }
 

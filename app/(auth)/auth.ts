@@ -2,8 +2,9 @@ import { compare } from "bcrypt-ts";
 import NextAuth, { type DefaultSession } from "next-auth";
 import type { DefaultJWT } from "next-auth/jwt";
 import Credentials from "next-auth/providers/credentials";
+import { isOwnerEmail, isOwnerIdentity } from "@/lib/access-policy";
 import { DUMMY_PASSWORD } from "@/lib/constants";
-import { createGuestUser, getUser } from "@/lib/db/queries";
+import { getUser } from "@/lib/db/queries";
 import { authConfig } from "./auth.config";
 
 export type UserType = "guest" | "regular";
@@ -32,7 +33,7 @@ declare module "next-auth/jwt" {
 
 export const {
   handlers: { GET, POST },
-  auth,
+  auth: rawAuth,
   signIn,
   signOut,
 } = NextAuth({
@@ -46,7 +47,11 @@ export const {
       async authorize(credentials) {
         const email = String(credentials.email ?? "");
         const password = String(credentials.password ?? "");
-        const users = await getUser(email);
+        if (!isOwnerEmail(email)) {
+          await compare(password, DUMMY_PASSWORD);
+          return null;
+        }
+        const users = await getUser(email.trim());
 
         if (users.length === 0) {
           await compare(password, DUMMY_PASSWORD);
@@ -69,23 +74,18 @@ export const {
         return { ...user, type: "regular" };
       },
     }),
-    Credentials({
-      id: "guest",
-      credentials: {},
-      async authorize() {
-        const [guestUser] = await createGuestUser();
-        return { ...guestUser, type: "guest" };
-      },
-    }),
   ],
   callbacks: {
+    signIn({ user }) {
+      return isOwnerIdentity(user);
+    },
     jwt({ token, user }) {
       if (user) {
         token.id = user.id as string;
         token.type = user.type;
       }
 
-      return token;
+      return isOwnerIdentity(token) ? token : null;
     },
     session({ session, token }) {
       if (session.user) {
@@ -97,3 +97,9 @@ export const {
     },
   },
 });
+
+// All route handlers and server actions recheck policy, including existing sessions.
+export async function auth() {
+  const session = await rawAuth();
+  return isOwnerIdentity(session?.user) ? session : null;
+}

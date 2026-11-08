@@ -38,6 +38,7 @@ export function LinkTelegramPanel({
     try {
       const res = await fetch("/api/telegram/link", { method: "POST" });
       if (!res.ok) {
+        // biome-ignore lint/suspicious/noAlert: Existing admin error feedback.
         alert("Failed to generate link token");
         return;
       }
@@ -69,6 +70,7 @@ export function LinkTelegramPanel({
   };
 
   const unlink = async () => {
+    // biome-ignore lint/suspicious/noAlert: Retain explicit confirmation for this destructive action.
     if (!confirm("Disconnect Telegram from this account?")) {
       return;
     }
@@ -76,6 +78,7 @@ export function LinkTelegramPanel({
     try {
       const res = await fetch("/api/telegram/unlink", { method: "POST" });
       if (!res.ok) {
+        // biome-ignore lint/suspicious/noAlert: Existing admin error feedback.
         alert("Failed to unlink");
         return;
       }
@@ -104,7 +107,11 @@ export function LinkTelegramPanel({
             Linked
           </span>
           <span className="text-sm">
-            Telegram chat <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">{chatId}</code> is connected.
+            Telegram chat{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">
+              {chatId}
+            </code>{" "}
+            is connected.
           </span>
         </div>
         <p className="mt-3 text-muted-foreground text-sm">
@@ -184,8 +191,8 @@ export function LinkTelegramPanel({
         >
           @{botUsername}
         </a>{" "}
-        run the same agent with the same Composio tools and Supermemory store
-        as your web chat.
+        run the same agent with the same Composio tools and Supermemory store as
+        your web chat.
       </p>
       <button
         className="mt-4 rounded-md border bg-primary px-3 py-1.5 text-primary-foreground text-sm font-medium transition hover:bg-primary/90 disabled:opacity-50"
