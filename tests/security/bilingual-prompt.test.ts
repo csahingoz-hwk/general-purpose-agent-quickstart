@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  ONBOARDING_PROMPT,
   buildSoulPrompt,
+  ONBOARDING_PROMPT,
   regularPrompt,
   systemPrompt,
 } from "../../lib/ai/prompts";
@@ -26,7 +26,9 @@ test("every chat generation receives explicit English and Turkish reply-language
 });
 
 test("custom soul still receives the current capability and language rules", () => {
-  const identity = buildSoulPrompt("## Who You Are\nI am a friendly assistant.");
+  const identity = buildSoulPrompt(
+    "## Who You Are\nI am a friendly assistant."
+  );
   const prompt = systemPrompt({
     supportsTools: true,
     soul: identity,
