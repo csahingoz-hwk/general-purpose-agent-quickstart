@@ -21,7 +21,7 @@ function PureChatHeader({
   selectedVisibilityType: VisibilityType;
   isReadonly: boolean;
 }) {
-  const { state, toggleSidebar, isMobile } = useSidebar();
+  const { state, isMobile, openMobile, setOpenMobile } = useSidebar();
 
   if (state === "collapsed" && !isMobile) {
     return null;
@@ -30,8 +30,12 @@ function PureChatHeader({
   return (
     <header className="sticky top-0 flex h-14 items-center gap-2 bg-sidebar px-3">
       <Button
+        aria-expanded={openMobile}
+        aria-label="Open History"
         className="md:hidden"
-        onClick={toggleSidebar}
+        // This button is mobile-only. Do not depend on the media-query hook
+        // having finished hydration before handling its first interaction.
+        onClick={() => setOpenMobile(!openMobile)}
         size="icon-sm"
         variant="ghost"
       >

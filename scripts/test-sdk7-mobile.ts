@@ -32,6 +32,16 @@ test("real local chat routes: both models, bilingual streaming, weather, interac
       reducedMotion: "reduce",
     });
     await authenticate(context);
+    // A long History must remain inside the mobile drawer. The inherited
+    // bottom-sheet h-auto variant used to override the plain 70dvh height.
+    const historyDb = postgres(dbUrl);
+    try {
+      for (let index = 0; index < 30; index++) {
+        await historyDb`INSERT INTO "Chat" ("id","userId","title","visibility","createdAt") VALUES (${crypto.randomUUID()},${userId},${`Saved synthetic history ${index}`},'private',now()-interval '1 day')`;
+      }
+    } finally {
+      await historyDb.end();
+    }
     const page = await context.newPage();
     await page.route("**/a-4-a/c.js*", (route) =>
       route.fulfill({
@@ -158,7 +168,15 @@ test("real local chat routes: both models, bilingual streaming, weather, interac
         true
       );
       await page.goto(origin);
-      await page.locator("header button").first().click();
+      await page
+        .getByRole("button", { name: "Open History", exact: true })
+        .click();
+      await expect(
+        page.locator('header button[aria-label="Open History"]')
+      ).toHaveAttribute("aria-expanded", "true");
+      await expect(page.getByRole("dialog")).toBeVisible();
+      const drawer = await page.getByRole("dialog").boundingBox();
+      assert.ok(drawer && drawer.y >= 0 && drawer.y + drawer.height <= 845);
       const historyLink = page.locator(
         `a[href="/chat/${chatUrl.split("/").at(-1)}"]`
       );

@@ -142,3 +142,17 @@ body still has focus; the regression waits past that timer and asserts slider
 focus plus the original priority/count changes. Final credential-free build and
 existing mobile suite: 3/3 PASS. Production audit zero; full audit one inherited
 low development finding. CI will validate the exact pushed head.
+
+## Wider History regression discovered during the next implementation
+
+SDK baseline fb580b5 passed every step in GitHub run 42525603432. Further testing
+with many saved chats found an inherited mobile drawer issue: the bottom-sheet
+`data-[side=bottom]:h-auto` variant overrode its ordinary 70dvh height, letting a
+long list grow above the phone viewport. Fix the same variant explicitly, bound
+the sheet, and make its content scroll. The mobile-only History button also opens
+the mobile state directly rather than depending on a hydrated media-query hook.
+The regression seeds 30 old chats, asserts the opened drawer fits the screen,
+and still clicks the real saved conversation. This patch is backported here so
+SDK 7 acceptance does not depend on the following OpenAI-routing feature PR.
+The final head must pass CI before recommending testing. No real service call,
+credential setting, existing testing URL or production setting changed.
