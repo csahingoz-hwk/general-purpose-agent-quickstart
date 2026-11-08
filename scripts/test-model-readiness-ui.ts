@@ -330,3 +330,73 @@ test("fictional inbox stays visible in a saved chat and responds locally", async
     await browser.close();
   }
 });
+
+test("pending weather tool displays a loading card instead of raw arguments", async () => {
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      reducedMotion: "reduce",
+    });
+    const token = await encode({
+      secret,
+      salt: "authjs.session-token",
+      token: { id: userId, email: owner, type: "regular" },
+    });
+    await context.addCookies([
+      { name: "authjs.session-token", value: token, url: origin },
+    ]);
+    const chatId = "105ab43c-cf80-41b7-a098-31c2db5fad41";
+    const createdAt = new Date().toISOString();
+    const page = await context.newPage();
+    await page.route("**/a-4-a/c.js*", (route) =>
+      route.fulfill({
+        contentType: "application/javascript",
+        body: "window.V_C.push({b:1,d:0});",
+      })
+    );
+    await page.route("**/api/history*", (route) =>
+      route.fulfill({ json: { chats: [], hasMore: false } })
+    );
+    await page.route("**/api/messages?*", (route) =>
+      route.fulfill({
+        json: {
+          messages: [
+            {
+              id: "0abc29fa-8490-42fc-a0b7-dab4fb3d9bbb",
+              role: "user",
+              parts: [{ type: "text", text: "Weather for London" }],
+              metadata: { createdAt },
+            },
+            {
+              id: "1abc29fa-8490-42fc-a0b7-dab4fb3d9bbb",
+              role: "assistant",
+              parts: [
+                {
+                  type: "tool-getWeather",
+                  toolCallId: "synthetic-weather-pending",
+                  state: "input-available",
+                  input: { city: "London", latitude: 51.5 },
+                },
+              ],
+              metadata: { createdAt },
+            },
+          ],
+          visibility: "private",
+          userId,
+          isReadonly: false,
+        },
+      })
+    );
+    await page.goto(`${origin}/chat/${chatId}`);
+    await expect(page.getByRole("status", {
+      name: "Loading weather forecast",
+    })).toBeVisible();
+    await expect(page.getByText("synthetic-weather-pending")).toHaveCount(0);
+    await expect(page.locator("pre")).toHaveCount(0);
+    await expect(page.getByText('"latitude"')).toHaveCount(0);
+    console.log("PASS: weather lookup displays no raw tool arguments");
+  } finally {
+    await browser.close();
+  }
+});
