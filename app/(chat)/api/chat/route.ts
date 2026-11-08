@@ -11,9 +11,15 @@ import { checkBotId } from "botid/server";
 import { after } from "next/server";
 import { createResumableStreamContext } from "resumable-stream";
 import { auth } from "@/app/(auth)/auth";
-import { budgetModelMessages, DEFAULT_REPLY_TOKENS } from "@/lib/ai/context/budget";
+import {
+  budgetModelMessages,
+  DEFAULT_REPLY_TOKENS,
+} from "@/lib/ai/context/budget";
 import { safeModelError } from "@/lib/ai/context/errors";
-import { needsArtifactInstructions, selectActiveTools } from "@/lib/ai/context/select-tools";
+import {
+  needsArtifactInstructions,
+  selectActiveTools,
+} from "@/lib/ai/context/select-tools";
 import { parseVerification } from "@/lib/ai/groq-verification";
 import { chatModels, getCapabilities } from "@/lib/ai/models";
 import { systemPrompt } from "@/lib/ai/prompts";
@@ -95,8 +101,14 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { id, message, messages, selectedChatModel, selectedVisibilityType, retry } =
-      requestBody;
+    const {
+      id,
+      message,
+      messages,
+      selectedChatModel,
+      selectedVisibilityType,
+      retry,
+    } = requestBody;
 
     const [, session] = await Promise.all([
       checkBotId().catch(() => null),
@@ -183,7 +195,12 @@ export async function POST(request: Request) {
       // Only retry the most recently persisted unanswered user turn. A retry
       // must never create a second copy of the same user message.
       const lastSaved = messagesFromDb.at(-1);
-      if (!chat || !message || lastSaved?.role !== "user" || lastSaved.id !== message.id) {
+      if (
+        !chat ||
+        !message ||
+        lastSaved?.role !== "user" ||
+        lastSaved.id !== message.id
+      ) {
         return new ChatbotError("bad_request:api").toResponse();
       }
     }
@@ -363,11 +380,11 @@ export async function POST(request: Request) {
           if (meaningfulMessages.length > 0) {
             await saveMessages({
               messages: meaningfulMessages.map((currentMessage) => ({
-              id: currentMessage.id,
-              role: currentMessage.role,
-              parts: currentMessage.parts,
-              createdAt: new Date(),
-              attachments: [],
+                id: currentMessage.id,
+                role: currentMessage.role,
+                parts: currentMessage.parts,
+                createdAt: new Date(),
+                attachments: [],
                 chatId: id,
               })),
             });
