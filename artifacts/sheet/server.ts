@@ -1,20 +1,30 @@
 import { streamText } from "ai";
+import { artifactSettings } from "@/lib/ai/artifact-settings";
 import { sheetPrompt, updateDocumentPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
 import { createDocumentHandler } from "@/lib/artifacts/server";
 
 export const sheetDocumentHandler = createDocumentHandler<"sheet">({
   kind: "sheet",
-  onCreateDocument: async ({ title, dataStream, modelId }) => {
+  onCreateDocument: async ({ title, dataStream, modelId, abortSignal }) => {
     let draftContent = "";
 
-    const { fullStream } = streamText({
+    const { stream } = streamText({
       model: getLanguageModel(modelId),
-      system: `${sheetPrompt}\n\nOutput ONLY the raw CSV data. No explanations, no markdown fences.`,
-      prompt: title,
+      ...artifactSettings(
+        `${sheetPrompt}\n\nOutput ONLY the raw CSV data. No explanations, no markdown fences.`,
+        title,
+        abortSignal
+      ),
     });
 
-    for await (const delta of fullStream) {
+    for await (const delta of stream) {
+      if (delta.type === "error") {
+        throw delta.error;
+      }
+      if (delta.type === "abort") {
+        throw new Error("Artifact generation interrupted");
+      }
       if (delta.type === "text-delta") {
         draftContent += delta.text;
         dataStream.write({
@@ -25,18 +35,36 @@ export const sheetDocumentHandler = createDocumentHandler<"sheet">({
       }
     }
 
+    if (!draftContent.trim()) {
+      throw new Error("Empty artifact response");
+    }
     return draftContent;
   },
-  onUpdateDocument: async ({ document, description, dataStream, modelId }) => {
+  onUpdateDocument: async ({
+    document,
+    description,
+    dataStream,
+    modelId,
+    abortSignal,
+  }) => {
     let draftContent = "";
 
-    const { fullStream } = streamText({
+    const { stream } = streamText({
       model: getLanguageModel(modelId),
-      system: `${updateDocumentPrompt(document.content, "sheet")}\n\nOutput ONLY the raw CSV data. No explanations, no markdown fences.`,
-      prompt: description,
+      ...artifactSettings(
+        `${updateDocumentPrompt(document.content, "sheet")}\n\nOutput ONLY the raw CSV data. No explanations, no markdown fences.`,
+        description,
+        abortSignal
+      ),
     });
 
-    for await (const delta of fullStream) {
+    for await (const delta of stream) {
+      if (delta.type === "error") {
+        throw delta.error;
+      }
+      if (delta.type === "abort") {
+        throw new Error("Artifact generation interrupted");
+      }
       if (delta.type === "text-delta") {
         draftContent += delta.text;
         dataStream.write({
@@ -47,6 +75,9 @@ export const sheetDocumentHandler = createDocumentHandler<"sheet">({
       }
     }
 
+    if (!draftContent.trim()) {
+      throw new Error("Empty artifact response");
+    }
     return draftContent;
   },
 });

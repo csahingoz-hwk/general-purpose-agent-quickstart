@@ -2,6 +2,7 @@ import type { UseChatHelpers } from "@ai-sdk/react";
 import { ArrowDownIcon, RotateCcwIcon } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useMessages } from "@/hooks/use-messages";
+import { canRetryReply, interruptedReply } from "@/lib/ai/conversation-state";
 import type { Vote } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -100,10 +101,14 @@ function PureMessages({
           ))}
 
           {!isReadonly &&
-            (status === "error" ||
-              (status === "ready" &&
-                messages.length > 0 &&
-                messages.at(-1)?.role === "user")) && (
+            status !== "submitted" &&
+            status !== "streaming" &&
+            (canRetryReply(messages) ||
+              (status === "error" &&
+                messages.at(-1)?.role === "assistant" &&
+                !messages
+                  .at(-1)
+                  ?.parts.some((p) => p.type.startsWith("tool-")))) && (
               <div className="flex justify-start pl-10">
                 <button
                   className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-muted"
@@ -115,6 +120,14 @@ function PureMessages({
                   Retry response
                 </button>
               </div>
+            )}
+
+          {interruptedReply(messages.at(-1))?.status === "interrupted" &&
+            interruptedReply(messages.at(-1))?.retryable === false && (
+              <p className="px-10 text-sm text-muted-foreground">
+                This reply stopped after a tool ran. Send a follow-up to
+                continue without repeating its action.
+              </p>
             )}
 
           {status === "submitted" && messages.at(-1)?.role !== "assistant" && (

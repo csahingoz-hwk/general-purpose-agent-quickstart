@@ -131,3 +131,40 @@ test("provider errors become brief bilingual messages without private details", 
     /limit/
   );
 });
+
+test("an explicit topic change does not inherit expensive tools from the last turn", () => {
+  assert.deepEqual(
+    selectActiveTools(
+      [
+        user("Weather in London?"),
+        user("Please show a fictional inbox demo chart."),
+      ],
+      true
+    ),
+    ["demoInbox"]
+  );
+  assert.deepEqual(
+    selectActiveTools([user("Weather in London?"), user("Thanks")], true),
+    []
+  );
+});
+
+test("artifact intent exposes only the relevant operation within the tool-step budget", () => {
+  assert.deepEqual(
+    selectActiveTools(
+      [user("Create a document about a synthetic test.")],
+      true
+    ),
+    ["createDocument"]
+  );
+  assert.deepEqual(selectActiveTools([user("Edit the document")], true), [
+    "editDocument",
+  ]);
+  assert.deepEqual(selectActiveTools([user("Rewrite the document")], true), [
+    "updateDocument",
+  ]);
+  assert.deepEqual(
+    selectActiveTools([user("Offer suggestions for this document")], true),
+    ["requestSuggestions"]
+  );
+});

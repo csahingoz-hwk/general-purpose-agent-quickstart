@@ -150,15 +150,10 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
           : undefined;
         const isToolApprovalContinuation =
           !isRetry &&
-          (lastMessage?.role !== "user" ||
-            request.messages.some((msg) =>
-              msg.parts?.some((part) => {
-                const state = (part as { state?: string }).state;
-                return (
-                  state === "approval-responded" || state === "output-denied"
-                );
-              })
-            ));
+          lastMessage?.role === "assistant" &&
+          lastMessage.parts.some(
+            (part) => "state" in part && part.state === "approval-responded"
+          );
 
         return {
           body: {
@@ -181,12 +176,13 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
     onFinish: () => {
       mutate(unstable_serialize(getChatHistoryPaginationKey));
     },
-    onError: () => {
+    onError: (error) => {
       // The message was already persisted by the API. Restoring it to the
       // composer would create a second turn when sent again.
       toast({
         type: "error",
         description:
+          error.message ||
           "Couldn't finish this reply. Tap Retry response to continue.",
       });
     },

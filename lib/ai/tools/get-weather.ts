@@ -6,7 +6,8 @@ async function geocodeCity(
 ): Promise<{ latitude: number; longitude: number } | null> {
   try {
     const response = await fetch(
-      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`
+      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`,
+      { signal: AbortSignal.timeout(8000) }
     );
 
     if (!response.ok) {
@@ -65,7 +66,7 @@ export const getWeather = tool({
       }),
     } as const;
   },
-  execute: async (input) => {
+  execute: async (input, { abortSignal }) => {
     let latitude: number;
     let longitude: number;
 
@@ -89,10 +90,22 @@ export const getWeather = tool({
     }
 
     const response = await fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m&hourly=temperature_2m&daily=sunrise,sunset&timezone=auto`
+      `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m&hourly=temperature_2m&daily=sunrise,sunset&timezone=auto`,
+      {
+        signal: AbortSignal.any([
+          AbortSignal.timeout(10_000),
+          ...(abortSignal ? [abortSignal] : []),
+        ]),
+      }
     );
 
+    if (!response.ok) {
+      throw new Error("Weather service unavailable");
+    }
     const weatherData = await response.json();
+    if (!weatherData.current || !weatherData.hourly || !weatherData.daily) {
+      throw new Error("Incomplete weather forecast");
+    }
 
     if ("city" in input) {
       weatherData.cityName = input.city;

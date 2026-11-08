@@ -4,6 +4,7 @@ import type { UIMessage } from "ai";
 import { cookies } from "next/headers";
 import { auth } from "@/app/(auth)/auth";
 import type { VisibilityType } from "@/components/chat/visibility-selector";
+import { acquireChatLock } from "@/lib/db/chat-lock";
 import {
   deleteMessagesByChatIdAfterTimestamp,
   getChatById,
@@ -50,10 +51,18 @@ export async function deleteTrailingMessages({ id }: { id: string }) {
     throw new Error("Unauthorized");
   }
 
-  await deleteMessagesByChatIdAfterTimestamp({
-    chatId: message.chatId,
-    timestamp: message.createdAt,
-  });
+  const release = await acquireChatLock(message.chatId);
+  if (!release) {
+    throw new Error("Wait for the current reply before editing");
+  }
+  try {
+    await deleteMessagesByChatIdAfterTimestamp({
+      chatId: message.chatId,
+      timestamp: message.createdAt,
+    });
+  } finally {
+    await release();
+  }
 }
 
 export async function updateChatVisibility({

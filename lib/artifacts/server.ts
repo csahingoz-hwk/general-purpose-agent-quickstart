@@ -22,6 +22,7 @@ export type CreateDocumentCallbackProps = {
   dataStream: UIMessageStreamWriter<ChatMessage>;
   session: Session;
   modelId: string;
+  abortSignal?: AbortSignal;
 };
 
 export type UpdateDocumentCallbackProps = {
@@ -30,6 +31,7 @@ export type UpdateDocumentCallbackProps = {
   dataStream: UIMessageStreamWriter<ChatMessage>;
   session: Session;
   modelId: string;
+  abortSignal?: AbortSignal;
 };
 
 export type DocumentHandler<T = ArtifactKind> = {
@@ -52,8 +54,10 @@ export function createDocumentHandler<T extends ArtifactKind>(config: {
         dataStream: args.dataStream,
         session: args.session,
         modelId: args.modelId,
+        abortSignal: args.abortSignal,
       });
 
+      args.abortSignal?.throwIfAborted();
       if (args.session?.user?.id) {
         await saveDocument({
           id: args.id,
@@ -73,8 +77,10 @@ export function createDocumentHandler<T extends ArtifactKind>(config: {
         dataStream: args.dataStream,
         session: args.session,
         modelId: args.modelId,
+        abortSignal: args.abortSignal,
       });
 
+      args.abortSignal?.throwIfAborted();
       if (args.session?.user?.id) {
         await saveDocument({
           id: args.document.id,

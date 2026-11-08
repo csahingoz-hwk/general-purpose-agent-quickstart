@@ -17,10 +17,12 @@
     "db:up": "drizzle-kit up",
     "test": "export PLAYWRIGHT=True && pnpm exec playwright test",
     "test:security": "node --import tsx --test tests/security/*.test.ts",
-    "test:readiness-ui": "node --import tsx scripts/test-model-readiness-ui.ts"
+    "test:readiness-ui": "node --import tsx scripts/test-model-readiness-ui.ts",
+    "test:sdk7-integration": "bash scripts/test-sdk7-integration.sh"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.0",
+    "@ai-sdk/otel": "1.0.165",
     "@ai-sdk/provider": "^4.0.0",
     "@ai-sdk/react": "^4.0.0",
     "@codemirror/lang-python": "^6.1.6",
@@ -133,6 +135,6 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": "24.x"
   }
 }

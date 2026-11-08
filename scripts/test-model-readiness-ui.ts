@@ -135,7 +135,7 @@ test("phone-sized readiness, selection and failed-send preservation", async () =
     await page.getByTestId("send-button").last().click();
     await failedResponse;
     await page
-      .getByText(/Couldn't finish this reply/)
+      .getByText(/Chat is not ready yet/)
       .first()
       .waitFor();
     await page.getByTestId("retry-response").waitFor();

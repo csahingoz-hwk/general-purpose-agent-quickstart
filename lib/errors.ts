@@ -16,6 +16,7 @@ export type Surface =
   | "vote"
   | "document"
   | "suggestions"
+  | "chat_busy"
   | "model_setup"
   | "model_quota";
 
@@ -33,6 +34,7 @@ export const visibilityBySurface: Record<Surface, ErrorVisibility> = {
   vote: "response",
   document: "response",
   suggestions: "response",
+  chat_busy: "response",
   model_setup: "response",
   model_quota: "response",
 };
@@ -83,6 +85,8 @@ export function getMessageByErrorCode(errorCode: ErrorCode): string {
   }
 
   switch (errorCode) {
+    case "rate_limit:chat_busy":
+      return "A reply is already running in this conversation. Please wait before retrying.";
     case "offline:model_setup":
       return "Chat is not ready yet. Your input is preserved; please try again after setup is complete.";
     case "rate_limit:model_quota":

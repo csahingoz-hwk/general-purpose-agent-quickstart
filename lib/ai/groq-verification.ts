@@ -56,6 +56,7 @@ export async function verifyGroqModels(
           prompt: "Return only these two greetings: Merhaba Hello",
           maxOutputTokens: 128,
           maxRetries: 0,
+          telemetry: { isEnabled: false },
           providerOptions: { openai: { reasoningEffort: "low" } },
           abortSignal: AbortSignal.timeout(15_000),
         });

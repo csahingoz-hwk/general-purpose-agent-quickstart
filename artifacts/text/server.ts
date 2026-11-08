@@ -1,22 +1,31 @@
 import { smoothStream, streamText } from "ai";
+import { artifactSettings } from "@/lib/ai/artifact-settings";
 import { updateDocumentPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
 import { createDocumentHandler } from "@/lib/artifacts/server";
 
 export const textDocumentHandler = createDocumentHandler<"text">({
   kind: "text",
-  onCreateDocument: async ({ title, dataStream, modelId }) => {
+  onCreateDocument: async ({ title, dataStream, modelId, abortSignal }) => {
     let draftContent = "";
 
-    const { fullStream } = streamText({
+    const { stream } = streamText({
       model: getLanguageModel(modelId),
-      system:
-        "Write about the given topic. Markdown is supported. Use headings wherever appropriate.",
+      ...artifactSettings(
+        "Write about the topic. Use Markdown headings where appropriate.",
+        title,
+        abortSignal
+      ),
       experimental_transform: smoothStream({ chunking: "word" }),
-      prompt: title,
     });
 
-    for await (const delta of fullStream) {
+    for await (const delta of stream) {
+      if (delta.type === "error") {
+        throw delta.error;
+      }
+      if (delta.type === "abort") {
+        throw new Error("Artifact generation interrupted");
+      }
       if (delta.type === "text-delta") {
         draftContent += delta.text;
         dataStream.write({
@@ -27,19 +36,37 @@ export const textDocumentHandler = createDocumentHandler<"text">({
       }
     }
 
+    if (!draftContent.trim()) {
+      throw new Error("Empty artifact response");
+    }
     return draftContent;
   },
-  onUpdateDocument: async ({ document, description, dataStream, modelId }) => {
+  onUpdateDocument: async ({
+    document,
+    description,
+    dataStream,
+    modelId,
+    abortSignal,
+  }) => {
     let draftContent = "";
 
-    const { fullStream } = streamText({
+    const { stream } = streamText({
       model: getLanguageModel(modelId),
-      system: updateDocumentPrompt(document.content, "text"),
+      ...artifactSettings(
+        updateDocumentPrompt(document.content, "text"),
+        description,
+        abortSignal
+      ),
       experimental_transform: smoothStream({ chunking: "word" }),
-      prompt: description,
     });
 
-    for await (const delta of fullStream) {
+    for await (const delta of stream) {
+      if (delta.type === "error") {
+        throw delta.error;
+      }
+      if (delta.type === "abort") {
+        throw new Error("Artifact generation interrupted");
+      }
       if (delta.type === "text-delta") {
         draftContent += delta.text;
         dataStream.write({
@@ -50,6 +77,9 @@ export const textDocumentHandler = createDocumentHandler<"text">({
       }
     }
 
+    if (!draftContent.trim()) {
+      throw new Error("Empty artifact response");
+    }
     return draftContent;
   },
 });
