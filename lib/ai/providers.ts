@@ -1,30 +1,14 @@
-import { customProvider, gateway } from "ai";
-import { isTestEnvironment } from "../constants";
-import { titleModel } from "./models";
-
-export const myProvider = isTestEnvironment
-  ? (() => {
-      const { chatModel, titleModel } = require("./models.mock");
-      return customProvider({
-        languageModels: {
-          "chat-model": chatModel,
-          "title-model": titleModel,
-        },
-      });
-    })()
-  : null;
+import "server-only";
+import { ChatbotError } from "../errors";
+import { createGroqModel } from "./groq-model";
+import { parseVerification } from "./groq-verification";
 
 export function getLanguageModel(modelId: string) {
-  if (isTestEnvironment && myProvider) {
-    return myProvider.languageModel(modelId);
+  const apiKey = process.env.GROQ_API_KEY?.trim();
+  const verified = parseVerification(process.env.VERIFIED_GROQ_MODELS);
+  if (!apiKey || !verified.modelIds.includes(modelId)) {
+    throw new ChatbotError("offline:model_setup");
   }
-
-  return gateway.languageModel(modelId);
-}
-
-export function getTitleModel() {
-  if (isTestEnvironment && myProvider) {
-    return myProvider.languageModel("title-model");
-  }
-  return gateway.languageModel(titleModel.id);
+  // Explicit chat-completions adapter: never route to OpenAI or AI Gateway.
+  return createGroqModel(apiKey, modelId);
 }

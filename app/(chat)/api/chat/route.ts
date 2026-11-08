@@ -12,12 +12,8 @@ import { after } from "next/server";
 import { createResumableStreamContext } from "resumable-stream";
 import { auth, type UserType } from "@/app/(auth)/auth";
 import { entitlementsByUserType } from "@/lib/ai/entitlements";
-import {
-  allowedModelIds,
-  chatModels,
-  DEFAULT_CHAT_MODEL,
-  getCapabilities,
-} from "@/lib/ai/models";
+import { getModelAvailability } from "@/lib/ai/model-runtime";
+import { chatModels, getCapabilities } from "@/lib/ai/models";
 import { systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
 import { cancelSchedule } from "@/lib/ai/tools/cancel-schedule";
@@ -109,9 +105,14 @@ export async function POST(request: Request) {
       return new ChatbotError("unauthorized:chat").toResponse();
     }
 
-    const chatModel = allowedModelIds.has(selectedChatModel)
-      ? selectedChatModel
-      : DEFAULT_CHAT_MODEL;
+    const availability = await getModelAvailability();
+    if (availability.status !== "ready") {
+      return new ChatbotError("offline:model_setup").toResponse();
+    }
+    if (!availability.models.some((model) => model.id === selectedChatModel)) {
+      return new ChatbotError("bad_request:api").toResponse();
+    }
+    const chatModel = selectedChatModel;
 
     await checkIpRateLimit(ipAddress(request));
 
@@ -251,14 +252,13 @@ export async function POST(request: Request) {
             needsOnboarding,
           }),
           messages: modelMessages,
-          stopWhen: stepCountIs(5),
+          stopWhen: stepCountIs(3),
+          maxOutputTokens: 2048,
+          maxRetries: 0,
           ...(isReasoningModel && !supportsTools
             ? { experimental_activeTools: [] }
             : {}),
           providerOptions: {
-            ...(modelConfig?.gatewayOrder && {
-              gateway: { order: modelConfig.gatewayOrder },
-            }),
             ...(modelConfig?.reasoningEffort && {
               openai: { reasoningEffort: modelConfig.reasoningEffort },
             }),
@@ -319,15 +319,13 @@ export async function POST(request: Request) {
         }
       },
       onError: (error) => {
-        if (
-          error instanceof Error &&
-          error.message?.includes(
-            "AI Gateway requires a valid credit card on file to service requests"
-          )
-        ) {
-          return "AI Gateway requires a valid credit card on file to service requests. Please visit https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai%3Fmodal%3Dadd-credit-card to add a card and unlock your free credits.";
-        }
-        return "Oops, an error occurred!";
+        const statusCode =
+          error && typeof error === "object" && "statusCode" in error
+            ? error.statusCode
+            : null;
+        return statusCode === 429
+          ? "The free model limit has been reached. Please try again later. No paid fallback was used."
+          : "The chat model is temporarily unavailable. Please try again later.";
       },
     });
 
@@ -359,16 +357,7 @@ export async function POST(request: Request) {
       return error.toResponse();
     }
 
-    if (
-      error instanceof Error &&
-      error.message?.includes(
-        "AI Gateway requires a valid credit card on file to service requests"
-      )
-    ) {
-      return new ChatbotError("bad_request:activate_gateway").toResponse();
-    }
-
-    console.error("Unhandled error in chat API:", error, { vercelId });
+    console.error("Chat request failed", { vercelId });
     return new ChatbotError("offline:chat").toResponse();
   }
 }

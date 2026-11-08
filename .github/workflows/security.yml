@@ -42,3 +42,21 @@ jobs:
         run: pnpm build
         env:
           NEXT_TELEMETRY_DISABLED: '1'
+      - name: Install test browser
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Verify phone-sized model readiness and draft recovery
+        env:
+          PORT: '3100'
+          AUTH_SECRET: synthetic-readiness-ui-secret-with-at-least-32-characters
+          APP_OWNER_EMAIL: owner@example.test
+        run: |
+          pnpm start > /tmp/readiness-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid"' EXIT
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail http://localhost:3100/login > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          pnpm test:readiness-ui
