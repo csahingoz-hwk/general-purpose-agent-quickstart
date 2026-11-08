@@ -221,12 +221,17 @@ Data Controls screenshot showed it disabled. This is owner-confirmed configurati
 not an independent API inspection. Global ZDR and storage-feature toggles were
 not requested to change. No API key is yet connected to the app.
 
-Next guided owner step: API Keys → Create API Key, named
-`personal-assistant-preview`, keeping its value private and the creation dialog
-open until it is saved in Vercel. Do not share the key in chat or screenshots.
+The owner reports creating the `personal-assistant-preview` API key. Its value
+has not been shared, read or connected. The owner asked for a private entry box;
+no secure secret-input tool is available in this chat. Use Vercel's private
+Secret/Sensitive environment field instead of a chat response or screenshot.
+
+Next guided owner step: privately save `GROQ_API_KEY` in Vercel for Preview,
+scoped to `security/owner-only-hardening`, and report completion without revealing
+the value. Do not redeploy merely for this variable yet: the currently deployed
+code still uses Gateway and needs a reviewed free-provider/readiness change.
 Do not upgrade, add a payment method, enable Workspace/Gmail connectors or send
-private mail data. Private Vercel configuration and free-account model testing
-follow as separate steps. Vercel AI Gateway activation remains deferred. This status update
+private mail data. Free-account model testing remains pending. Vercel AI Gateway activation remains deferred. This status update
 changes documentation only; its diff check passed and runtime tests were not rerun.
 
 ## Smallest next implementation and costs
