@@ -4,8 +4,9 @@ import {
   createUIMessageStream,
   createUIMessageStreamResponse,
   generateId,
-  stepCountIs,
+  isStepCount,
   streamText,
+  toUIMessageStream,
 } from "ai";
 import { checkBotId } from "botid/server";
 import { after } from "next/server";
@@ -14,12 +15,19 @@ import { auth } from "@/app/(auth)/auth";
 import {
   budgetModelMessages,
   DEFAULT_REPLY_TOKENS,
+  estimateToolSchemaTokens,
 } from "@/lib/ai/context/budget";
 import { safeModelError } from "@/lib/ai/context/errors";
 import {
   needsArtifactInstructions,
   selectActiveTools,
 } from "@/lib/ai/context/select-tools";
+import {
+  applyApprovalResponses,
+  prepareRetry,
+  replyForStorage,
+  safeUIStream,
+} from "@/lib/ai/conversation-state";
 import { parseVerification } from "@/lib/ai/groq-verification";
 import { chatModels, getCapabilities } from "@/lib/ai/models";
 import { systemPrompt } from "@/lib/ai/prompts";
@@ -34,6 +42,7 @@ import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
 import { setSoul } from "@/lib/ai/tools/set-soul";
 import { updateDocument } from "@/lib/ai/tools/update-document";
 import { isProductionEnvironment } from "@/lib/constants";
+import { acquireChatLock } from "@/lib/db/chat-lock";
 import {
   createStreamId,
   deleteChatById,
@@ -100,6 +109,8 @@ export async function POST(request: Request) {
     return new ChatbotError("bad_request:api").toResponse();
   }
 
+  let releaseLock: (() => Promise<void>) | null = null;
+  let streamOwnsLock = false;
   try {
     const {
       id,
@@ -132,11 +143,17 @@ export async function POST(request: Request) {
 
     await checkIpRateLimit(ipAddress(request));
 
+    releaseLock = await acquireChatLock(id);
+    if (!releaseLock) {
+      return new ChatbotError("rate_limit:chat_busy").toResponse();
+    }
+
     const isToolApprovalFlow = Boolean(messages);
 
     const chat = await getChatById({ id });
     let messagesFromDb: DBMessage[] = [];
     let titlePromise: Promise<string> | null = null;
+    let replacementReplyId: string | undefined;
 
     if (chat) {
       if (chat.userId !== session.user.id) {
@@ -167,54 +184,34 @@ export async function POST(request: Request) {
     let uiMessages: ChatMessage[];
 
     if (isToolApprovalFlow && messages) {
-      const dbMessages = convertToUIMessages(messagesFromDb);
-      const approvalStates = new Map(
-        messages.flatMap(
-          (m) =>
-            m.parts
-              ?.filter(
-                (p: Record<string, unknown>) =>
-                  p.state === "approval-responded" ||
-                  p.state === "output-denied"
-              )
-              .map((p: Record<string, unknown>) => [
-                String(p.toolCallId ?? ""),
-                p,
-              ]) ?? []
-        )
-      );
-      uiMessages = dbMessages.map((msg) => ({
-        ...msg,
-        parts: msg.parts.map((part) => {
-          if (
-            "toolCallId" in part &&
-            approvalStates.has(String(part.toolCallId))
-          ) {
-            return { ...part, ...approvalStates.get(String(part.toolCallId)) };
-          }
-          return part;
-        }),
-      })) as ChatMessage[];
-    } else {
-      uiMessages = [
-        ...convertToUIMessages(messagesFromDb),
-        // The retry target is already in the database. Don't repeat the user
-        // turn in model context, even though no new DB row will be inserted.
-        ...(retryAlreadyPersisted ? [] : [message as ChatMessage]),
-      ];
-    }
-
-    if (retryAlreadyPersisted) {
-      // Only retry the latest unanswered saved user turn.
-      const lastSaved = messagesFromDb.at(-1);
-      if (
-        !chat ||
-        !message ||
-        lastSaved?.role !== "user" ||
-        lastSaved.id !== message.id
-      ) {
+      try {
+        uiMessages = applyApprovalResponses(
+          convertToUIMessages(messagesFromDb),
+          messages as ChatMessage[]
+        );
+      } catch {
         return new ChatbotError("bad_request:api").toResponse();
       }
+    } else if (retryAlreadyPersisted && message) {
+      try {
+        const preparedRetry = prepareRetry(
+          convertToUIMessages(messagesFromDb),
+          message.id
+        );
+        uiMessages = preparedRetry.messages;
+        replacementReplyId = preparedRetry.replaceId;
+      } catch {
+        return new ChatbotError("bad_request:api").toResponse();
+      }
+    } else {
+      // Replayed submits must use Retry; never insert or model-feed the same turn twice.
+      if (messagesFromDb.some((saved) => saved.id === message?.id)) {
+        return new ChatbotError("bad_request:api").toResponse();
+      }
+      uiMessages = [
+        ...convertToUIMessages(messagesFromDb),
+        message as ChatMessage,
+      ];
     }
 
     if (message?.role === "user" && !retryAlreadyPersisted) {
@@ -259,7 +256,7 @@ export async function POST(request: Request) {
     // follow-up must share a minute on Groq's limited free account.
     const requestBudget = requestedTools.length > 0 ? 3400 : 7000;
 
-    const stream = createUIMessageStream({
+    const stream = createUIMessageStream<ChatMessage>({
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
       execute: async ({ writer: dataStream }) => {
         const localTools = {
@@ -293,6 +290,10 @@ export async function POST(request: Request) {
         const activeTools = requestedTools.filter(
           (name) => name in tools
         ) as Array<keyof typeof tools>;
+        const toolSchemaTokens = await estimateToolSchemaTokens(
+          tools,
+          activeTools
+        );
         const convertedMessages = await convertToModelMessages(
           sanitizeToolCallIds(uiMessages),
           { tools, ignoreIncompleteToolCalls: true }
@@ -301,6 +302,7 @@ export async function POST(request: Request) {
           messages: convertedMessages,
           system: replySystemPrompt,
           toolCount: activeTools.length,
+          toolSchemaTokens,
           maxOutputTokens: DEFAULT_REPLY_TOKENS,
           requestBudget,
         });
@@ -309,17 +311,22 @@ export async function POST(request: Request) {
         }
         const result = streamText({
           model: getLanguageModel(chatModel),
-          system: replySystemPrompt,
+          instructions: replySystemPrompt,
           messages: prepared.messages,
-          stopWhen: stepCountIs(activeTools.length > 0 ? 2 : 1),
+          stopWhen: isStepCount(activeTools.length > 0 ? 2 : 1),
           maxOutputTokens: DEFAULT_REPLY_TOKENS,
           maxRetries: 0,
+          abortSignal: AbortSignal.any([
+            request.signal,
+            AbortSignal.timeout(50_000),
+          ]),
           activeTools,
           prepareStep: ({ messages: stepMessages }) => {
             const next = budgetModelMessages({
               messages: stepMessages,
               system: replySystemPrompt,
               toolCount: activeTools.length,
+              toolSchemaTokens,
               maxOutputTokens: DEFAULT_REPLY_TOKENS,
               requestBudget,
             });
@@ -334,78 +341,64 @@ export async function POST(request: Request) {
             }),
           },
           tools,
-          experimental_telemetry: {
+          telemetry: {
             isEnabled: isProductionEnvironment,
+            recordInputs: false,
+            recordOutputs: false,
             functionId: "stream-text",
           },
         });
 
         dataStream.merge(
-          result.toUIMessageStream({
+          toUIMessageStream<typeof tools, ChatMessage>({
+            stream: result.stream,
+            onEnd: ({ outcome }) => dataStream.setOutcome(outcome),
             sendReasoning: false,
             onError: (error) => safeModelError(error, finalUserText),
-          })
+          }).pipeThrough(safeUIStream(finalUserText))
         );
 
         if (titlePromise) {
           const title = await titlePromise;
           dataStream.write({ type: "data-chat-title", data: title });
-          updateChatTitleById({ chatId: id, title });
+          await updateChatTitleById({ chatId: id, title });
         }
       },
-      generateId: generateUUID,
-      onFinish: async ({ messages: finishedMessages }) => {
-        if (isToolApprovalFlow) {
-          for (const finishedMsg of finishedMessages) {
-            const existingMsg = uiMessages.find((m) => m.id === finishedMsg.id);
-            if (existingMsg) {
-              await updateMessage({
-                id: finishedMsg.id,
-                parts: finishedMsg.parts,
-              });
-            } else {
-              await saveMessages({
-                messages: [
-                  {
-                    id: finishedMsg.id,
-                    role: finishedMsg.role,
-                    parts: finishedMsg.parts,
-                    createdAt: new Date(),
-                    attachments: [],
-                    chatId: id,
-                  },
-                ],
-              });
-            }
-          }
-        } else {
-          // Failed/aborted generations must not persist empty assistant rows.
-          const meaningfulMessages = finishedMessages.filter(
-            (msg) =>
-              msg.role !== "assistant" ||
-              msg.parts.some(
-                (part) =>
-                  (part.type === "text" && part.text.trim().length > 0) ||
-                  part.type.startsWith("tool-")
-              )
+      generateId: () => replacementReplyId ?? generateUUID(),
+      onEnd: async ({ responseMessage, outcome, isAborted, isCancelled }) => {
+        try {
+          const reply = replyForStorage(
+            responseMessage,
+            outcome.status === "completed" && !isAborted && !isCancelled
           );
-          if (meaningfulMessages.length > 0) {
+          if (!reply) {
+            return;
+          }
+          const saved = messagesFromDb.find((m) => m.id === reply.id);
+          if (saved) {
+            await updateMessage({ id: reply.id, parts: reply.parts });
+          } else {
             await saveMessages({
-              messages: meaningfulMessages.map((currentMessage) => ({
-                id: currentMessage.id,
-                role: currentMessage.role,
-                parts: currentMessage.parts,
-                createdAt: new Date(),
-                attachments: [],
-                chatId: id,
-              })),
+              messages: [
+                {
+                  id: reply.id,
+                  role: reply.role,
+                  parts: reply.parts,
+                  createdAt: new Date(),
+                  attachments: [],
+                  chatId: id,
+                },
+              ],
             });
           }
+        } finally {
+          await releaseLock?.();
         }
       },
       onError: (error) => safeModelError(error, finalUserText),
     });
 
+    streamOwnsLock = true;
     return createUIMessageStreamResponse({
       stream,
       async consumeSseStream({ stream: sseStream }) {
@@ -436,6 +429,10 @@ export async function POST(request: Request) {
 
     console.error("Chat request failed", { vercelId });
     return new ChatbotError("offline:chat").toResponse();
+  } finally {
+    if (!streamOwnsLock) {
+      await releaseLock?.();
+    }
   }
 }
 

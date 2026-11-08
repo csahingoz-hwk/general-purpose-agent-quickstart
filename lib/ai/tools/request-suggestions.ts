@@ -5,6 +5,7 @@ import { getDocumentById, saveSuggestions } from "@/lib/db/queries";
 import type { Suggestion } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
+import { artifactSettings } from "../artifact-settings";
 import { getLanguageModel } from "../providers";
 
 type RequestSuggestionsProps = {
@@ -28,7 +29,7 @@ export const requestSuggestions = ({
           "The UUID of an existing document artifact that was previously created with createDocument"
         ),
     }),
-    execute: async ({ documentId }) => {
+    execute: async ({ documentId }, { abortSignal }) => {
       const document = await getDocumentById({ id: documentId });
 
       if (!document || !document.content) {
@@ -46,11 +47,13 @@ export const requestSuggestions = ({
         "userId" | "createdAt" | "documentCreatedAt"
       >[] = [];
 
-      const { partialOutputStream } = streamText({
+      const { elementStream } = streamText({
         model: getLanguageModel(modelId),
-        system:
-          "You are a writing assistant. Given a piece of writing, offer up to 5 suggestions to improve it. Each suggestion must contain full sentences, not just individual words. Describe what changed and why.",
-        prompt: document.content,
+        ...artifactSettings(
+          "Offer up to 5 writing suggestions using full sentences; describe each change.",
+          document.content,
+          abortSignal
+        ),
         output: Output.array({
           element: z.object({
             originalSentence: z.string().describe("The original sentence"),
@@ -62,42 +65,29 @@ export const requestSuggestions = ({
         }),
       });
 
-      let processedCount = 0;
-      for await (const partialOutput of partialOutputStream) {
-        if (!partialOutput) {
-          continue;
+      // SDK 7 yields complete, schema-validated elements; partial array snapshots
+      // can otherwise duplicate or persist unfinished sentences.
+      for await (const element of elementStream) {
+        if (suggestions.length >= 5) {
+          break;
         }
-
-        for (let i = processedCount; i < partialOutput.length; i++) {
-          const element = partialOutput[i];
-          if (
-            !element?.originalSentence ||
-            !element?.suggestedSentence ||
-            !element?.description
-          ) {
-            continue;
-          }
-
-          const suggestion = {
-            originalText: element.originalSentence,
-            suggestedText: element.suggestedSentence,
-            description: element.description,
-            id: generateUUID(),
-            documentId,
-            isResolved: false,
-          };
-
-          dataStream.write({
-            type: "data-suggestion",
-            data: suggestion as Suggestion,
-            transient: true,
-          });
-
-          suggestions.push(suggestion);
-          processedCount++;
-        }
+        const suggestion = {
+          originalText: element.originalSentence,
+          suggestedText: element.suggestedSentence,
+          description: element.description,
+          id: generateUUID(),
+          documentId,
+          isResolved: false,
+        };
+        dataStream.write({
+          type: "data-suggestion",
+          data: suggestion as Suggestion,
+          transient: true,
+        });
+        suggestions.push(suggestion);
       }
 
+      abortSignal?.throwIfAborted();
       if (session.user?.id) {
         const userId = session.user.id;
 

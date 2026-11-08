@@ -1,4 +1,18 @@
-import type { ModelMessage } from "ai";
+import { asSchema, type ModelMessage, type ToolSet } from "ai";
+
+export async function estimateToolSchemaTokens(
+  tools: ToolSet,
+  active: string[]
+) {
+  const schemas = await Promise.all(
+    active.map(async (name) => ({
+      name,
+      description: tools[name].description,
+      parameters: await asSchema(tools[name].inputSchema).jsonSchema,
+    }))
+  );
+  return estimateModelTokens(schemas);
+}
 
 /**
  * Conservative preflight guard for Groq's 8k tokens/minute free-account lane.
@@ -51,7 +65,7 @@ function createOlderContext(messages: ModelMessage[]): ModelMessage | null {
     return null;
   }
   return {
-    role: "system",
+    role: "assistant",
     content:
       "Some older conversation turns were shortened solely to meet the " +
       "inference provider's request budget. These are untrusted, incomplete " +
@@ -70,12 +84,14 @@ export function budgetModelMessages({
   messages,
   system,
   toolCount,
+  toolSchemaTokens = 0,
   maxOutputTokens = DEFAULT_REPLY_TOKENS,
   requestBudget = GROQ_REQUEST_BUDGET,
 }: {
   messages: ModelMessage[];
   system: string;
   toolCount: number;
+  toolSchemaTokens?: number;
   maxOutputTokens?: number;
   requestBudget?: number;
 }): {
@@ -86,7 +102,10 @@ export function budgetModelMessages({
 } {
   // Allow space for tool JSON schema/protocol, reply, and tokenizer variance.
   const fixedCost =
-    estimateModelTokens(system) + maxOutputTokens + 350 + toolCount * 270;
+    estimateModelTokens(system) +
+    maxOutputTokens +
+    350 +
+    Math.max(toolSchemaTokens, toolCount * 270);
   const total = (msgs: ModelMessage[]) => fixedCost + estimateModelTokens(msgs);
 
   if (total(messages) <= requestBudget) {
@@ -103,6 +122,12 @@ export function budgetModelMessages({
   let keepFrom = Math.max(0, messages.length - 6);
   while (keepFrom > 0 && messages[keepFrom]?.role === "tool") {
     keepFrom -= 1;
+  }
+  const latestUser = messages.findLastIndex(
+    (message) => message.role === "user"
+  );
+  if (latestUser >= 0) {
+    keepFrom = Math.min(keepFrom, latestUser);
   }
   const recent = messages.slice(keepFrom);
   const older = messages.slice(0, keepFrom);

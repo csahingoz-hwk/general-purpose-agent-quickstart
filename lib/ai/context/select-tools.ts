@@ -31,15 +31,26 @@ export function selectActiveTools(
     .slice(-2)
     .map(userText);
   const latest = recentUserText.at(-1) ?? "";
-  // Allow "London" as a follow-up to "what's the weather?" without
-  // advertising weather tools on unrelated turns.
-  const contextual = latest.length <= 55 ? recentUserText.join(" ") : latest;
-  const phrase = contextual.toLocaleLowerCase("en");
+  // Carry weather context only for a short location/time follow-up. A new
+  // explicit request (e.g. a fictional inbox) must not inherit previous tools.
+  const phrase = latest.toLocaleLowerCase("en");
+  const elliptical =
+    latest.length <= 55 &&
+    latest.trim().split(/\s+/).length <= 4 &&
+    !/^(please|show|explain|write|create|hello|hi|thanks|thank|merhaba|teşekkür|lütfen|göster)\b/i.test(
+      latest
+    ) &&
+    !/inbox|mail|e.?posta|gelen kutusu|document|belge|demo|fictional/.test(
+      phrase
+    );
+  const weatherPhrase = elliptical
+    ? recentUserText.join(" ").toLocaleLowerCase("en")
+    : phrase;
   const enabled: ChatToolName[] = [];
 
   if (
     /weather|forecast|temperature|rain|havadurumu|hava durumu|yağmur|sıcaklık|sicaklik|kaç derece|kac derece/.test(
-      phrase
+      weatherPhrase
     )
   ) {
     enabled.push("getWeather");
@@ -59,13 +70,18 @@ export function selectActiveTools(
       phrase
     )
   ) {
-    enabled.push("createDocument");
-    if (
-      /\b(edit|update|revise|change|fix|modify|suggestions)\b|düzenle|güncelle|değiştir|öneri/.test(
+    if (/suggestions|writing advice|öneri/.test(phrase)) {
+      enabled.push("requestSuggestions");
+    } else if (/rewrite|replace most|full rewrite|baştan yaz/.test(phrase)) {
+      enabled.push("updateDocument");
+    } else if (
+      /\b(edit|update|revise|change|fix|modify)\b|düzenle|güncelle|değiştir/.test(
         phrase
       )
     ) {
-      enabled.push("editDocument", "updateDocument", "requestSuggestions");
+      enabled.push("editDocument");
+    } else {
+      enabled.push("createDocument");
     }
   }
 

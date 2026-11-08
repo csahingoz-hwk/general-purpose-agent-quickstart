@@ -327,7 +327,9 @@ const PurePreviewMessage = ({
         "input" in part ? (part.input as Record<string, unknown>) : undefined;
       const output = "output" in part ? part.output : undefined;
       const errorText =
-        "errorText" in part ? (part.errorText as string) : undefined;
+        "errorText" in part
+          ? "This tool could not finish. Please try again later."
+          : undefined;
 
       return (
         <Tool

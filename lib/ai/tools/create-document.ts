@@ -30,7 +30,7 @@ export const createDocument = ({
           "REQUIRED. 'code' for programming/algorithms, 'text' for essays/writing, 'sheet' for spreadsheets"
         ),
     }),
-    execute: async ({ title, kind }) => {
+    execute: async ({ title, kind }, { abortSignal }) => {
       const id = generateUUID();
 
       dataStream.write({
@@ -72,6 +72,7 @@ export const createDocument = ({
         dataStream,
         session,
         modelId,
+        abortSignal,
       });
 
       dataStream.write({ type: "data-finish", data: null, transient: true });

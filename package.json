@@ -17,12 +17,14 @@
     "db:up": "drizzle-kit up",
     "test": "export PLAYWRIGHT=True && pnpm exec playwright test",
     "test:security": "node --import tsx --test tests/security/*.test.ts",
-    "test:readiness-ui": "node --import tsx scripts/test-model-readiness-ui.ts"
+    "test:readiness-ui": "node --import tsx scripts/test-model-readiness-ui.ts",
+    "test:sdk7-integration": "bash scripts/test-sdk7-integration.sh"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^3.0.41",
-    "@ai-sdk/provider": "^3.0.3",
-    "@ai-sdk/react": "3.0.118",
+    "@ai-sdk/openai": "^4.0.0",
+    "@ai-sdk/otel": "1.0.165",
+    "@ai-sdk/provider": "^4.0.0",
+    "@ai-sdk/react": "^4.0.0",
     "@codemirror/lang-python": "^6.1.6",
     "@codemirror/state": "^6.5.0",
     "@codemirror/theme-one-dark": "^6.1.2",
@@ -38,7 +40,7 @@
     "@vercel/blob": "^0.24.1",
     "@vercel/functions": "^2.0.0",
     "@vercel/otel": "^1.12.0",
-    "ai": "6.0.116",
+    "ai": "7.0.165",
     "bcrypt-ts": "^5.0.2",
     "botid": "^1.5.11",
     "class-variance-authority": "^0.7.1",
@@ -130,5 +132,9 @@
       "postcss-selector-parser@<6.1.5": "6.1.5",
       "glob@>=9 <14.0.2": "14.0.2"
     }
+  },
+  "type": "module",
+  "engines": {
+    "node": "24.x"
   }
 }

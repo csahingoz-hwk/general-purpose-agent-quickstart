@@ -14,7 +14,7 @@ export function classifyModelError(
         : "";
   if (
     status === 413 ||
-    /request too large|tokens per minute.*requested|context.length|chat_context_budget/i.test(
+    /request too large|tokens per minute.*requested|context.length|chat_context_budget|model's size limit|geçerli istek sınırını aştı/i.test(
       text
     )
   ) {
@@ -22,7 +22,9 @@ export function classifyModelError(
   }
   if (
     status === 429 ||
-    /rate.limit|tokens per minute|quota exceeded/i.test(text)
+    /rate.limit|tokens per minute|quota exceeded|current usage limit was reached|kullanım sınırına ulaşıldı/i.test(
+      text
+    )
   ) {
     return "rate";
   }
