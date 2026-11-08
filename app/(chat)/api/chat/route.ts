@@ -153,6 +153,15 @@ export async function POST(request: Request) {
       titlePromise = generateTitleFromUserMessage({ message });
     }
 
+    // Retry can happen before or after the server accepted the original turn.
+    // Reuse an existing persisted user turn, or save it exactly once if the
+    // earlier request failed before persistence.
+    const retryAlreadyPersisted = Boolean(
+      retry &&
+        message?.role === "user" &&
+        messagesFromDb.some((saved) => saved.role === "user" && saved.id === message.id)
+    );
+
     let uiMessages: ChatMessage[];
 
     if (isToolApprovalFlow && messages) {
@@ -189,13 +198,12 @@ export async function POST(request: Request) {
         ...convertToUIMessages(messagesFromDb),
         // The retry target is already in the database. Don't repeat the user
         // turn in model context, even though no new DB row will be inserted.
-        ...(retry ? [] : [message as ChatMessage]),
+        ...(retryAlreadyPersisted ? [] : [message as ChatMessage]),
       ];
     }
 
-    if (retry) {
-      // Only retry the most recently persisted unanswered user turn. A retry
-      // must never create a second copy of the same user message.
+    if (retryAlreadyPersisted) {
+      // Only retry the latest unanswered saved user turn.
       const lastSaved = messagesFromDb.at(-1);
       if (
         !chat ||
@@ -207,7 +215,7 @@ export async function POST(request: Request) {
       }
     }
 
-    if (message?.role === "user" && !retry) {
+    if (message?.role === "user" && !retryAlreadyPersisted) {
       await saveMessages({
         messages: [
           {
