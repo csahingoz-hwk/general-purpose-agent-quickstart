@@ -95,7 +95,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { id, message, messages, selectedChatModel, selectedVisibilityType } =
+    const { id, message, messages, selectedChatModel, selectedVisibilityType, retry } =
       requestBody;
 
     const [, session] = await Promise.all([
@@ -179,7 +179,16 @@ export async function POST(request: Request) {
       ];
     }
 
-    if (message?.role === "user") {
+    if (retry) {
+      // Only retry the most recently persisted unanswered user turn. A retry
+      // must never create a second copy of the same user message.
+      const lastSaved = messagesFromDb.at(-1);
+      if (!chat || !message || lastSaved?.role !== "user" || lastSaved.id !== message.id) {
+        return new ChatbotError("bad_request:api").toResponse();
+      }
+    }
+
+    if (message?.role === "user" && !retry) {
       await saveMessages({
         messages: [
           {
@@ -197,7 +206,6 @@ export async function POST(request: Request) {
     const modelConfig = chatModels.find((m) => m.id === chatModel);
     const modelCapabilities = await getCapabilities();
     const capabilities = modelCapabilities[chatModel];
-    const isReasoningModel = capabilities?.reasoning === true;
     const supportsTools = capabilities?.tools === true;
 
     const soul = await getUserSoul({ userId: session.user.id });
@@ -341,17 +349,29 @@ export async function POST(request: Request) {
               });
             }
           }
-        } else if (finishedMessages.length > 0) {
-          await saveMessages({
-            messages: finishedMessages.map((currentMessage) => ({
+        } else {
+          // Failed/aborted generations must not persist empty assistant rows.
+          const meaningfulMessages = finishedMessages.filter(
+            (msg) =>
+              msg.role !== "assistant" ||
+              msg.parts.some(
+                (part) =>
+                  (part.type === "text" && part.text.trim().length > 0) ||
+                  part.type.startsWith("tool-")
+              )
+          );
+          if (meaningfulMessages.length > 0) {
+            await saveMessages({
+              messages: meaningfulMessages.map((currentMessage) => ({
               id: currentMessage.id,
               role: currentMessage.role,
               parts: currentMessage.parts,
               createdAt: new Date(),
               attachments: [],
-              chatId: id,
-            })),
-          });
+                chatId: id,
+              })),
+            });
+          }
         }
       },
       onError: (error) => safeModelError(error, finalUserText),
