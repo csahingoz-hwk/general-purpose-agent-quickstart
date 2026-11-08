@@ -92,7 +92,9 @@ export function selectActiveTools(
   return [...new Set(enabled)];
 }
 
-export function needsArtifactInstructions(names: readonly ChatToolName[]): boolean {
+export function needsArtifactInstructions(
+  names: readonly ChatToolName[]
+): boolean {
   return names.some((name) =>
     [
       "createDocument",
