@@ -159,7 +159,9 @@ export async function POST(request: Request) {
     const retryAlreadyPersisted = Boolean(
       retry &&
         message?.role === "user" &&
-        messagesFromDb.some((saved) => saved.role === "user" && saved.id === message.id)
+        messagesFromDb.some(
+          (saved) => saved.role === "user" && saved.id === message.id
+        )
     );
 
     let uiMessages: ChatMessage[];
