@@ -5,7 +5,11 @@ import { selectActiveTools } from "../../lib/ai/context/select-tools";
 import { systemPrompt } from "../../lib/ai/prompts";
 import { getCurrentTime } from "../../lib/ai/tools/get-current-time";
 import { getWeather } from "../../lib/ai/tools/get-weather";
-import { browserLocation, geocodeCity } from "../../lib/location";
+import {
+  browserLocation,
+  geocodeCity,
+  reverseGeocode,
+} from "../../lib/location";
 import {
   contextBlock,
   describeTime,
@@ -232,7 +236,7 @@ test("weather uses the saved home location only when no place is given", async (
 
 test("browser coordinates are validated and rounded; geocoding failure saves nothing", async () => {
   assert.deepEqual(browserLocation(51.3612, -0.3049, "Europe/London"), {
-    label: "Current location (approximate)",
+    label: "Current location",
     latitude: 51.36,
     longitude: -0.3,
     timeZone: "Europe/London",
@@ -307,5 +311,30 @@ test("weather stays available through short follow-ups after saving a location",
       true
     ),
     []
+  );
+});
+
+test("browser coordinates are named by place, with a neutral fallback", async () => {
+  const named = await reverseGeocode(51.36, -0.3, () =>
+    Promise.resolve(
+      Response.json({
+        locality: "Chessington",
+        city: "Kingston upon Thames",
+        countryName: "United Kingdom",
+      })
+    )
+  );
+  assert.deepEqual(named, { label: "Chessington", country: "United Kingdom" });
+  assert.equal(
+    await reverseGeocode(51.36, -0.3, () =>
+      Promise.resolve(new Response("x", { status: 500 }))
+    ),
+    null
+  );
+  assert.equal(
+    await reverseGeocode(51.36, -0.3, () =>
+      Promise.resolve(Response.json({ locality: "", city: "" }))
+    ),
+    null
   );
 });

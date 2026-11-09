@@ -145,6 +145,14 @@ const PurePreviewMessage = ({
       );
     }
 
+    if (
+      (type as string) === "tool-getCurrentTime" ||
+      (type as string) === "tool-setHomeLocation"
+    ) {
+      // Internal helpers: the assistant states the result in its reply.
+      return null;
+    }
+
     if (type === "tool-getWeather") {
       const { toolCallId, state } = part;
       const approvalId = (part as { approval?: { id: string } }).approval?.id;

@@ -1,6 +1,6 @@
 import { auth } from "@/app/(auth)/auth";
 import { getUserHomeLocation, setUserHomeLocation } from "@/lib/db/queries";
-import { browserLocation, geocodeCity } from "@/lib/location";
+import { browserLocation, geocodeCity, reverseGeocode } from "@/lib/location";
 import { type HomeLocation, validTimeZone } from "@/lib/temporal";
 
 const noStore = { headers: { "Cache-Control": "private, no-store" } };
@@ -31,6 +31,13 @@ export async function PUT(request: Request) {
       body.longitude,
       validTimeZone(body.timeZone)
     );
+    if (home) {
+      // Only the rounded (~1 km) coordinates leave the server for the place name.
+      const place = await reverseGeocode(home.latitude, home.longitude);
+      if (place) {
+        home = { ...home, label: place.label, country: place.country };
+      }
+    }
   }
   if (!home) {
     return Response.json({ error: "location_invalid" }, { status: 400 });
