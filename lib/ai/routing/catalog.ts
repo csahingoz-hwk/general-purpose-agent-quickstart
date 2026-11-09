@@ -38,20 +38,23 @@ export function openAIEnabled() {
     Boolean(process.env.OPENAI_API_KEY?.trim())
   );
 }
-/** Opt-in, preview-only Gateway lane; Production stays disabled by default. */
-export function gatewayCredential() {
-  return (
-    process.env.AI_GATEWAY_API_KEY?.trim() ||
-    process.env.VERCEL_OIDC_TOKEN?.trim()
-  );
+/**
+ * Opt-in, preview-only AI Gateway lane; Production stays disabled by default.
+ *
+ * This deliberately checks the explicit opt-in flag ONLY. It must not look for a
+ * credential in process.env: on Vercel the OIDC token reaches a deployed
+ * function in the `x-vercel-oidc-token` request header, and the AI SDK Gateway
+ * provider resolves it (or AI_GATEWAY_API_KEY) itself. Whether authentication
+ * actually works is established by the authenticated catalog call in
+ * ./gateway.ts, never guessed from environment variables.
+ */
+export function gatewayEnabled() {
+  return !legacyEnabled() && process.env.AI_GATEWAY_USAGE_ENABLED === "true";
 }
 
-export function gatewayEnabled() {
-  return (
-    !legacyEnabled() &&
-    process.env.AI_GATEWAY_USAGE_ENABLED === "true" &&
-    Boolean(gatewayCredential())
-  );
+/** Either explicitly enabled paid lane (Gateway or direct OpenAI). */
+export function premiumLaneEnabled() {
+  return gatewayEnabled() || openAIEnabled();
 }
 
 export function monthlyAllowance() {

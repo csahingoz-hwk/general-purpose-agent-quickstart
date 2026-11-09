@@ -5,9 +5,11 @@ import type {
   LanguageModelV4StreamPart,
   LanguageModelV4Usage,
 } from "@ai-sdk/provider";
+import { createGateway } from "ai";
 import { z } from "zod";
 import { LUNA, type PremiumModelId, premiumModels, TERRA } from "./catalog";
 import { inputTokenBound, reserveCost } from "./cost";
+import { gatewaySlug } from "./gateway";
 import { failureKind, ModelFailure, mayFallback } from "./policy";
 import type { InferenceSession } from "./session";
 
@@ -24,26 +26,25 @@ export function createPremiumAdapter(
   }).responses(model);
 }
 
-/** Preserve the strict Responses interface while using AI Gateway OIDC billing.
- * Only verified OpenAI provider/model IDs are sent upstream.
+/**
+ * Native AI SDK Gateway provider. Authentication (OIDC request header on Vercel,
+ * AI_GATEWAY_API_KEY, or a local OIDC token) is resolved by the provider on every
+ * request, so rotating OIDC tokens never need manual handling here. Only the
+ * verified provider-prefixed OpenAI slug is ever requested.
  */
 export function createGatewayAdapter(
-  token: string,
   model: PremiumModelId,
-  fetcher: typeof fetch = fetch
+  provider: (id: string) => LanguageModelV4 = createGateway()
 ): LanguageModelV4 {
-  return createOpenAI({
-    apiKey: token,
-    baseURL: "https://ai-gateway.vercel.sh/v1",
-    fetch: fetcher,
-  }).responses(`openai/${model}`);
+  return provider(gatewaySlug(model));
 }
 
 /** One request shares its exposure/tool/fallback boundary across all SDK steps and artifacts. */
 export function createRoutedModel(
   initial: PremiumModelId,
   session: InferenceSession,
-  factory: (id: PremiumModelId) => LanguageModelV4
+  factory: (id: PremiumModelId) => LanguageModelV4,
+  { gateway = false }: { gateway?: boolean } = {}
 ): LanguageModelV4 {
   function options(
     model: PremiumModelId,
@@ -66,6 +67,8 @@ export function createRoutedModel(
           parallelToolCalls: false,
           promptCacheOptions: { mode: "implicit", ttl: "30m" },
         },
+        // Keep routing on OpenAI itself: no silent hop to another host or model.
+        ...(gateway ? { gateway: { only: ["openai"] } } : {}),
       },
     };
   }

@@ -1,5 +1,5 @@
 import { estimateModelTokens } from "./context/budget";
-import { openAIEnabled } from "./routing/catalog";
+import { premiumLaneEnabled } from "./routing/catalog";
 
 /** Nested artifact calls must obey the same provider/privacy policy as chat. */
 export function artifactSettings(
@@ -7,7 +7,7 @@ export function artifactSettings(
   prompt: string,
   signal?: AbortSignal
 ) {
-  const premium = openAIEnabled();
+  const premium = premiumLaneEnabled();
   const maxOutputTokens = premium ? 2048 : 768;
   if (
     estimateModelTokens({ instructions, prompt }) + maxOutputTokens + 350 >

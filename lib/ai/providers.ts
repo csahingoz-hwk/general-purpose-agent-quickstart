@@ -3,7 +3,6 @@ import { ChatbotError } from "../errors";
 import { createGroqModel } from "./groq-model";
 import { parseVerification } from "./groq-verification";
 import {
-  gatewayCredential,
   gatewayEnabled,
   isPremiumModel,
   legacyEnabled,
@@ -22,10 +21,12 @@ export function getLanguageModel(modelId: string) {
     if (!session?.available.includes(modelId)) {
       throw new ChatbotError("offline:model_setup");
     }
-    const gatewayKey = gatewayCredential();
-    if (gatewayEnabled() && gatewayKey) {
-      return createRoutedModel(modelId, session, (id) =>
-        createGatewayAdapter(gatewayKey, id)
+    if (gatewayEnabled()) {
+      return createRoutedModel(
+        modelId,
+        session,
+        (id) => createGatewayAdapter(id),
+        { gateway: true }
       );
     }
     const key = process.env.OPENAI_API_KEY?.trim();

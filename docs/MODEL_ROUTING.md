@@ -163,3 +163,44 @@ No action is needed to run synthetic CI. For later controlled live acceptance:
 Groq adapter/verification stay isolated for explicit rollback/development. Both
 `CHAT_PROVIDER=groq-legacy` and `ENABLE_LEGACY_GROQ=true` are required; default
 OpenAI operation ignores `GROQ_API_KEY`. No automatic Groq fallback exists.
+
+## AI Gateway lane (Preview only, explicit opt-in)
+
+Enabled only by `AI_GATEWAY_USAGE_ENABLED=true` on a Preview environment. It uses
+the **native AI SDK Gateway provider** (`createGateway()` from `ai`), which
+resolves authentication itself on every request: an explicit key, then
+`AI_GATEWAY_API_KEY`, then the Vercel OIDC token. On a deployed function that
+token arrives in the `x-vercel-oidc-token` request header; it is **not** in
+`process.env`, so the application must never look for a credential there.
+
+Verified 9 November 2026 against the installed `@ai-sdk/gateway` 4.0.138 and the
+public Gateway pages: slugs `openai/gpt-6-luna` and `openai/gpt-6.1-terra`
+(1.05M context, 128K output, OpenAI/Azure/Bedrock providers). Requests set
+`providerOptions.gateway.only = ["openai"]`, so routing never hops to another
+host. Public model IDs in the app stay `gpt-6-luna` and `gpt-6.1-terra`.
+
+Readiness (`/api/models`) is `ready` only after an authenticated catalog call
+through the native provider listed Luna. It returns a machine-readable `reason`
+and a safe `hint`; raw provider text, headers and credentials are never returned.
+
+| `reason` | `status` | Meaning |
+| --- | --- | --- |
+| `ready` | ready | Authenticated catalog lists Luna (Terra listed or reported in `unavailableModels`) |
+| `provider_opt_in_missing` | setup_required | `AI_GATEWAY_USAGE_ENABLED` is not `true` in this deployment |
+| `spend_configuration_invalid` | setup_required | `AI_MONTHLY_ALLOWANCE_USD` is not a number in (0, 10] |
+| `gateway_auth_missing` | setup_required | No API key and no OIDC token reached the function |
+| `gateway_auth_rejected` | setup_required | Gateway returned 401/403 for the credential |
+| `catalog_unavailable` | temporarily_unavailable | Catalog unreachable, 5xx or timed out; never cached |
+| `model_unavailable` | temporarily_unavailable | Luna is not listed; Terra never silently becomes the default |
+
+The `$10` application allowance and spend reservations are unchanged and are an
+application guard, **not** a provider billing cap. Gateway credits, auto top-up
+and invoices remain under the owner's Vercel billing controls.
+
+Not yet verified live (needs an authenticated browser session): that the native
+route honours the OpenAI options `store`, `serviceTier`, `parallelToolCalls` and
+`promptCacheOptions`. The Gateway's documented Responses endpoint
+(`/v1/responses`) lists `reasoning.effort`, `store`, `parallel_tool_calls` and
+`max_output_tokens` but not the other two. Confirm in Gateway logs and the
+`ModelUsage` ledger on the first real calls.
+
