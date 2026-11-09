@@ -10,7 +10,18 @@ export async function GET() {
   if (!session?.user) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const home = await getUserHomeLocation({ userId: session.user.id });
+  let home = await getUserHomeLocation({ userId: session.user.id });
+  // Heal a generic label saved before place names existed (opens with the app header).
+  if (home?.source === "browser" && /^Current location/.test(home.label)) {
+    const place = await reverseGeocode(home.latitude, home.longitude);
+    if (place) {
+      home = { ...home, label: place.label, country: place.country };
+      await setUserHomeLocation({
+        userId: session.user.id,
+        homeLocation: home,
+      });
+    }
+  }
   return Response.json({ home }, noStore);
 }
 
