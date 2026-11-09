@@ -30,7 +30,7 @@ export function selectActiveTools(
 ): ChatToolName[] {
   const recentUserText = messages
     .filter((msg) => msg.role === "user")
-    .slice(-2)
+    .slice(-4)
     .map(userText);
   const latest = recentUserText.at(-1) ?? "";
   // Carry weather context only for a short location/time follow-up. A new
@@ -38,7 +38,7 @@ export function selectActiveTools(
   const phrase = latest.toLocaleLowerCase("en");
   const elliptical =
     latest.length <= 55 &&
-    latest.trim().split(/\s+/).length <= 4 &&
+    latest.trim().split(/\s+/).length <= 6 &&
     !/^(please|show|explain|write|create|hello|hi|thanks|thank|merhaba|teşekkür|lütfen|göster)\b/i.test(
       latest
     ) &&
@@ -51,7 +51,7 @@ export function selectActiveTools(
   const enabled: ChatToolName[] = [];
 
   if (
-    /weather|forecast|temperature|rain|havadurumu|hava durumu|yağmur|sıcaklık|sicaklik|kaç derece|kac derece/.test(
+    /weather|forecast|temperature|rain|havadurumu|hava durumu|hava nasıl|hava nasil|yağmur|sıcaklık|sicaklik|kaç derece|kac derece/.test(
       weatherPhrase
     )
   ) {

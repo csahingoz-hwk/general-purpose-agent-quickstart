@@ -282,3 +282,30 @@ test("the chat request accepts an optional browser time zone", () => {
   );
   assert.equal(postRequestBodySchema.parse(base).timeZone, undefined);
 });
+
+test("weather stays available through short follow-ups after saving a location", () => {
+  assert.ok(
+    selectActiveTools(
+      [
+        user("What's the weather today?"),
+        user("Use my current location"),
+        user("Now saved in the system"),
+        user("Try again"),
+      ],
+      true
+    ).includes("getWeather")
+  );
+  assert.ok(
+    selectActiveTools(
+      [user("Hava nasıl?"), user("Konumu kaydettim"), user("Tekrar dene")],
+      true
+    ).includes("getWeather")
+  );
+  assert.deepEqual(
+    selectActiveTools(
+      [user("What's the weather today?"), user("Thanks"), user("Merhaba!")],
+      true
+    ),
+    []
+  );
+});
