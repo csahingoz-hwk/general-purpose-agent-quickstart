@@ -45,12 +45,19 @@ export const regularPrompt = `You are a helpful personal assistant. Be concise, 
 
 When asked to create or draft content, do it directly when enough information is available. Avoid unnecessary clarification.`;
 
+export const timeLocationPrompt = `## Time and location
+- Use the "Current context" block for the current date, time and the user's time zone. For another time zone or exact date arithmetic call getCurrentTime; never answer clock questions from memory.
+- The user's physical location is unknown unless they saved a home location or stated a place. Never guess it and never default to a city such as San Francisco.
+- A weather question with no stated place and no saved home location: ask which city, in the user's language, and wait. Offer to save it as their home city.`;
+
 export const systemPrompt = ({
   supportsTools,
   soul,
   needsOnboarding = false,
   includeArtifacts = true,
+  context,
 }: {
+  context?: string;
   supportsTools: boolean;
   soul?: string | null;
   needsOnboarding?: boolean;
@@ -58,12 +65,13 @@ export const systemPrompt = ({
 }) => {
   const soulBlock = buildSoulPrompt(soul);
   const onboardingBlock = needsOnboarding ? `${ONBOARDING_PROMPT}\n\n` : "";
+  const contextBlock = context ? `\n\n${context}` : "";
 
   if (!supportsTools) {
-    return `${onboardingBlock}${soulBlock}\n\n${regularPrompt}`;
+    return `${onboardingBlock}${soulBlock}\n\n${regularPrompt}\n\n${timeLocationPrompt}${contextBlock}`;
   }
 
-  return `${onboardingBlock}${soulBlock}\n\n${regularPrompt}${includeArtifacts ? `\n\n${artifactsPrompt}` : ""}`;
+  return `${onboardingBlock}${soulBlock}\n\n${regularPrompt}\n\n${timeLocationPrompt}${includeArtifacts ? `\n\n${artifactsPrompt}` : ""}${contextBlock}`;
 };
 
 export const codePrompt = `

@@ -39,9 +39,11 @@ import { cancelSchedule } from "@/lib/ai/tools/cancel-schedule";
 import { createDocument } from "@/lib/ai/tools/create-document";
 import { demoInbox } from "@/lib/ai/tools/demo-inbox";
 import { editDocument } from "@/lib/ai/tools/edit-document";
+import { getCurrentTime } from "@/lib/ai/tools/get-current-time";
 import { getWeather } from "@/lib/ai/tools/get-weather";
 import { listMySchedules } from "@/lib/ai/tools/list-my-schedules";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
+import { setHomeLocation } from "@/lib/ai/tools/set-home-location";
 import { setSoul } from "@/lib/ai/tools/set-soul";
 import { updateDocument } from "@/lib/ai/tools/update-document";
 import { isProductionEnvironment } from "@/lib/constants";
@@ -51,6 +53,7 @@ import {
   deleteChatById,
   getChatById,
   getMessagesByChatId,
+  getUserHomeLocation,
   getUserSoul,
   saveChat,
   saveMessages,
@@ -60,6 +63,7 @@ import {
 import type { DBMessage } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
 import { checkIpRateLimit } from "@/lib/ratelimit";
+import { contextBlock, validTimeZone } from "@/lib/temporal";
 import type { ChatMessage } from "@/lib/types";
 import { convertToUIMessages, generateUUID } from "@/lib/utils";
 import { generateTitleFromUserMessage } from "../../actions";
@@ -121,6 +125,7 @@ export async function POST(request: Request) {
       messages,
       selectedChatModel,
       selectedVisibilityType,
+      timeZone,
       retry,
     } = requestBody;
 
@@ -236,6 +241,9 @@ export async function POST(request: Request) {
     const supportsTools = capabilities?.tools === true;
 
     const soul = await getUserSoul({ userId: session.user.id });
+    const homeLocation = await getUserHomeLocation({ userId: session.user.id });
+    const requestTimeZone = validTimeZone(timeZone);
+    const requestNow = new Date();
     const needsOnboarding = !soul && session.user.type !== "guest";
     const requestedTools = supportsTools
       ? selectActiveTools(uiMessages, session.user.type !== "guest")
@@ -252,6 +260,11 @@ export async function POST(request: Request) {
       soul,
       needsOnboarding,
       includeArtifacts: needsArtifactInstructions(requestedTools),
+      context: contextBlock({
+        now: requestNow,
+        timeZone: requestTimeZone ?? homeLocation?.timeZone ?? null,
+        home: homeLocation,
+      }),
     });
     // A single text step may use most of the budget; a tool call and a
     // follow-up must share a minute on Groq's limited free account.
@@ -275,7 +288,11 @@ export async function POST(request: Request) {
         inferenceSession.run(execution, async () => {
           const localTools = {
             demoInbox,
-            getWeather,
+            getWeather: getWeather({ home: homeLocation }),
+            getCurrentTime: getCurrentTime({
+              defaultTimeZone:
+                requestTimeZone ?? homeLocation?.timeZone ?? null,
+            }),
             createDocument: createDocument({
               session,
               dataStream,
@@ -295,7 +312,10 @@ export async function POST(request: Request) {
             listMySchedules: listMySchedules({ session }),
             cancelSchedule: cancelSchedule({ session }),
             ...(session.user.type !== "guest"
-              ? { setSoul: setSoul({ userId: session.user.id }) }
+              ? {
+                  setSoul: setSoul({ userId: session.user.id }),
+                  setHomeLocation: setHomeLocation({ userId: session.user.id }),
+                }
               : {}),
           };
 

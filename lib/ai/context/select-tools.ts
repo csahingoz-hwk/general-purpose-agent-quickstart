@@ -2,6 +2,8 @@ import type { ChatMessage } from "@/lib/types";
 
 export const AVAILABLE_CHAT_TOOLS = [
   "getWeather",
+  "getCurrentTime",
+  "setHomeLocation",
   "demoInbox",
   "createDocument",
   "editDocument",
@@ -54,6 +56,23 @@ export function selectActiveTools(
     )
   ) {
     enabled.push("getWeather");
+  }
+
+  if (
+    /\b(what time|current time|time is it|what day|today'?s date|what'?s the date|date today|time zone|timezone|daylight saving|dst|clocks? (go|change))\b|saat kaç|saat kac|saat dilimi|yaz saati|kış saati|bugün günlerden|bugünün tarihi|tarih ne|günlerden ne/.test(
+      phrase
+    )
+  ) {
+    enabled.push("getCurrentTime");
+  }
+
+  if (
+    canPersonalize &&
+    /\b(my home city|set my city|my city is|i live in|i'?m based in|home is in)\b|ev şehrim|şehrim|yaşıyorum|evim .* şehrinde/.test(
+      phrase
+    )
+  ) {
+    enabled.push("setHomeLocation");
   }
 
   if (

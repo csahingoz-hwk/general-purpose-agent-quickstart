@@ -43,6 +43,13 @@
       "when": 1778141387002,
       "tag": "0005_shiny_runaways",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1794185054534,
+      "tag": "0006_home_location",
+      "breakpoints": true
     }
   ]
 }

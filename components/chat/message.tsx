@@ -155,6 +155,20 @@ const PurePreviewMessage = ({
             false);
       const widthClass = "w-[min(100%,450px)]";
 
+      if (state === "output-available" && "error" in part.output) {
+        // location_required: the assistant asks which city, so no card is shown.
+        return part.output.error === "location_required" ? null : (
+          <p
+            className={`${widthClass} rounded-xl border border-border bg-muted/50 p-3 text-muted-foreground text-sm`}
+            key={toolCallId}
+            role="alert"
+          >
+            The weather forecast could not be loaded. Please try another
+            location.
+          </p>
+        );
+      }
+
       if (state === "output-available") {
         return (
           <div className={widthClass} key={toolCallId}>

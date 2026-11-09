@@ -33,6 +33,7 @@ export const postRequestBodySchema = z
     messages: z.array(toolApprovalMessageSchema).optional(),
     retry: z.boolean().optional(),
     selectedChatModel: z.string(),
+    timeZone: z.string().max(64).optional(),
     selectedVisibilityType: z.enum(["public", "private"]),
   })
   .refine((body) => Boolean(body.message) !== Boolean(body.messages?.length), {

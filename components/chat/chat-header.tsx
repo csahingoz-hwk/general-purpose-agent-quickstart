@@ -6,6 +6,7 @@ import Link from "next/link";
 import { memo } from "react";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
+import { HomeLocationControl } from "./home-location";
 import { VercelIcon } from "./icons";
 import { VisibilitySelector, type VisibilityType } from "./visibility-selector";
 
@@ -74,7 +75,11 @@ function PureChatHeader({
         />
       )}
 
-      <div className="hidden items-center gap-2 md:ml-auto md:flex">
+      <div className="ml-auto">
+        <HomeLocationControl />
+      </div>
+
+      <div className="hidden items-center gap-2 md:flex">
         <Link
           className="flex size-9 items-center justify-center rounded-lg border border-border bg-background hover:bg-muted"
           href={composioHref}
