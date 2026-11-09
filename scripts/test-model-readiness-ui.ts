@@ -53,6 +53,15 @@ test("phone-sized readiness, selection and failed-send preservation", async () =
     assert.deepEqual(unavailable.models, []);
     assert.equal(unavailable.status, "setup_required");
     const input = page.getByTestId("multimodal-input").last();
+    // iOS Safari zooms into any focused field below 16px and stays shifted after
+    // the keyboard closes; the shadcn textarea default must survive on phones.
+    const fontSize = await input.evaluate((el) =>
+      Number.parseFloat(getComputedStyle(el).fontSize)
+    );
+    assert.ok(
+      fontSize >= 16,
+      `composer font-size is ${fontSize}px; phones need at least 16px`
+    );
     await input.fill("Merhaba, hello — keep this draft");
     assert.equal(
       await page.getByTestId("send-button").last().isDisabled(),
