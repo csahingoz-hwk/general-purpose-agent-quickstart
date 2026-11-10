@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { chromium, expect } from "@playwright/test";
+import { chromium, expect, type Page } from "@playwright/test";
 import { encode } from "next-auth/jwt";
 import { createFictionalInbox } from "../lib/ai/tools/demo-inbox";
 
@@ -359,6 +359,9 @@ test("fictional inbox stays visible in a saved chat and responds locally", async
   }
 });
 
+const visibleStatus = (page: Page) =>
+  page.locator('[data-testid="chat-status"]:visible');
+
 const shellViewports = [
   { name: "mobile-390", width: 390, height: 844 },
   { name: "desktop-1440", width: 1440, height: 1000 },
@@ -522,7 +525,7 @@ test("personal shell: no vendor CTA, private status, usage replaces chat, no ove
           await expect(
             header.getByText("Assistant", { exact: true })
           ).toBeVisible();
-          await expect(header.getByTestId("chat-status")).toHaveText("Private");
+          await expect(visibleStatus(page)).toHaveText("Private");
           assert.equal(await page.getByText("Deploy with Vercel").count(), 0);
           assert.equal(
             await page
@@ -560,16 +563,16 @@ test("personal shell: no vendor CTA, private status, usage replaces chat, no ove
             // An actually public chat is labelled truthfully, never "Private".
             await page.goto(`${origin}/chat/${publicChatId}`);
             await page.getByText("Synthetic question").waitFor();
-            await expect(page.getByTestId("chat-status")).toHaveText(
-              "Shared link"
-            );
+            // Strict: exactly one VISIBLE status. A hidden, not-yet-swapped
+            // streamed segment may briefly hold a second copy on slow machines.
+            await expect(visibleStatus(page)).toHaveText("Shared link");
 
             // New chat from a saved conversation.
             await openHistoryIfMobile(page);
             await page.getByRole("button", { name: "New chat" }).click();
             await page.waitForURL(`${origin}/`);
             await page.getByTestId("multimodal-input").first().waitFor();
-            await expect(page.getByTestId("chat-status")).toHaveText("Private");
+            await expect(visibleStatus(page)).toHaveText("Private");
 
             // Delete all lives in the account menu, behind a confirmation;
             // it is never in primary navigation and is not executed here.
