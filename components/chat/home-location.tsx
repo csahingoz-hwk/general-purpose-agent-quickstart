@@ -70,12 +70,14 @@ export function HomeLocationControl() {
       <PopoverTrigger asChild>
         <Button
           aria-label="Home location"
-          className="h-8 gap-1.5 px-2 text-muted-foreground text-xs"
+          className="h-11 gap-1.5 px-2 text-muted-foreground text-xs md:h-9"
           data-testid="home-location-trigger"
           variant="ghost"
         >
           <MapPinIcon className="size-4" />
-          <span className="max-w-24 truncate">{home?.label ?? "Set city"}</span>
+          <span className="max-w-20 truncate sm:max-w-24">
+            {home?.label ?? "Set city"}
+          </span>
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72 space-y-3">

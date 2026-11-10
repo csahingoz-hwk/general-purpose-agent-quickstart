@@ -124,3 +124,38 @@ Do not configure Groq for this task, paste keys in chat, broaden all Preview sec
 change the established testing URL, merge, or promote production as a shortcut.
 Guide the nondeveloper owner through one account step at a time after approval.
 Update this file after acceptance; report synthetic and real results separately.
+
+## Personal assistant UI — Session 1 (shell and visual foundation)
+
+Presentation and navigation only; no backend, schema, provider, auth or
+`use-active-chat` state/transport changes. Not committed or pushed by this work.
+
+**IMPLEMENTED**
+- One route slot (`components/chat/route-slot.tsx`) inside the single
+  `ActiveChatProvider`: chat routes render `ChatShell`, `/usage` renders only its
+  own page. The provider is not keyed by URL.
+- Header: vendor logos, Deploy CTA and visibility selector removed. Shows
+  Assistant, the conversation title when it is in the already-loaded History
+  page (same SWR key as the sidebar, no new endpoint), a static Private pill
+  (or "Shared link" when a chat really is public) and the home-city control.
+  The header now also renders when the desktop sidebar is collapsed.
+- Sidebar: Assistant brand, prominent New chat, "Delete all chats…" moved into
+  the account menu (danger area, same confirmation and handler), "Usage &
+  settings" menu item.
+- Personal greeting and the four supported suggestions; `/usage` is a
+  standalone scrollable surface with a 44px Back to chat link.
+- Muted-text tokens tuned for AA contrast (light 5.75:1 on background, dark
+  6.84:1); faint opacity text removed from touched files.
+- Typed EN/TR copy module `lib/ui-copy.ts` (default `en`).
+- Synthetic Chromium "personal shell" test at 390x844 and 1440x1000.
+
+**MOCKED / SYNTHETIC**
+- Browser evidence uses a synthetic owner cookie and intercepted
+  models/history/messages/usage responses in desktop Chromium emulation.
+
+**PENDING**
+- No language switcher: Turkish strings exist but are not selectable yet.
+- No real iPhone/Safari check; no protected Vercel preview; isolated database
+  and the Vercel provisioning problem remain open.
+- Sessions 2 (composer), 3 (rich results) and 4 (usage redesign, settings,
+  language) are not started.

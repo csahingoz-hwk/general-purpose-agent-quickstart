@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronUp } from "lucide-react";
+import { ChevronUp, TrashIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { User } from "next-auth";
 import { signOut, useSession } from "next-auth/react";
@@ -18,6 +18,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { guestRegex } from "@/lib/constants";
+import { getCopy } from "@/lib/ui-copy";
 import { LoaderIcon } from "./icons";
 import { toast } from "./toast";
 
@@ -29,7 +30,15 @@ function emailToHue(email: string): number {
   return Math.abs(hash) % 360;
 }
 
-export function SidebarUserNav({ user }: { user: User }) {
+const copy = getCopy();
+
+export function SidebarUserNav({
+  user,
+  onRequestDeleteAll,
+}: {
+  user: User;
+  onRequestDeleteAll?: () => void;
+}) {
   const router = useRouter();
   const { data, status } = useSession();
   const { setTheme, resolvedTheme } = useTheme();
@@ -42,20 +51,20 @@ export function SidebarUserNav({ user }: { user: User }) {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             {status === "loading" ? (
-              <SidebarMenuButton className="h-10 justify-between rounded-lg bg-transparent text-sidebar-foreground/50 transition-colors duration-150 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground">
+              <SidebarMenuButton className="h-10 justify-between rounded-lg bg-transparent text-sidebar-foreground transition-colors duration-150 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground">
                 <div className="flex flex-row items-center gap-2">
                   <div className="size-6 animate-pulse rounded-full bg-sidebar-foreground/10" />
                   <span className="animate-pulse rounded-md bg-sidebar-foreground/10 text-transparent text-[13px]">
                     Loading...
                   </span>
                 </div>
-                <div className="animate-spin text-sidebar-foreground/50">
+                <div className="animate-spin text-sidebar-foreground">
                   <LoaderIcon />
                 </div>
               </SidebarMenuButton>
             ) : (
               <SidebarMenuButton
-                className="h-8 px-2 rounded-lg bg-transparent text-sidebar-foreground/70 transition-colors duration-150 hover:text-sidebar-foreground data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+                className="h-11 px-2 rounded-lg bg-transparent text-sidebar-foreground transition-colors duration-150 md:h-8 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
                 data-testid="user-nav-button"
               >
                 <div
@@ -67,7 +76,7 @@ export function SidebarUserNav({ user }: { user: User }) {
                 <span className="truncate text-[13px]" data-testid="user-email">
                   {isGuest ? "Guest" : user?.email}
                 </span>
-                <ChevronUp className="ml-auto size-3.5 text-sidebar-foreground/50" />
+                <ChevronUp className="ml-auto size-3.5 text-sidebar-foreground" />
               </SidebarMenuButton>
             )}
           </DropdownMenuTrigger>
@@ -77,7 +86,7 @@ export function SidebarUserNav({ user }: { user: User }) {
             side="top"
           >
             <DropdownMenuItem
-              className="cursor-pointer text-[13px]"
+              className="min-h-11 cursor-pointer text-[13px] md:min-h-8"
               data-testid="user-nav-item-theme"
               onSelect={() =>
                 setTheme(resolvedTheme === "dark" ? "light" : "dark")
@@ -86,15 +95,15 @@ export function SidebarUserNav({ user }: { user: User }) {
               {`Toggle ${resolvedTheme === "light" ? "dark" : "light"} mode`}
             </DropdownMenuItem>
             <DropdownMenuItem
-              className="cursor-pointer text-[13px]"
+              className="min-h-11 cursor-pointer text-[13px] md:min-h-8"
               onSelect={() => router.push("/usage")}
             >
-              Conversation usage
+              {copy.usageAndSettings}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild data-testid="user-nav-item-auth">
               <button
-                className="w-full cursor-pointer text-[13px]"
+                className="min-h-11 w-full cursor-pointer text-[13px] md:min-h-8"
                 onClick={() => {
                   if (status === "loading") {
                     toast({
@@ -119,6 +128,19 @@ export function SidebarUserNav({ user }: { user: User }) {
                 {isGuest ? "Login to your account" : "Sign out"}
               </button>
             </DropdownMenuItem>
+            {onRequestDeleteAll && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="min-h-11 cursor-pointer text-[13px] text-destructive focus:bg-destructive/10 focus:text-destructive md:min-h-8"
+                  data-testid="user-nav-item-delete-all"
+                  onSelect={() => onRequestDeleteAll()}
+                >
+                  <TrashIcon className="size-4" />
+                  {copy.deleteAllChats}
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>
