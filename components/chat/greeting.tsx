@@ -9,22 +9,22 @@ export const Greeting = () => {
 
   return (
     <div className="flex flex-col items-center px-4" key="overview">
-      <motion.div
+      <motion.h1
         animate={{ opacity: 1, y: 0 }}
-        className="text-center font-semibold text-2xl tracking-tight text-foreground md:text-3xl"
+        className="text-balance text-center font-semibold text-[28px] leading-tight tracking-tight text-foreground md:text-[34px]"
         initial={initial}
-        transition={{ delay: 0.35, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        transition={{ delay: 0.05, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
       >
         {copy.greetingTitle}
-      </motion.div>
-      <motion.div
+      </motion.h1>
+      <motion.p
         animate={{ opacity: 1, y: 0 }}
-        className="mt-3 text-center text-muted-foreground text-sm"
+        className="mt-2 max-w-sm text-balance text-center text-[17px] leading-snug text-muted-foreground"
         initial={initial}
-        transition={{ delay: 0.5, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        transition={{ delay: 0.1, duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
       >
         {copy.greetingSubtitle}
-      </motion.div>
+      </motion.p>
     </div>
   );
 };

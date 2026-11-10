@@ -3,7 +3,7 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
 import type { UIMessage } from "ai";
 import equal from "fast-deep-equal";
-import { ArrowUpIcon, CheckIcon } from "lucide-react";
+import { ArrowUpIcon, CheckIcon, PlusIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
@@ -41,14 +41,13 @@ import {
   PromptInputTools,
 } from "../ai-elements/prompt-input";
 import { Button } from "../ui/button";
-import { PaperclipIcon, StopIcon } from "./icons";
+import { StopIcon } from "./icons";
 import { PreviewAttachment } from "./preview-attachment";
 import {
   type SlashCommand,
   SlashCommandMenu,
   slashCommands,
 } from "./slash-commands";
-import { SuggestedActions } from "./suggested-actions";
 import type { VisibilityType } from "./visibility-selector";
 
 const copy = getCopy();
@@ -70,16 +69,13 @@ function PureMultimodalInput({
   stop,
   attachments,
   setAttachments,
-  messages,
   setMessages,
   sendMessage,
   className,
-  selectedVisibilityType,
   selectedModelId,
   onModelChange,
   editingMessage,
   onCancelEdit,
-  isLoading,
 }: {
   chatId: string;
   input: string;
@@ -418,19 +414,6 @@ function PureMultimodalInput({
         </div>
       )}
 
-      {!editingMessage &&
-        modelReady &&
-        !isLoading &&
-        messages.length === 0 &&
-        attachments.length === 0 &&
-        uploadQueue.length === 0 && (
-          <SuggestedActions
-            chatId={chatId}
-            selectedVisibilityType={selectedVisibilityType}
-            sendMessage={sendMessage}
-          />
-        )}
-
       <input
         className="pointer-events-none fixed -top-4 -left-4 size-0.5 opacity-0"
         multiple
@@ -462,7 +445,7 @@ function PureMultimodalInput({
         </output>
       )}
       <PromptInput
-        className="[&>div]:rounded-[20px] [&>div]:border [&>div]:border-border/60 [&>div]:bg-card/70 [&>div]:shadow-[var(--shadow-composer)] [&>div]:transition-shadow [&>div]:duration-150 motion-reduce:[&>div]:transition-none [&>div]:focus-within:shadow-[var(--shadow-composer-focus)]"
+        className="[&>div]:rounded-[28px]! [&>div]:border-[color:var(--hairline)]! [&>div]:bg-card! [&>div]:shadow-[var(--shadow-float)]! [&>div]:ring-0! [&>div]:transition-shadow [&>div]:duration-150 motion-reduce:[&>div]:transition-none [&>div]:focus-within:border-transparent! [&>div]:focus-within:shadow-[var(--shadow-composer-focus)]! [&>div]:focus-within:ring-0!"
         onSubmit={() => {
           if (input.startsWith("/")) {
             const query = input.slice(1).trim();
@@ -578,10 +561,10 @@ function PureMultimodalInput({
             <PromptInputSubmit
               aria-label={copy.send}
               className={cn(
-                "size-11 rounded-full bg-clip-content p-1.5 transition-colors duration-150 motion-reduce:transition-none md:size-8 md:p-0",
-                input.trim()
-                  ? "bg-foreground text-background hover:opacity-85 active:scale-95"
-                  : "cursor-not-allowed bg-muted text-muted-foreground"
+                "size-11! rounded-full border-transparent p-0 shadow-none transition-colors duration-150 motion-reduce:transition-none disabled:opacity-100",
+                modelReady && input.trim() && uploadQueue.length === 0
+                  ? "bg-send text-send-foreground hover:bg-send/90"
+                  : "cursor-not-allowed bg-send-muted text-send-muted-foreground"
               )}
               data-testid="send-button"
               disabled={!modelReady || !input.trim() || uploadQueue.length > 0}
@@ -652,9 +635,9 @@ function PureAttachmentsButton({
     <Button
       aria-label={copy.attachFile}
       className={cn(
-        "size-11 rounded-full border-transparent bg-clip-content p-1.5 transition-colors motion-reduce:transition-none md:size-8 md:rounded-lg md:border-border/60 md:p-1",
+        "size-11! rounded-full border-transparent bg-control p-0 text-foreground shadow-none transition-colors motion-reduce:transition-none hover:bg-control",
         hasVision
-          ? "text-foreground hover:text-foreground"
+          ? "text-foreground"
           : "cursor-not-allowed text-muted-foreground"
       )}
       data-testid="attachments-button"
@@ -666,7 +649,7 @@ function PureAttachmentsButton({
       type="button"
       variant="ghost"
     >
-      <PaperclipIcon size={14} style={{ width: 14, height: 14 }} />
+      <PlusIcon aria-hidden="true" className="size-5" />
     </Button>
   );
 }
@@ -705,7 +688,7 @@ function PureModelSelectorCompact({
       <ModelSelectorTrigger asChild>
         <Button
           aria-label={`${copy.modelMenuLabel}: ${selected.name}`}
-          className="h-11 max-w-[200px] gap-1.5 rounded-lg px-3 text-sm text-muted-foreground md:h-8 md:px-2"
+          className="h-11 max-w-[9.5rem] gap-1.5 rounded-full px-3 text-[15px] text-muted-foreground hover:bg-control md:h-11"
           data-testid="model-selector"
           variant="ghost"
         >
@@ -760,7 +743,7 @@ function PureStopButton({
   return (
     <Button
       aria-label={copy.stop}
-      className="size-11 rounded-full bg-foreground bg-clip-content p-1.5 text-background transition-colors duration-150 hover:opacity-85 active:scale-95 motion-reduce:transition-none disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground md:size-8 md:p-0"
+      className="size-11! rounded-full border-transparent bg-send p-0 text-send-foreground shadow-none transition-colors duration-150 hover:bg-send/90 motion-reduce:transition-none"
       data-testid="stop-button"
       onClick={(event) => {
         event.preventDefault();

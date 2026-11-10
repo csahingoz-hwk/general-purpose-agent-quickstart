@@ -5,17 +5,12 @@ import { useState } from "react";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import type { HomeLocation } from "@/lib/temporal";
 import { fetcher } from "@/lib/utils";
 
 const endpoint = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/location`;
 
-export function HomeLocationControl() {
+export function HomeLocationPanel() {
   const { data, mutate } = useSWR<{ home: HomeLocation | null }>(
     endpoint,
     fetcher,
@@ -66,69 +61,65 @@ export function HomeLocationControl() {
   }
 
   return (
-    <Popover>
-      <PopoverTrigger asChild>
+    <div className="space-y-3">
+      <p className="text-[13px] text-muted-foreground">Home</p>
+      <p className="flex items-start gap-2 text-[17px] leading-snug text-foreground">
+        <MapPinIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+        <span>{home?.label ?? "No city saved"}</span>
+      </p>
+      <form
+        className="flex gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (city.trim()) {
+            save({ city: city.trim() });
+          }
+        }}
+      >
+        <Input
+          aria-label="Home city"
+          className="h-11"
+          onChange={(event) => setCity(event.target.value)}
+          placeholder="e.g. London, İstanbul"
+          value={city}
+        />
         <Button
-          aria-label="Home location"
-          className="h-11 gap-1.5 px-2 text-muted-foreground text-xs md:h-9"
-          data-testid="home-location-trigger"
+          className="h-11"
+          disabled={busy || !city.trim()}
+          size="sm"
+          type="submit"
+        >
+          Save
+        </Button>
+      </form>
+      <Button
+        className="h-11 w-full"
+        disabled={busy}
+        onClick={useBrowserLocation}
+        size="sm"
+        type="button"
+        variant="outline"
+      >
+        Use my current location
+      </Button>
+      {home && (
+        <Button
+          className="h-11 w-full"
+          disabled={busy}
+          onClick={async () => {
+            await fetch(endpoint, { method: "DELETE" });
+            await mutate();
+          }}
+          size="sm"
+          type="button"
           variant="ghost"
         >
-          <MapPinIcon className="size-4" />
-          <span className="max-w-20 truncate sm:max-w-24">
-            {home?.label ?? "Set city"}
-          </span>
+          Clear saved location
         </Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-72 space-y-3">
-        <p className="text-muted-foreground text-xs">
-          Used for weather and local time. Your location is never guessed.
-        </p>
-        <form
-          className="flex gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (city.trim()) {
-              save({ city: city.trim() });
-            }
-          }}
-        >
-          <Input
-            aria-label="Home city"
-            className="h-9"
-            onChange={(event) => setCity(event.target.value)}
-            placeholder="e.g. London, İstanbul"
-            value={city}
-          />
-          <Button disabled={busy || !city.trim()} size="sm" type="submit">
-            Save
-          </Button>
-        </form>
-        <Button
-          className="w-full"
-          disabled={busy}
-          onClick={useBrowserLocation}
-          size="sm"
-          variant="outline"
-        >
-          Use my current location
-        </Button>
-        {home && (
-          <Button
-            className="w-full"
-            disabled={busy}
-            onClick={async () => {
-              await fetch(endpoint, { method: "DELETE" });
-              await mutate();
-            }}
-            size="sm"
-            variant="ghost"
-          >
-            Clear saved location
-          </Button>
-        )}
-        {message && <p className="text-xs">{message}</p>}
-      </PopoverContent>
-    </Popover>
+      )}
+      {message && (
+        <output className="block text-sm text-foreground">{message}</output>
+      )}
+    </div>
   );
 }

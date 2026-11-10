@@ -179,7 +179,7 @@ function Sidebar({
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
-          className="inset-x-0 bottom-0 top-auto data-[side=bottom]:h-[70dvh] max-h-[70dvh] overflow-hidden w-full rounded-t-2xl border-t border-border/30 bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
+          className="inset-x-0 bottom-0 top-auto data-[side=bottom]:h-[70dvh] max-h-[70dvh] overflow-hidden w-full rounded-t-[28px] border-0 bg-background p-0 text-foreground shadow-[var(--shadow-float)] [&>button]:hidden"
           showCloseButton={false}
           side="bottom"
         >
@@ -229,7 +229,7 @@ function Sidebar({
         <div
           data-sidebar="sidebar"
           data-slot="sidebar-inner"
-          className="flex size-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border-none group-data-[variant=floating]:shadow-sm group-data-[variant=floating]:ring-1 group-data-[variant=floating]:ring-sidebar-border"
+          className="flex size-full flex-col border-r border-[color:var(--hairline)] bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border-none group-data-[variant=floating]:shadow-sm group-data-[variant=floating]:ring-1 group-data-[variant=floating]:ring-sidebar-border"
         >
           {children}
         </div>
