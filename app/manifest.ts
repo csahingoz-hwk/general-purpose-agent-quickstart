@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { BOT_THEMES } from "@/lib/bot-theme";
 import { LIGHT_THEME_COLOR } from "@/lib/theme-colors";
 
 /**
@@ -15,7 +16,7 @@ export default function manifest(): MetadataRoute.Manifest {
     scope: "/",
     display: "standalone",
     background_color: LIGHT_THEME_COLOR,
-    theme_color: LIGHT_THEME_COLOR,
+    theme_color: BOT_THEMES.blue.light.accent,
     icons: [
       {
         src: "/icons/icon-192.png",

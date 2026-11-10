@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { DARK_THEME_COLOR, LIGHT_THEME_COLOR } from "@/lib/theme-colors";
+import { BOT_THEMES, botThemeCss } from "@/lib/bot-theme";
 
 import "./globals.css";
 import { SessionProvider } from "next-auth/react";
@@ -33,8 +33,14 @@ export const viewport: Viewport = {
   maximumScale: 1,
   viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: LIGHT_THEME_COLOR },
-    { media: "(prefers-color-scheme: dark)", color: DARK_THEME_COLOR },
+    {
+      media: "(prefers-color-scheme: light)",
+      color: BOT_THEMES.blue.light.accent,
+    },
+    {
+      media: "(prefers-color-scheme: dark)",
+      color: BOT_THEMES.blue.dark.accent,
+    },
   ],
 };
 
@@ -53,9 +59,15 @@ const geistMono = Geist_Mono({
 const THEME_COLOR_SCRIPT = `\
 (function() {
   var html = document.documentElement;
+  var allowed = ["blue","purple","pink","orange","green","yellow","red","teal","black","white"];
+  try {
+    var saved = localStorage.getItem("assistant-mascot");
+    html.setAttribute("data-bot-theme", allowed.indexOf(saved) === -1 ? "blue" : saved);
+  } catch (error) {
+    html.setAttribute("data-bot-theme", "blue");
+  }
   function updateThemeColor() {
-    var isDark = html.classList.contains('dark');
-    var color = isDark ? '${DARK_THEME_COLOR}' : '${LIGHT_THEME_COLOR}';
+    var color = getComputedStyle(html).getPropertyValue("--bot-accent").trim() || "${BOT_THEMES.blue.light.accent}";
     var metas = document.querySelectorAll('meta[name="theme-color"]');
     if (metas.length === 0) {
       var created = document.createElement('meta');
@@ -69,7 +81,7 @@ const THEME_COLOR_SCRIPT = `\
     }
   }
   var observer = new MutationObserver(updateThemeColor);
-  observer.observe(html, { attributes: true, attributeFilter: ['class'] });
+  observer.observe(html, { attributes: true, attributeFilter: ['class', 'data-bot-theme'] });
   updateThemeColor();
 })();`;
 
@@ -85,6 +97,10 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
+        <style
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: theme tokens are generated from the mascot map
+          dangerouslySetInnerHTML={{ __html: botThemeCss() }}
+        />
         <script
           // biome-ignore lint/security/noDangerouslySetInnerHtml: "Required"
           dangerouslySetInnerHTML={{

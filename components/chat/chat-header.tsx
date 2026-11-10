@@ -126,7 +126,13 @@ function PureChatHeader({
 
       <div className="flex min-w-0 justify-center px-1">
         <div className="flex h-[52px] max-w-full min-w-0 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-card py-1 pr-2 pl-1 shadow-[var(--shadow-float)] sm:gap-2 sm:pr-3 sm:pl-1.5 md:h-11">
-          <AgentMascot animated size={36} state={activity} variant={variant} />
+          <AgentMascot
+            animated
+            className="rounded-full ring-2 ring-[var(--bot-avatar-ring)]"
+            size={36}
+            state={activity}
+            variant={variant}
+          />
           <span className="min-w-0 truncate font-semibold text-[17px] leading-none text-foreground">
             {title ? (
               <span data-testid="chat-header-title" title={title}>

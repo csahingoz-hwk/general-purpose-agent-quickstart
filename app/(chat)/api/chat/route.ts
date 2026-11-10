@@ -69,6 +69,7 @@ import {
 } from "@/lib/db/queries";
 import type { DBMessage } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
+import { attachOpenUiPart } from "@/lib/openui/attach";
 import { checkIpRateLimit } from "@/lib/ratelimit";
 import { contextBlock, validTimeZone } from "@/lib/temporal";
 import type { ChatMessage } from "@/lib/types";
@@ -113,7 +114,9 @@ function dropWebSearchHistory(messages: ChatMessage[]): ChatMessage[] {
   return messages.map((message) => ({
     ...message,
     parts: message.parts.filter(
-      (part) => (part.type as string) !== "tool-webSearch"
+      (part) =>
+        (part.type as string) !== "tool-webSearch" &&
+        part.type !== "data-openui"
     ),
   }));
 }
@@ -285,6 +288,9 @@ export async function POST(request: Request) {
       needsOnboarding,
       includeArtifacts: needsArtifactInstructions(requestedTools),
       includeWebSearch: searchLane && requestedTools.includes("webSearch"),
+      includeVisual: requestedTools.some(
+        (name) => name === "webSearch" || name === "getWeather"
+      ),
       context: contextBlock({
         now: requestNow,
         timeZone: requestTimeZone ?? homeLocation?.timeZone ?? null,
@@ -451,16 +457,17 @@ export async function POST(request: Request) {
           if (!reply) {
             return;
           }
-          const saved = messagesFromDb.find((m) => m.id === reply.id);
+          const withVisual = attachOpenUiPart(reply, chatModel);
+          const saved = messagesFromDb.find((m) => m.id === withVisual.id);
           if (saved) {
-            await updateMessage({ id: reply.id, parts: reply.parts });
+            await updateMessage({ id: withVisual.id, parts: withVisual.parts });
           } else {
             await saveMessages({
               messages: [
                 {
-                  id: reply.id,
-                  role: reply.role,
-                  parts: reply.parts,
+                  id: withVisual.id,
+                  role: withVisual.role,
+                  parts: withVisual.parts,
                   createdAt: new Date(),
                   attachments: [],
                   chatId: id,

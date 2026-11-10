@@ -1,4 +1,5 @@
 import type { ArtifactKind } from "@/components/chat/artifact";
+import { visualPrompt } from "@/lib/openui/prompt";
 
 export const artifactsPrompt =
   "Artifacts appear in the existing side panel. Use an artifact tool only for an explicit file/document request, not ordinary questions or inline answers. Use createDocument for a new artifact: code for scripts, text for writing, sheet for CSV. Supply a concise title that describes the requested content; generation happens inside the tool. For an existing artifact use editDocument for exact-string edits, updateDocument for a requested full rewrite, or requestSuggestions for requested writing advice. Make at most one artifact change per turn. After a successful tool result, give a short confirmation without repeating the entire artifact. Never claim a failed tool created or saved content.";
@@ -63,9 +64,11 @@ export const systemPrompt = ({
   needsOnboarding = false,
   includeArtifacts = true,
   includeWebSearch = false,
+  includeVisual = false,
   context,
 }: {
   context?: string;
+  includeVisual?: boolean;
   includeWebSearch?: boolean;
   supportsTools: boolean;
   soul?: string | null;
@@ -80,7 +83,7 @@ export const systemPrompt = ({
     return `${onboardingBlock}${soulBlock}\n\n${regularPrompt}\n\n${timeLocationPrompt}${contextBlock}`;
   }
 
-  return `${onboardingBlock}${soulBlock}\n\n${regularPrompt}\n\n${timeLocationPrompt}${includeArtifacts ? `\n\n${artifactsPrompt}` : ""}${includeWebSearch ? `\n\n${webSearchPrompt}` : ""}${contextBlock}`;
+  return `${onboardingBlock}${soulBlock}\n\n${regularPrompt}\n\n${timeLocationPrompt}${includeArtifacts ? `\n\n${artifactsPrompt}` : ""}${includeWebSearch ? `\n\n${webSearchPrompt}` : ""}${includeVisual ? `\n\n${visualPrompt}` : ""}${contextBlock}`;
 };
 
 export const codePrompt = `

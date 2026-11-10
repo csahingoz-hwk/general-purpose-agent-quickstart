@@ -8,6 +8,7 @@ import type { requestSuggestions } from "./ai/tools/request-suggestions";
 import type { updateDocument } from "./ai/tools/update-document";
 import type { webSearch } from "./ai/tools/web-search";
 import type { Suggestion } from "./db/schema";
+import type { OpenUiPayload } from "./openui/snapshot";
 
 export const messageMetadataSchema = z.object({
   createdAt: z.string(),
@@ -47,6 +48,7 @@ export type CustomUIDataTypes = {
   clear: null;
   finish: null;
   "chat-title": string;
+  openui: OpenUiPayload;
 };
 
 export type ChatMessage = UIMessage<

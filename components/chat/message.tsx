@@ -2,6 +2,7 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
 import type { Vote } from "@/lib/db/schema";
 import type { MascotState } from "@/lib/mascot";
+import { visualPayload } from "@/lib/openui/attach";
 import type { ChatMessage } from "@/lib/types";
 import { getCopy } from "@/lib/ui-copy";
 import { cn, sanitizeText } from "@/lib/utils";
@@ -22,6 +23,7 @@ import { FictionalInboxCard } from "./fictional-inbox-card";
 import { useMascotPreference } from "./mascot-preference";
 import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
+import { OpenUiCard } from "./openui-card";
 import { PreviewAttachment } from "./preview-attachment";
 import { Weather } from "./weather";
 import { WebSearchCard } from "./web-search-card";
@@ -64,6 +66,7 @@ const PurePreviewMessage = ({
   const { variant } = useMascotPreference();
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
+  const visual = isAssistant ? visualPayload(message.parts) : null;
 
   const hasAnyContent = message.parts?.some(
     (part) =>
@@ -203,6 +206,9 @@ const PurePreviewMessage = ({
       }
 
       if (state === "output-available") {
+        if (visual) {
+          return null;
+        }
         return (
           <div className={widthClass} key={toolCallId}>
             <Weather weatherAtLocation={part.output} />
@@ -463,6 +469,7 @@ const PurePreviewMessage = ({
           )}
         >
           {content}
+          {visual && <OpenUiCard payload={visual} />}
         </div>
       </div>
     </div>

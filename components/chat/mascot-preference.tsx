@@ -42,9 +42,14 @@ export function MascotPreferenceProvider({
     }
   }, []);
 
+  useEffect(() => {
+    document.documentElement.dataset.botTheme = variant;
+  }, [variant]);
+
   const setVariant = (next: MascotVariant) => {
     setVariantState(next);
     window.localStorage.setItem(MASCOT_STORAGE_KEY, next);
+    document.documentElement.dataset.botTheme = next;
   };
 
   return (

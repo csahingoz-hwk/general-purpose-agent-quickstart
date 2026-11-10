@@ -62,18 +62,18 @@
   --card-foreground: #161513;
   --popover: #ffffff;
   --popover-foreground: #161513;
-  --primary: #7a5234;
-  --primary-foreground: #ffffff;
+  --primary: var(--bot-accent);
+  --primary-foreground: var(--bot-accent-foreground);
   --secondary: #f1f0ee;
   --secondary-foreground: #3d3a36;
   --muted: #f1f0ee;
   --muted-foreground: #5c5854;
-  --accent: #f1f0ee;
-  --accent-foreground: #161513;
+  --accent: var(--bot-tint);
+  --accent-foreground: var(--foreground);
   --destructive: oklch(0.55 0.15 25);
   --border: #e6e3df;
   --input: #e6e3df;
-  --ring: #7a5234;
+  --ring: var(--bot-ring);
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -81,18 +81,18 @@
   --chart-5: oklch(0.769 0.188 70.08);
   --sidebar: #f6f5f3;
   --sidebar-foreground: #161513;
-  --sidebar-primary: #7a5234;
-  --sidebar-primary-foreground: #ffffff;
+  --sidebar-primary: var(--bot-accent);
+  --sidebar-primary-foreground: var(--bot-accent-foreground);
   --sidebar-accent: #efeae4;
   --sidebar-accent-foreground: #161513;
   --sidebar-border: rgba(0, 0, 0, 0.07);
-  --sidebar-ring: #7a5234;
+  --sidebar-ring: var(--bot-ring);
 
-  --bubble-user: #7a5234;
-  --bubble-user-foreground: #ffffff;
+  --bubble-user: var(--bot-accent);
+  --bubble-user-foreground: var(--bot-accent-foreground);
   --bubble-assistant: #efeeec;
-  --send: #7a5234;
-  --send-foreground: #ffffff;
+  --send: var(--bot-accent);
+  --send-foreground: var(--bot-accent-foreground);
   --send-muted: #e7e5e2;
   --send-muted-foreground: #5f5b56;
   --control: #f1f0ee;
@@ -104,7 +104,7 @@
     0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
   --shadow-composer-focus:
     0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06),
-    0 0 0 3px color-mix(in srgb, #7a5234 22%, transparent);
+    0 0 0 3px color-mix(in srgb, var(--bot-accent) 28%, transparent);
   --shadow-inset: inset 0 1px 1px oklch(0 0 0 / 0.03);
   --shadow-glow: 0 0 20px oklch(0 0 0 / 0.08);
 
@@ -120,18 +120,18 @@
   --card-foreground: #f4f1ec;
   --popover: #2a2623;
   --popover-foreground: #f4f1ec;
-  --primary: #7a5234;
-  --primary-foreground: #ffffff;
+  --primary: var(--bot-accent);
+  --primary-foreground: var(--bot-accent-foreground);
   --secondary: #2c2926;
   --secondary-foreground: #e7e1d8;
   --muted: #2c2926;
   --muted-foreground: #c8c2b8;
-  --accent: #2c2926;
-  --accent-foreground: #f4f1ec;
+  --accent: var(--bot-tint);
+  --accent-foreground: var(--foreground);
   --destructive: oklch(0.7 0.15 25);
   --border: rgba(255, 255, 255, 0.1);
   --input: rgba(255, 255, 255, 0.12);
-  --ring: #c4a484;
+  --ring: var(--bot-ring);
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
@@ -139,18 +139,18 @@
   --chart-5: oklch(0.645 0.246 16.439);
   --sidebar: #141311;
   --sidebar-foreground: #f4f1ec;
-  --sidebar-primary: #c4a484;
-  --sidebar-primary-foreground: #1a120c;
+  --sidebar-primary: var(--bot-accent);
+  --sidebar-primary-foreground: var(--bot-accent-foreground);
   --sidebar-accent: #2c2926;
   --sidebar-accent-foreground: #f4f1ec;
   --sidebar-border: rgba(255, 255, 255, 0.1);
-  --sidebar-ring: #c4a484;
+  --sidebar-ring: var(--bot-ring);
 
-  --bubble-user: #7a5234;
-  --bubble-user-foreground: #ffffff;
+  --bubble-user: var(--bot-accent);
+  --bubble-user-foreground: var(--bot-accent-foreground);
   --bubble-assistant: #2c2926;
-  --send: #7a5234;
-  --send-foreground: #ffffff;
+  --send: var(--bot-accent);
+  --send-foreground: var(--bot-accent-foreground);
   --send-muted: #2c2926;
   --send-muted-foreground: #a8a29a;
   --control: #2c2926;
@@ -163,7 +163,7 @@
     0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.45);
   --shadow-composer-focus:
     0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.45),
-    0 0 0 3px color-mix(in srgb, #c4a484 35%, transparent);
+    0 0 0 3px color-mix(in srgb, var(--bot-accent) 35%, transparent);
 }
 
 @layer base {
@@ -189,6 +189,12 @@
   textarea,
   input {
     caret-color: var(--send);
+  }
+
+  .bg-primary,
+  .bg-send,
+  .bg-bubble-user {
+    box-shadow: inset 0 0 0 1px var(--bot-edge);
   }
 }
 
