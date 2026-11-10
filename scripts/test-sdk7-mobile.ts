@@ -65,9 +65,9 @@ test("real local chat routes: both models, bilingual streaming, weather, interac
       await page.getByTestId("model-selector").waitFor();
       if (name === "Detailed chat") {
         await page.getByTestId("model-selector").click();
-        await page.getByPlaceholder("Search ready models…").fill("Detailed");
-        await page.getByPlaceholder("Search ready models…").press("ArrowDown");
-        await page.getByPlaceholder("Search ready models…").press("Enter");
+        // Two choices do not need a search field (it would also raise the
+        // phone keyboard); pick the option directly.
+        await page.getByRole("option", { name: /Detailed chat/ }).click();
         await expect(page.getByTestId("model-selector")).toHaveText(
           "Detailed chat"
         );

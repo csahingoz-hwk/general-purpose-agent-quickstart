@@ -5,11 +5,21 @@ import { useSWRConfig } from "swr";
 import { useCopyToClipboard } from "usehooks-ts";
 import type { Vote } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
+import { getCopy } from "@/lib/ui-copy";
 import {
   MessageAction as Action,
   MessageActions as Actions,
 } from "../ai-elements/message";
 import { CopyIcon, PencilEditIcon, ThumbDownIcon, ThumbUpIcon } from "./icons";
+
+const copy = getCopy();
+
+// Calm by default on pointer devices (revealed on hover or keyboard focus);
+// always visible where there is no hover (touch) and on narrow screens.
+const reveal =
+  "opacity-0 transition-opacity duration-150 motion-reduce:transition-none group-hover/message:opacity-100 group-focus-within/message:opacity-100 max-md:opacity-100 [@media(hover:none)]:opacity-100";
+const actionSize =
+  "size-11 text-muted-foreground hover:text-foreground md:size-8";
 
 export function PureMessageActions({
   chatId,
@@ -49,22 +59,22 @@ export function PureMessageActions({
 
   if (message.role === "user") {
     return (
-      <Actions className="-mr-0.5 justify-end opacity-0 transition-opacity duration-150 group-hover/message:opacity-100">
+      <Actions className={`-mr-2 justify-end ${reveal} md:-mr-0.5`}>
         <div className="flex items-center gap-0.5">
           {onEdit && (
             <Action
-              className="size-7 text-muted-foreground/50 hover:text-foreground"
+              className={actionSize}
               data-testid="message-edit-button"
               onClick={onEdit}
-              tooltip="Edit"
+              tooltip={copy.edit}
             >
               <PencilEditIcon />
             </Action>
           )}
           <Action
-            className="size-7 text-muted-foreground/50 hover:text-foreground"
+            className={actionSize}
             onClick={handleCopy}
-            tooltip="Copy"
+            tooltip={copy.copy}
           >
             <CopyIcon />
           </Action>
@@ -74,17 +84,13 @@ export function PureMessageActions({
   }
 
   return (
-    <Actions className="-ml-0.5 opacity-0 transition-opacity duration-150 group-hover/message:opacity-100">
-      <Action
-        className="text-muted-foreground/50 hover:text-foreground"
-        onClick={handleCopy}
-        tooltip="Copy"
-      >
+    <Actions className={`-ml-2 ${reveal} md:-ml-0.5`}>
+      <Action className={actionSize} onClick={handleCopy} tooltip={copy.copy}>
         <CopyIcon />
       </Action>
 
       <Action
-        className="text-muted-foreground/50 hover:text-foreground"
+        className={actionSize}
         data-testid="message-upvote"
         disabled={vote?.isUpvoted}
         onClick={() => {
@@ -137,7 +143,7 @@ export function PureMessageActions({
       </Action>
 
       <Action
-        className="text-muted-foreground/50 hover:text-foreground"
+        className={actionSize}
         data-testid="message-downvote"
         disabled={vote && !vote.isUpvoted}
         onClick={() => {

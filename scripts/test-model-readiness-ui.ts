@@ -620,3 +620,279 @@ test("personal shell: no vendor CTA, private status, usage replaces chat, no ove
     await browser.close();
   }
 });
+
+const composerViewports = [
+  {
+    name: "mobile-390",
+    width: 390,
+    height: 844,
+    hasTouch: true,
+    minTarget: 44,
+  },
+  {
+    name: "desktop-1440",
+    width: 1440,
+    height: 1000,
+    hasTouch: false,
+    minTarget: 32,
+  },
+] as const;
+
+test("composer and actions: 16px text, bounded growth, touch targets, visible actions, jump to latest", async () => {
+  const screenshotDir = process.env.UI_SCREENSHOT_DIR;
+  const browser = await launchBrowser();
+  try {
+    for (const viewport of composerViewports) {
+      for (const colorScheme of ["light", "dark"] as const) {
+        const chatId = "3c9d8e1f-6a4b-4c2d-9e7f-1a2b3c4d5e6f";
+        const createdAt = new Date().toISOString();
+        const longAnswer =
+          "Synthetic assistant answer that is long enough to wrap across several lines on a phone, so the transcript becomes taller than the screen. ".repeat(
+            3
+          );
+        const messages = Array.from({ length: 24 }, (_, index) => ({
+          id: crypto.randomUUID(),
+          role: index % 2 === 0 ? "user" : "assistant",
+          parts: [
+            {
+              type: "text",
+              text:
+                index % 2 === 0
+                  ? `Synthetic question number ${index / 2 + 1}`
+                  : longAnswer,
+            },
+          ],
+          metadata: { createdAt },
+        }));
+        const context = await browser.newContext({
+          viewport: { width: viewport.width, height: viewport.height },
+          deviceScaleFactor: screenshotDir ? 2 : 1,
+          hasTouch: viewport.hasTouch,
+          reducedMotion: "reduce",
+          colorScheme,
+        });
+        const token = await encode({
+          secret,
+          salt: "authjs.session-token",
+          token: { id: userId, email: owner, type: "regular" },
+        });
+        await context.addCookies([
+          { name: "authjs.session-token", value: token, url: origin },
+        ]);
+        const page = await context.newPage();
+        await page.route("**/a-4-a/c.js*", (route) =>
+          route.fulfill({
+            contentType: "application/javascript",
+            body: "window.V_C.push({b:1,d:0});",
+          })
+        );
+        await page.route("**/api/history*", (route) =>
+          route.fulfill({ json: { chats: [], hasMore: false } })
+        );
+        await page.route("**/api/messages?*", (route) =>
+          route.fulfill({
+            json: {
+              messages,
+              visibility: "private",
+              userId,
+              isReadonly: false,
+            },
+          })
+        );
+        await page.route("**/api/models", (route) =>
+          route.fulfill({
+            json: {
+              status: "ready",
+              defaultModelId: "openai/gpt-oss-20b",
+              checkedAt: "2026-11-08T15:00:00Z",
+              models: [
+                {
+                  id: "openai/gpt-oss-20b",
+                  name: "Everyday chat",
+                  provider: "groq",
+                  description: "GPT OSS 20B · free-account quota applies",
+                },
+                {
+                  id: "openai/gpt-oss-120b",
+                  name: "Detailed chat",
+                  provider: "groq",
+                  description: "GPT OSS 120B · free-account quota applies",
+                },
+              ],
+              capabilities: {},
+            },
+          })
+        );
+        const shot = async (name: string) => {
+          if (screenshotDir) {
+            await page.screenshot({
+              path: `${screenshotDir}/s2-${viewport.name}-${name}-${colorScheme}.png`,
+            });
+          }
+        };
+        const noPageOverflow = () =>
+          page.evaluate(
+            () =>
+              document.documentElement.scrollWidth <=
+              document.documentElement.clientWidth
+          );
+        const opacityOf = (locator: import("@playwright/test").Locator) =>
+          locator.evaluate((el) => {
+            // Playwright counts opacity:0 as visible, so read the real value
+            // of the nearest element that carries the reveal transition.
+            let node: HTMLElement | null = el as HTMLElement;
+            let value = 1;
+            while (node) {
+              value *= Number.parseFloat(getComputedStyle(node).opacity);
+              node = node.parentElement;
+            }
+            return value;
+          });
+        try {
+          // Resting composer.
+          await page.goto(origin);
+          const input = page.getByTestId("multimodal-input").last();
+          await input.waitFor();
+          await page.getByTestId("model-selector").waitFor();
+          const fontSize = await input.evaluate((el) =>
+            Number.parseFloat(getComputedStyle(el).fontSize)
+          );
+          assert.equal(fontSize, 16, "editable text is 16px at every width");
+          const resting = await input.boundingBox();
+          assert.ok(
+            resting && resting.height < 60,
+            `resting composer is one line (got ${resting?.height}px)`
+          );
+          const send = await page
+            .getByTestId("send-button")
+            .last()
+            .boundingBox();
+          const attach = await page
+            .getByTestId("attachments-button")
+            .last()
+            .boundingBox();
+          for (const [label, box] of [
+            ["send", send],
+            ["attach", attach],
+          ] as const) {
+            assert.ok(
+              box &&
+                box.width >= viewport.minTarget &&
+                box.height >= viewport.minTarget,
+              `${label} control is at least ${viewport.minTarget}px (got ${box?.width}x${box?.height})`
+            );
+          }
+          assert.equal(await noPageOverflow(), true);
+          await page.waitForTimeout(1200);
+          await shot("composer-rest");
+
+          // Twelve lines: grows to a cap, then scrolls inside.
+          const twelve = Array.from(
+            { length: 12 },
+            (_, index) => `Line ${index + 1}`
+          ).join("\n");
+          await input.fill(twelve);
+          const grown = await input.evaluate((el) => ({
+            client: el.clientHeight,
+            scroll: el.scrollHeight,
+          }));
+          assert.ok(
+            grown.client < 200 && grown.client > 100,
+            `twelve lines are capped near six (clientHeight ${grown.client})`
+          );
+          assert.ok(
+            grown.scroll > grown.client,
+            "capped composer scrolls internally"
+          );
+          assert.equal(await noPageOverflow(), true);
+          await shot("composer-12-lines");
+          // The global draft is intentionally shared across chats (deferred),
+          // so clear it before opening the saved conversation.
+          await input.fill("");
+
+          // Model menu: two plain choices with a one-line explanation.
+          await page.getByTestId("model-selector").click();
+          await expect(page.getByRole("option")).toHaveCount(2);
+          await expect(
+            page.getByText("GPT OSS 20B · free-account quota applies")
+          ).toBeVisible();
+          assert.equal(
+            await page.getByPlaceholder("Search ready models…").count(),
+            0
+          );
+          assert.equal(await noPageOverflow(), true);
+          await page.waitForTimeout(400);
+          await shot("model-menu");
+          await page.keyboard.press("Escape");
+
+          // Saved chat: Edit and Copy are reachable without hover.
+          await page.goto(`${origin}/chat/${chatId}`);
+          await page.getByText("Synthetic question number 12").waitFor();
+          const lastUser = page.getByTestId("message-user").last();
+          const edit = lastUser.getByTestId("message-edit-button");
+          const copyButton = lastUser.getByRole("button", { name: "Copy" });
+          if (viewport.hasTouch) {
+            for (const control of [edit, copyButton]) {
+              await expect.poll(() => opacityOf(control)).toBeGreaterThan(0.99);
+              const box = await control.boundingBox();
+              assert.ok(
+                box && box.width >= 44 && box.height >= 44,
+                `touch message action is >= 44px (got ${box?.width}x${box?.height})`
+              );
+            }
+          } else {
+            await page.mouse.move(1, 1);
+            await expect.poll(() => opacityOf(edit)).toBeLessThan(0.01);
+            await edit.focus();
+            await expect.poll(() => opacityOf(edit)).toBeGreaterThan(0.99);
+            await expect
+              .poll(() => opacityOf(copyButton))
+              .toBeGreaterThan(0.99);
+            const box = await edit.boundingBox();
+            assert.ok(
+              box && box.width >= 32 && box.height >= 32,
+              `desktop message action is >= 32px (got ${box?.width}x${box?.height})`
+            );
+          }
+          assert.equal(await noPageOverflow(), true);
+          await page.waitForTimeout(300);
+          await shot("saved-chat-actions");
+
+          // Jump to latest: hidden at the bottom, shown after reading up,
+          // returns to the end when activated.
+          const jump = page.getByTestId("jump-to-latest");
+          await expect(jump).toHaveAttribute("data-visible", "false");
+          await page.evaluate(() => {
+            const first = document.querySelector(
+              '[data-testid="message-user"]'
+            );
+            first?.closest<HTMLElement>(".overflow-y-auto")?.scrollTo({
+              top: 0,
+              behavior: "instant",
+            });
+          });
+          await expect(jump).toHaveAttribute("data-visible", "true");
+          const jumpBox = await jump.boundingBox();
+          assert.ok(
+            jumpBox && jumpBox.height >= 44,
+            `Jump to latest is >= 44px tall (got ${jumpBox?.height})`
+          );
+          await expect(jump).toHaveText("Jump to latest");
+          await jump.click();
+          await expect(jump).toHaveAttribute("data-visible", "false");
+          await expect(
+            page.getByText("Synthetic question number 12")
+          ).toBeInViewport();
+          assert.equal(await noPageOverflow(), true);
+        } finally {
+          await context.close();
+        }
+      }
+      console.log(
+        `PASS: composer and actions at ${viewport.width}x${viewport.height}`
+      );
+    }
+  } finally {
+    await browser.close();
+  }
+});

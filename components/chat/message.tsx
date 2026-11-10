@@ -2,6 +2,7 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
 import type { Vote } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
+import { getCopy } from "@/lib/ui-copy";
 import { cn, sanitizeText } from "@/lib/utils";
 import { MessageContent, MessageResponse } from "../ai-elements/message";
 import { Shimmer } from "../ai-elements/shimmer";
@@ -22,6 +23,8 @@ import { MessageReasoning } from "./message-reasoning";
 import { PreviewAttachment } from "./preview-attachment";
 import { Weather } from "./weather";
 import { WebSearchCard } from "./web-search-card";
+
+const copy = getCopy();
 
 const PurePreviewMessage = ({
   addToolApprovalResponse,
@@ -407,7 +410,7 @@ const PurePreviewMessage = ({
   const content = isThinking ? (
     <div className="flex h-[calc(13px*1.65)] items-center text-[13px] leading-[1.65]">
       <Shimmer className="font-medium" duration={1}>
-        Thinking...
+        {copy.statusThinking}
       </Shimmer>
     </div>
   ) : (
@@ -467,7 +470,7 @@ export const ThinkingMessage = () => {
 
         <div className="flex h-[calc(13px*1.65)] items-center text-[13px] leading-[1.65]">
           <Shimmer className="font-medium" duration={1}>
-            Thinking...
+            {copy.statusThinking}
           </Shimmer>
         </div>
       </div>

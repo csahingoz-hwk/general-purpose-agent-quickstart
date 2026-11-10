@@ -3,7 +3,7 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
 import type { UIMessage } from "ai";
 import equal from "fast-deep-equal";
-import { ArrowUpIcon, BrainIcon, WrenchIcon } from "lucide-react";
+import { ArrowUpIcon, CheckIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
@@ -31,6 +31,7 @@ import {
 } from "@/components/ai-elements/model-selector";
 import type { ChatModel, ModelCapabilities } from "@/lib/ai/models";
 import type { Attachment, ChatMessage } from "@/lib/types";
+import { getCopy } from "@/lib/ui-copy";
 import { cn } from "@/lib/utils";
 import {
   PromptInput,
@@ -49,6 +50,11 @@ import {
 } from "./slash-commands";
 import { SuggestedActions } from "./suggested-actions";
 import type { VisibilityType } from "./visibility-selector";
+
+const copy = getCopy();
+
+// Roughly six lines of 16px/1.625 text; beyond this the textarea scrolls.
+const COMPOSER_MAX_HEIGHT_PX = 176;
 
 function setCookie(name: string, value: string) {
   const maxAge = 60 * 60 * 24 * 365;
@@ -146,6 +152,19 @@ function PureMultimodalInput({
   useEffect(() => {
     setLocalStorageInput(input);
   }, [input, setLocalStorageInput]);
+
+  // `field-sizing: content` grows the textarea in current Chromium. Browsers
+  // without it (older iOS Safari) would stay at their default row count, so
+  // size from scrollHeight there. Same cap, same internal scroll.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: resize when the text changes
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el || CSS.supports("field-sizing", "content")) {
+      return;
+    }
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT_PX)}px`;
+  }, [input]);
 
   const handleInput = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = event.target.value;
@@ -384,17 +403,17 @@ function PureMultimodalInput({
   return (
     <div className={cn("relative flex w-full flex-col gap-4", className)}>
       {editingMessage && onCancelEdit && (
-        <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
-          <span>Editing message</span>
+        <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
+          <span>{copy.editingMessage}</span>
           <button
-            className="rounded px-1.5 py-0.5 text-muted-foreground/50 transition-colors hover:bg-muted hover:text-foreground"
+            className="min-h-11 rounded px-3 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground motion-reduce:transition-none md:min-h-8"
             onMouseDown={(e) => {
               e.preventDefault();
               onCancelEdit();
             }}
             type="button"
           >
-            Cancel
+            {copy.cancel}
           </button>
         </div>
       )}
@@ -443,7 +462,7 @@ function PureMultimodalInput({
         </output>
       )}
       <PromptInput
-        className="[&>div]:rounded-2xl [&>div]:border [&>div]:border-border/30 [&>div]:bg-card/70 [&>div]:shadow-[var(--shadow-composer)] [&>div]:transition-shadow [&>div]:duration-300 [&>div]:focus-within:shadow-[var(--shadow-composer-focus)]"
+        className="[&>div]:rounded-[20px] [&>div]:border [&>div]:border-border/60 [&>div]:bg-card/70 [&>div]:shadow-[var(--shadow-composer)] [&>div]:transition-shadow [&>div]:duration-150 motion-reduce:[&>div]:transition-none [&>div]:focus-within:shadow-[var(--shadow-composer-focus)]"
         onSubmit={() => {
           if (input.startsWith("/")) {
             const query = input.slice(1).trim();
@@ -497,7 +516,7 @@ function PureMultimodalInput({
           </div>
         )}
         <PromptInputTextarea
-          className="min-h-24 text-base md:text-[13px] leading-relaxed px-4 pt-3.5 pb-1.5 placeholder:text-muted-foreground/35"
+          className="max-h-44 min-h-0 px-4 pt-3 pb-1 text-base leading-relaxed placeholder:text-muted-foreground md:text-base"
           data-testid="multimodal-input"
           onChange={handleInput}
           onKeyDown={(e) => {
@@ -534,12 +553,13 @@ function PureMultimodalInput({
             }
           }}
           placeholder={
-            editingMessage ? "Edit your message..." : "Ask anything..."
+            editingMessage ? copy.editPlaceholder : copy.composerPlaceholder
           }
           ref={textareaRef}
+          rows={1}
           value={input}
         />
-        <PromptInputFooter className="px-3 pb-3">
+        <PromptInputFooter className="px-2 pt-0 pb-2">
           <PromptInputTools>
             <AttachmentsButton
               fileInputRef={fileInputRef}
@@ -556,11 +576,12 @@ function PureMultimodalInput({
             <StopButton setMessages={setMessages} stop={stop} />
           ) : (
             <PromptInputSubmit
+              aria-label={copy.send}
               className={cn(
-                "h-7 w-7 rounded-xl transition-all duration-200",
+                "size-11 rounded-full bg-clip-content p-1.5 transition-colors duration-150 motion-reduce:transition-none md:size-8 md:p-0",
                 input.trim()
                   ? "bg-foreground text-background hover:opacity-85 active:scale-95"
-                  : "bg-muted text-muted-foreground/25 cursor-not-allowed"
+                  : "cursor-not-allowed bg-muted text-muted-foreground"
               )}
               data-testid="send-button"
               disabled={!modelReady || !input.trim() || uploadQueue.length > 0}
@@ -629,11 +650,12 @@ function PureAttachmentsButton({
 
   return (
     <Button
+      aria-label={copy.attachFile}
       className={cn(
-        "h-7 w-7 rounded-lg border border-border/40 p-1 transition-colors",
+        "size-11 rounded-full border-transparent bg-clip-content p-1.5 transition-colors motion-reduce:transition-none md:size-8 md:rounded-lg md:border-border/60 md:p-1",
         hasVision
-          ? "text-foreground hover:border-border hover:text-foreground"
-          : "text-muted-foreground/30 cursor-not-allowed"
+          ? "text-foreground hover:text-foreground"
+          : "cursor-not-allowed text-muted-foreground"
       )}
       data-testid="attachments-button"
       disabled={status !== "ready" || !hasVision}
@@ -641,6 +663,7 @@ function PureAttachmentsButton({
         event.preventDefault();
         fileInputRef.current?.click();
       }}
+      type="button"
       variant="ghost"
     >
       <PaperclipIcon size={14} style={{ width: 14, height: 14 }} />
@@ -674,14 +697,15 @@ function PureModelSelectorCompact({
   const selected = models.find((model) => model.id === selectedModelId);
   if (!selected) {
     return (
-      <span className="px-2 text-xs text-muted-foreground">Chat not ready</span>
+      <span className="px-2 text-sm text-muted-foreground">Chat not ready</span>
     );
   }
   return (
     <ModelSelector onOpenChange={setOpen} open={open}>
       <ModelSelectorTrigger asChild>
         <Button
-          className="h-7 max-w-[200px] gap-1.5 rounded-lg px-2 text-xs text-muted-foreground"
+          aria-label={`${copy.modelMenuLabel}: ${selected.name}`}
+          className="h-11 max-w-[200px] gap-1.5 rounded-lg px-3 text-sm text-muted-foreground md:h-8 md:px-2"
           data-testid="model-selector"
           variant="ghost"
         >
@@ -689,11 +713,14 @@ function PureModelSelectorCompact({
         </Button>
       </ModelSelectorTrigger>
       <ModelSelectorContent>
-        <ModelSelectorInput placeholder="Search ready models…" />
+        {models.length > 5 && (
+          <ModelSelectorInput placeholder={copy.modelSearchPlaceholder} />
+        )}
         <ModelSelectorList>
-          <ModelSelectorGroup heading="Ready to use · free-account limits apply">
+          <ModelSelectorGroup heading={copy.modelMenuHeading}>
             {models.map((model) => (
               <ModelSelectorItem
+                className="min-h-11 items-start gap-2 md:min-h-0"
                 key={model.id}
                 keywords={[model.name, model.description]}
                 onSelect={() => {
@@ -703,26 +730,15 @@ function PureModelSelectorCompact({
                 }}
                 value={model.id}
               >
-                <div>
+                <div className="min-w-0 flex-1">
                   <ModelSelectorName>{model.name}</ModelSelectorName>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-[13px] text-muted-foreground">
                     {model.description}
                   </p>
                 </div>
-                <div className="ml-auto flex gap-2">
-                  {data.capabilities?.[model.id]?.tools && (
-                    <WrenchIcon
-                      aria-label="Supports tools"
-                      className="size-3.5"
-                    />
-                  )}
-                  {data.capabilities?.[model.id]?.reasoning && (
-                    <BrainIcon
-                      aria-label="Supports reasoning"
-                      className="size-3.5"
-                    />
-                  )}
-                </div>
+                {model.id === selectedModelId && (
+                  <CheckIcon aria-label="Selected" className="mt-0.5 size-4" />
+                )}
               </ModelSelectorItem>
             ))}
           </ModelSelectorGroup>
@@ -743,13 +759,15 @@ function PureStopButton({
 }) {
   return (
     <Button
-      className="h-7 w-7 rounded-xl bg-foreground p-1 text-background transition-all duration-200 hover:opacity-85 active:scale-95 disabled:bg-muted disabled:text-muted-foreground/25 disabled:cursor-not-allowed"
+      aria-label={copy.stop}
+      className="size-11 rounded-full bg-foreground bg-clip-content p-1.5 text-background transition-colors duration-150 hover:opacity-85 active:scale-95 motion-reduce:transition-none disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground md:size-8 md:p-0"
       data-testid="stop-button"
       onClick={(event) => {
         event.preventDefault();
         stop();
         setMessages((messages) => messages);
       }}
+      type="button"
     >
       <StopIcon size={14} />
     </Button>

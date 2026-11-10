@@ -5,10 +5,13 @@ import { useMessages } from "@/hooks/use-messages";
 import { canRetryReply, interruptedReply } from "@/lib/ai/conversation-state";
 import type { Vote } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
+import { getCopy } from "@/lib/ui-copy";
 import { cn } from "@/lib/utils";
 import { useDataStream } from "./data-stream-provider";
 import { Greeting } from "./greeting";
 import { PreviewMessage, ThinkingMessage } from "./message";
+
+const copy = getCopy();
 
 type MessagesProps = {
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
@@ -51,6 +54,46 @@ function PureMessages({
   });
 
   useDataStream();
+
+  const lastMessage = messages.at(-1);
+  const interrupted = interruptedReply(lastMessage);
+  const showRetry =
+    !isReadonly &&
+    status !== "submitted" &&
+    status !== "streaming" &&
+    (canRetryReply(messages) ||
+      (status === "error" &&
+        lastMessage?.role === "assistant" &&
+        !lastMessage.parts.some((p) => p.type.startsWith("tool-"))));
+  // Existing state only: a tool part that has input but no output yet.
+  const toolRunning =
+    status === "streaming" &&
+    lastMessage?.role === "assistant" &&
+    lastMessage.parts.some(
+      (p) =>
+        p.type.startsWith("tool-") &&
+        "state" in p &&
+        (p.state === "input-streaming" || p.state === "input-available")
+    );
+  // `visible` text is shown; the rest is only announced to screen readers
+  // (the pending "Thinking…" indicator is already drawn by ThinkingMessage).
+  let replyStatus: { text: string; visible: boolean } | null = null;
+  if (status === "submitted") {
+    replyStatus = { text: copy.statusThinking, visible: false };
+  } else if (toolRunning) {
+    replyStatus = { text: copy.statusWorking, visible: true };
+  } else if (status === "streaming") {
+    replyStatus = { text: copy.statusReplying, visible: false };
+  } else if (interrupted?.status === "interrupted") {
+    replyStatus = {
+      text: interrupted.retryable
+        ? copy.statusInterrupted
+        : copy.interruptedAfterTool,
+      visible: true,
+    };
+  } else if (status === "error") {
+    replyStatus = { text: copy.statusError, visible: true };
+  }
 
   const prevChatIdRef = useRef(chatId);
   useEffect(() => {
@@ -100,39 +143,41 @@ function PureMessages({
             />
           ))}
 
-          {!isReadonly &&
-            status !== "submitted" &&
-            status !== "streaming" &&
-            (canRetryReply(messages) ||
-              (status === "error" &&
-                messages.at(-1)?.role === "assistant" &&
-                !messages
-                  .at(-1)
-                  ?.parts.some((p) => p.type.startsWith("tool-")))) && (
-              <div className="flex justify-start pl-10">
-                <button
-                  className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-muted"
-                  data-testid="retry-response"
-                  onClick={() => regenerate({ body: { retry: true } })}
-                  type="button"
-                >
-                  <RotateCcwIcon className="size-4" />
-                  Retry response
-                </button>
-              </div>
-            )}
+          {replyStatus?.visible && (
+            <p
+              aria-hidden="true"
+              className="px-10 text-sm text-muted-foreground"
+              data-testid="reply-status-text"
+            >
+              {replyStatus.text}
+            </p>
+          )}
 
-          {interruptedReply(messages.at(-1))?.status === "interrupted" &&
-            interruptedReply(messages.at(-1))?.retryable === false && (
-              <p className="px-10 text-sm text-muted-foreground">
-                This reply stopped after a tool ran. Send a follow-up to
-                continue without repeating its action.
-              </p>
-            )}
+          {showRetry && (
+            <div className="flex justify-start pl-10">
+              <button
+                className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm transition-colors hover:bg-muted motion-reduce:transition-none"
+                data-testid="retry-response"
+                onClick={() => regenerate({ body: { retry: true } })}
+                type="button"
+              >
+                <RotateCcwIcon className="size-4" />
+                {copy.retryResponse}
+              </button>
+            </div>
+          )}
 
           {status === "submitted" && messages.at(-1)?.role !== "assistant" && (
             <ThinkingMessage />
           )}
+
+          <output
+            aria-live="polite"
+            className="sr-only"
+            data-testid="reply-status"
+          >
+            {replyStatus?.text}
+          </output>
 
           <div
             className="min-h-[24px] min-w-[24px] shrink-0"
@@ -142,16 +187,21 @@ function PureMessages({
       </div>
 
       <button
-        aria-label="Scroll to bottom"
-        className={`absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center rounded-full border border-border/50 bg-card/90 px-3.5 shadow-[var(--shadow-float)] backdrop-blur-lg transition-all duration-200 h-7 text-[10px] ${
+        aria-hidden={isAtBottom}
+        className={cn(
+          "absolute bottom-4 left-1/2 z-10 inline-flex h-11 -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm text-foreground shadow-[var(--shadow-float)] transition-[opacity,transform] duration-150 motion-reduce:transition-none",
           isAtBottom
-            ? "pointer-events-none scale-90 opacity-0"
+            ? "pointer-events-none scale-95 opacity-0"
             : "pointer-events-auto scale-100 opacity-100"
-        }`}
+        )}
+        data-testid="jump-to-latest"
+        data-visible={!isAtBottom}
         onClick={() => scrollToBottom("smooth")}
+        tabIndex={isAtBottom ? -1 : 0}
         type="button"
       >
-        <ArrowDownIcon className="size-3 text-muted-foreground" />
+        <ArrowDownIcon className="size-4" />
+        {copy.jumpToLatest}
       </button>
     </div>
   );

@@ -160,6 +160,54 @@ Presentation and navigation only; no backend, schema, provider, auth or
 - Sessions 2 (composer), 3 (rich results) and 4 (usage redesign, settings,
   language) are not started.
 
+## Personal assistant UI — Session 2 (composer, conversation and recovery)
+
+Presentation only; no backend, schema, provider, auth, spend, retry-policy or
+`use-active-chat` changes. Not committed or pushed by this work.
+
+**IMPLEMENTED**
+- Composer: one line at rest, grows to about six lines (176px) then scrolls
+  internally (CSS `field-sizing`, plus a scrollHeight fallback where it is
+  unsupported). 16px text at every width, placeholder at full muted contrast,
+  bottom padding `max(base, env(safe-area-inset-bottom))`. Enter/Shift+Enter and
+  IME composition handling untouched.
+- Send, Stop and Attach are 44px on touch (32px at md+) with a smaller visual
+  glyph. Stop stays for submitted/streaming; a draft typed during streaming is
+  kept (Enter shows the existing wait toast, never stops or sends).
+- Copy/Edit/vote actions are visible on touch (`hover: none`) and narrow
+  screens, and on hover or keyboard focus-within on desktop; 44px on touch.
+- Model menu: two choices, plain heading, the existing description line, check
+  on the selected one; search field only appears above five models.
+- Status: one polite live region (`reply-status`) announces Thinking /
+  Replying / Working / interrupted / error from existing `status`, tool-part
+  state and `data-reply-status`; visible text for working, interrupted, error.
+  Retry (44px) is unchanged and the only retry; an interrupted tool shows the
+  follow-up explanation and is never replayed.
+- "Jump to latest" (labelled, 44px) replaces the icon-only scroll button; the
+  existing scroll hook already follows only when at the bottom (unchanged).
+- EN/TR copy added to `lib/ui-copy.ts`; transitions are <=150ms and disabled
+  under reduced motion.
+- Tests: "composer and actions" case in `scripts/test-model-readiness-ui.ts`
+  (390x844 touch, 1440x1000); `scripts/test-sdk7-mobile.ts` now picks the model
+  option directly because the two-choice menu has no search field.
+
+**DEFERRED (explicit)**
+- Draft storage is still the single global `input` localStorage key shared by
+  all chats and the new-chat screen. Per-chat drafts need their own state tests
+  and were not started.
+- `viewportFit: "cover"` was not added: the app is not a home-screen PWA, so
+  Safari already insets content and `env(safe-area-inset-bottom)` resolves to 0
+  there. Revisit in Session 4 together with the `maximumScale` removal.
+
+**MOCKED / SYNTHETIC**
+- Evidence is synthetic desktop Chromium (touch emulation, intercepted
+  models/history/messages), not real iPhone Safari.
+
+**PENDING**
+- Real iPhone check (keyboard, focus-zoom, safe area, scroll). Stream-phase
+  Stop/draft behaviour remains covered by the existing SDK 7 mobile test.
+- Sessions 3 and 4.
+
 ## Web search and tomorrow's forecast — 10 November 2026
 
 Not committed or pushed by this work; changes are in the working tree.
