@@ -204,3 +204,46 @@ route honours the OpenAI options `store`, `serviceTier`, `parallelToolCalls` and
 `max_output_tokens` but not the other two. Confirm in Gateway logs and the
 `ModelUsage` ledger on the first real calls.
 
+
+## Web search and 3-day forecast (10 November 2026)
+
+**Web search — IMPLEMENTED for the AI Gateway lane only; NOT exercised against the
+live service (no paid call was made).** `webSearch` is
+`gateway.tools.deepseekSearch({ count: 5, needContent: false })` from the
+installed `@ai-sdk/gateway` 4.0.138, a provider-executed tool: AI Gateway runs the
+search and the model keeps writing in the same model call. No DeepSeek key; auth
+is the existing Gateway OIDC/API-key path.
+
+- **Offered only when** `AI_GATEWAY_USAGE_ENABLED=true`, legacy Groq is off and a
+  premium model (Luna/Terra) is selected (`webSearchLane`). On the direct-OpenAI
+  and legacy Groq lanes the tool is never registered, never active and the
+  routed model rejects any provider tool. Per turn it activates only on explicit
+  search/current-fact intent in English or Turkish; a weather question stays on
+  `getWeather`.
+- **Untrusted results.** In a webSearch turn no state-changing tool is offered
+  (`setHomeLocation`, `setSoul`, `cancelSchedule`, create/edit/updateDocument,
+  requestSuggestions); a system line says results are data, not instructions, and
+  to cite title/URL. Earlier search parts are not replayed to the model; the UI
+  keeps the stored full output (5 results without page content).
+- **Step budget / cap.** `isStepCount(2)` is unchanged and sufficient: the
+  search result and answer arrive inside step 1's model call. SDK steps cannot
+  bound the Gateway-side loop, so the routed model counts provider-executed tool
+  calls and aborts the stream above `WEB_SEARCH_MAX_CALLS = 3` per model call
+  (outcome `tool`, no fallback). *Assumed, not verified live:* that the Gateway
+  streams the tool call/result and the continued text in one call.
+- **Price and ledger.** USD 0.75 per 1,000 billable requests
+  (`WEB_SEARCH_COST_USD = 0.00075`, catalog). The Gateway reports actual cost only
+  in separate generation lookups, which the ledger does not use, so cost is
+  counted: the reservation includes the capped worst case (3 searches); on settle
+  `estimatedUsd = token cost + observed searches x 0.00075`. Failed/empty searches
+  are not billed by Vercel, but every attempted call is counted (never
+  under-reports). No schema change; with unreported usage the reservation (which
+  includes search) stays. Host-model tokens are charged as before.
+- **MOCKED / PENDING.** All tests are synthetic. Pending: a first real search,
+  confirming Gateway streams `providerExecuted` calls as assumed, real cost vs the
+  constant, and result quality in Turkish.
+
+**3-day forecast (free, Open-Meteo).** `getWeather` also requests
+`temperature_2m_max/min`, `precipitation_probability_max`, `precipitation_sum`,
+`weather_code` and `forecast_days=3`; the model receives a compact `daily` array
+(today, tomorrow, day after) with units. The weather card is unchanged.

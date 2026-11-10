@@ -159,3 +159,27 @@ Presentation and navigation only; no backend, schema, provider, auth or
   and the Vercel provisioning problem remain open.
 - Sessions 2 (composer), 3 (rich results) and 4 (usage redesign, settings,
   language) are not started.
+
+## Web search and tomorrow's forecast — 10 November 2026
+
+Not committed or pushed by this work; changes are in the working tree.
+
+**IMPLEMENTED**
+- Web search (`webSearch`, AI Gateway DeepSeek Search) for the **Gateway lane
+  only**; hidden and never registered on direct OpenAI or legacy Groq. USD 0.75 per
+  1,000 billable searches, at most 3 per model call, counted in the reservation and
+  the settled estimate. Details, safety rules and assumptions:
+  [MODEL_ROUTING.md](MODEL_ROUTING.md#web-search-and-3-day-forecast-10-november-2026).
+- Compact "Searched the web" source list in chat (EN/TR copy, http/https links only).
+- `getWeather` now returns a 3-day forecast with chance of rain, so "will it rain
+  tomorrow in Ankara?" can be answered (free Open-Meteo, separate concern).
+- Fixed a legacy-lane defect: after a tool call the follow-up call exceeded the
+  3400-token budget (longer time/location system prompt), so only the weather
+  card appeared and the written answer was lost. The first call of a tool turn
+  now gets half of the shared per-minute budget and the follow-up gets what is
+  left of it.
+
+**MOCKED / SYNTHETIC** — Every test uses synthetic provider and weather responses.
+**PENDING** — A real Gateway search (no paid call was made), live confirmation of
+how Gateway streams the search, real Turkish quality, and Vercel preview. Search
+needs `AI_GATEWAY_USAGE_ENABLED=true` plus a premium model; nothing was enabled.

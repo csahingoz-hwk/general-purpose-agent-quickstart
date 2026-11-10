@@ -27,9 +27,19 @@ export type UsageLedger = {
     id: string,
     model: PremiumModelId,
     outcome: string,
-    usage?: LanguageModelV4Usage
+    usage?: LanguageModelV4Usage,
+    /** Non-token spend for this call (web search), added to the estimate. */
+    extraUsd?: number
   ) => Promise<void>;
 };
+/**
+ * Estimate stored when a call settles. Token usage plus non-token spend (web
+ * search). Without reported usage this stays null so the full reservation, which
+ * already includes the capped search cost, remains counted.
+ */
+export function settledEstimate(tokenUsd: number | undefined, extraUsd = 0) {
+  return tokenUsd === undefined ? null : tokenUsd + Math.max(0, extraUsd);
+}
 export function createUsageLedger(
   userId: string,
   requestId: string
@@ -54,11 +64,12 @@ export function createUsageLedger(
         return id;
       });
     },
-    async settle(id, model, outcome, usage) {
+    async settle(id, model, outcome, usage, extraUsd = 0) {
       const cost = usage && usageCost(model, usage);
+      const estimatedUsd = settledEstimate(cost?.usd, extraUsd);
       // Unknown usage retains the full reservation, even on disconnect/cancel.
       // This deliberately favors stopping early over undercounting lost calls.
-      await sql()`UPDATE "ModelUsage" SET "outcome"=${outcome}, "estimatedUsd"=${cost?.usd ?? null}, "inputTokens"=${cost?.input ?? null}, "cachedInputTokens"=${cost?.cached ?? null}, "cacheWriteTokens"=${cost?.cacheWrite ?? null}, "outputTokens"=${cost?.output ?? null}, "reasoningTokens"=${cost?.reasoning ?? null}, "usageReported"=${Boolean(cost)} WHERE "id"=${id} AND "userId"=${userId}`;
+      await sql()`UPDATE "ModelUsage" SET "outcome"=${outcome}, "estimatedUsd"=${estimatedUsd}, "inputTokens"=${cost?.input ?? null}, "cachedInputTokens"=${cost?.cached ?? null}, "cacheWriteTokens"=${cost?.cacheWrite ?? null}, "outputTokens"=${cost?.output ?? null}, "reasoningTokens"=${cost?.reasoning ?? null}, "usageReported"=${Boolean(cost)} WHERE "id"=${id} AND "userId"=${userId}`;
     },
   };
 }

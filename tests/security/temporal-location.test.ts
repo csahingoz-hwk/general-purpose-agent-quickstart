@@ -234,6 +234,86 @@ test("weather uses the saved home location only when no place is given", async (
   }
 });
 
+test("weather asks Open-Meteo for a 3-day forecast and tells the model tomorrow's chance of rain", async () => {
+  const urls: string[] = [];
+  const prior = globalThis.fetch;
+  globalThis.fetch = ((input: RequestInfo | URL) => {
+    const url = String(input);
+    urls.push(url);
+    if (url.startsWith("https://geocoding-api.open-meteo.com/")) {
+      return Promise.resolve(
+        Response.json({ results: [{ latitude: 39.9, longitude: 32.9 }] })
+      );
+    }
+    return Promise.resolve(
+      Response.json({
+        current: { time: "2026-11-10T12:00", temperature_2m: 9 },
+        current_units: { temperature_2m: "°C" },
+        hourly: { time: ["2026-11-10T12:00"], temperature_2m: [9] },
+        daily_units: {
+          precipitation_probability_max: "%",
+          precipitation_sum: "mm",
+        },
+        daily: {
+          time: ["2026-11-10", "2026-11-11", "2026-11-12"],
+          sunrise: ["2026-11-10T06:50"],
+          sunset: ["2026-11-10T16:40"],
+          temperature_2m_max: [11, 8, 10],
+          temperature_2m_min: [3, 2, 4],
+          precipitation_probability_max: [10, 80, 35],
+          precipitation_sum: [0, 6.4, 1.1],
+          weather_code: [1, 63, 3],
+        },
+      })
+    );
+  }) as typeof fetch;
+  try {
+    const tool = getWeather({ home: null });
+    const output = await run(tool, { city: "Ankara" });
+    const forecastUrl = urls.find((u) =>
+      u.startsWith("https://api.open-meteo.com/")
+    );
+    assert.ok(forecastUrl);
+    assert.match(forecastUrl, /forecast_days=3/);
+    for (const field of [
+      "temperature_2m_max",
+      "temperature_2m_min",
+      "precipitation_probability_max",
+      "precipitation_sum",
+      "weather_code",
+      "sunrise",
+      "sunset",
+    ]) {
+      assert.match(forecastUrl, new RegExp(`daily=[^&]*${field}`), field);
+    }
+    assert.match(
+      String((tool as { description?: string }).description),
+      /3-day forecast.*chance of rain/
+    );
+    const modelOutput = (
+      tool as unknown as {
+        toModelOutput: (o: { output: unknown }) => { value: string };
+      }
+    ).toModelOutput({ output });
+    const compact = JSON.parse(modelOutput.value);
+    assert.equal(compact.city, "Ankara");
+    assert.equal(compact.daily.length, 3);
+    assert.deepEqual(compact.daily[1], {
+      date: "2026-11-11",
+      min: 2,
+      max: 8,
+      rainChance: 80,
+      rainSum: 6.4,
+    });
+    assert.equal(compact.dailyUnits.rainChance, "%");
+    assert.equal(compact.dailyUnits.rainSum, "mm");
+    // Compact: no hourly arrays are replayed to the model.
+    assert.doesNotMatch(modelOutput.value, /hourly/);
+  } finally {
+    globalThis.fetch = prior;
+  }
+});
+
 test("browser coordinates are validated and rounded; geocoding failure saves nothing", async () => {
   assert.deepEqual(browserLocation(51.3612, -0.3049, "Europe/London"), {
     label: "Current location",

@@ -16,6 +16,8 @@ import {
   budgetModelMessages,
   DEFAULT_REPLY_TOKENS,
   estimateToolSchemaTokens,
+  followUpBudget,
+  GROQ_TOOL_TURN_BUDGET,
 } from "@/lib/ai/context/budget";
 import { safeModelError } from "@/lib/ai/context/errors";
 import {
@@ -32,7 +34,11 @@ import { getRequestModelAvailability } from "@/lib/ai/model-runtime";
 import { chatModels, getCapabilities } from "@/lib/ai/models";
 import { systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
-import { isPremiumModel, premiumModels } from "@/lib/ai/routing/catalog";
+import {
+  isPremiumModel,
+  premiumModels,
+  webSearchLane,
+} from "@/lib/ai/routing/catalog";
 import { createUsageLedger } from "@/lib/ai/routing/ledger";
 import { inferenceSession } from "@/lib/ai/routing/session";
 import { cancelSchedule } from "@/lib/ai/tools/cancel-schedule";
@@ -46,6 +52,7 @@ import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
 import { setHomeLocation } from "@/lib/ai/tools/set-home-location";
 import { setSoul } from "@/lib/ai/tools/set-soul";
 import { updateDocument } from "@/lib/ai/tools/update-document";
+import { webSearch } from "@/lib/ai/tools/web-search";
 import { isProductionEnvironment } from "@/lib/constants";
 import { acquireChatLock } from "@/lib/db/chat-lock";
 import {
@@ -93,6 +100,21 @@ function sanitizeToolCallIds(messages: ChatMessage[]): ChatMessage[] {
       }
       return part;
     }),
+  }));
+}
+
+/**
+ * Earlier web-search results are untrusted, can be large and are provider-
+ * executed (AI Gateway ran them), so they are never replayed to the model: the
+ * assistant's own cited answer in the same message carries what mattered. The
+ * stored parts stay complete for the UI.
+ */
+function dropWebSearchHistory(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((message) => ({
+    ...message,
+    parts: message.parts.filter(
+      (part) => (part.type as string) !== "tool-webSearch"
+    ),
   }));
 }
 
@@ -245,8 +267,10 @@ export async function POST(request: Request) {
     const requestTimeZone = validTimeZone(timeZone);
     const requestNow = new Date();
     const needsOnboarding = !soul && session.user.type !== "guest";
+    // Web search exists only when this request is served by the AI Gateway lane.
+    const searchLane = supportsTools && webSearchLane(chatModel);
     const requestedTools = supportsTools
-      ? selectActiveTools(uiMessages, session.user.type !== "guest")
+      ? selectActiveTools(uiMessages, session.user.type !== "guest", searchLane)
       : [];
     const finalUserText =
       [...uiMessages]
@@ -260,6 +284,7 @@ export async function POST(request: Request) {
       soul,
       needsOnboarding,
       includeArtifacts: needsArtifactInstructions(requestedTools),
+      includeWebSearch: searchLane && requestedTools.includes("webSearch"),
       context: contextBlock({
         now: requestNow,
         timeZone: requestTimeZone ?? homeLocation?.timeZone ?? null,
@@ -270,7 +295,8 @@ export async function POST(request: Request) {
     // follow-up must share a minute on Groq's limited free account.
     const premium = isPremiumModel(chatModel) ? premiumModels[chatModel] : null;
     const requestBudget =
-      premium?.inferenceBudget ?? (requestedTools.length > 0 ? 3400 : 7000);
+      premium?.inferenceBudget ??
+      (requestedTools.length > 0 ? GROQ_TOOL_TURN_BUDGET : 7000);
     const replyTokens = premium?.outputLimit ?? DEFAULT_REPLY_TOKENS;
     const execution = {
       ledger: createUsageLedger(session.user.id, message?.id ?? generateUUID()),
@@ -309,6 +335,7 @@ export async function POST(request: Request) {
               dataStream,
               modelId: chatModel,
             }),
+            ...(searchLane ? { webSearch: webSearch() } : {}),
             listMySchedules: listMySchedules({ session }),
             cancelSchedule: cancelSchedule({ session }),
             ...(session.user.type !== "guest"
@@ -329,7 +356,7 @@ export async function POST(request: Request) {
             activeTools
           );
           const convertedMessages = await convertToModelMessages(
-            sanitizeToolCallIds(uiMessages),
+            sanitizeToolCallIds(dropWebSearchHistory(uiMessages)),
             { tools, ignoreIncompleteToolCalls: true }
           );
           const prepared = budgetModelMessages({
@@ -343,10 +370,15 @@ export async function POST(request: Request) {
           if (prepared.tooLarge) {
             throw new Error("chat_context_budget");
           }
+          let firstCallTokens = 0;
           const result = streamText({
             model: getLanguageModel(chatModel),
             instructions: replySystemPrompt,
             messages: prepared.messages,
+            // Step 1 = tool call(s); step 2 = the written answer. AI Gateway runs
+            // webSearch inside step 1's model call (provider-executed), so the
+            // search result and the answer need no extra step. The number of
+            // searches is capped in the routed model (WEB_SEARCH_MAX_CALLS).
             stopWhen: isStepCount(activeTools.length > 0 ? 2 : 1),
             maxOutputTokens: replyTokens,
             maxRetries: 0,
@@ -359,15 +391,22 @@ export async function POST(request: Request) {
               AbortSignal.timeout(50_000),
             ]),
             activeTools,
-            prepareStep: ({ messages: stepMessages }) => {
+            prepareStep: ({ messages: stepMessages, stepNumber }) => {
               const next = budgetModelMessages({
                 messages: stepMessages,
                 system: replySystemPrompt,
                 toolCount: activeTools.length,
                 toolSchemaTokens,
                 maxOutputTokens: replyTokens,
-                requestBudget,
+                // Groq lane: the follow-up shares the minute with the first call.
+                requestBudget:
+                  !premium && stepNumber > 0 && firstCallTokens > 0
+                    ? followUpBudget(firstCallTokens)
+                    : requestBudget,
               });
+              if (stepNumber === 0) {
+                firstCallTokens = next.estimatedRequestTokens;
+              }
               if (next.tooLarge) {
                 throw new Error("chat_context_budget");
               }

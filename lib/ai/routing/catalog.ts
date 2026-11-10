@@ -20,6 +20,22 @@ export const premiumModels = {
   },
 } as const;
 export type PremiumModelId = keyof typeof premiumModels;
+/**
+ * AI Gateway DeepSeek Search: USD 0.75 per 1,000 billable requests (a billable
+ * request is a successful call returning a non-empty results array). Source:
+ * https://vercel.com/docs/ai-gateway/models-and-providers/web-search, verified
+ * 2026-11-10. The price does not depend on the requested result count. Host
+ * model tokens (including tool results in context) are charged separately.
+ */
+export const WEB_SEARCH_COST_USD = 0.000_75;
+/**
+ * Hard cap on searches inside one model call. AI Gateway executes the search and
+ * lets the model continue inside the same call, so the SDK step budget cannot
+ * bound it; the routed model counts tool calls and aborts above this cap.
+ */
+export const WEB_SEARCH_MAX_CALLS = 3;
+/** Provider-executed tool id of gateway.tools.deepseekSearch (AI Gateway only). */
+export const WEB_SEARCH_TOOL_ID = "gateway.deepseek_search";
 export const LUNA: PremiumModelId = "gpt-6-luna";
 export const TERRA: PremiumModelId = "gpt-6.1-terra";
 export function isPremiumModel(id: string): id is PremiumModelId {
@@ -50,6 +66,14 @@ export function openAIEnabled() {
  */
 export function gatewayEnabled() {
   return !legacyEnabled() && process.env.AI_GATEWAY_USAGE_ENABLED === "true";
+}
+
+/**
+ * Web search exists only when a premium model is actually served through AI
+ * Gateway. Direct OpenAI and legacy Groq never offer it.
+ */
+export function webSearchLane(modelId: string) {
+  return gatewayEnabled() && isPremiumModel(modelId);
 }
 
 /** Either explicitly enabled paid lane (Gateway or direct OpenAI). */

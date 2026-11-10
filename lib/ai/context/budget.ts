@@ -20,6 +20,21 @@ export async function estimateToolSchemaTokens(
  * authoritative. Only the MODEL'S copy is shortened — DB/UI history is intact.
  */
 export const GROQ_REQUEST_BUDGET = 7200;
+/**
+ * Per-call budget for the first call of a tool turn. The tool call and its
+ * follow-up share one minute of GROQ_REQUEST_BUDGET, so the first call gets half.
+ */
+export const GROQ_TOOL_TURN_BUDGET = GROQ_REQUEST_BUDGET / 2;
+/**
+ * Budget for the follow-up call (the written answer after a tool result): what
+ * remains of the shared minute after the first call, never less than the first
+ * call's own budget. A fixed 3400 here broke weather replies: the longer
+ * time/location system prompt plus the tool result no longer fitted, prepareStep
+ * threw chat_context_budget and only the weather card was shown.
+ */
+export function followUpBudget(firstCallTokens: number) {
+  return Math.max(GROQ_TOOL_TURN_BUDGET, GROQ_REQUEST_BUDGET - firstCallTokens);
+}
 export const DEFAULT_REPLY_TOKENS = 768;
 
 export function estimateModelTokens(value: unknown): number {

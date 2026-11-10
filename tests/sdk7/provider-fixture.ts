@@ -28,7 +28,20 @@ globalThis.fetch = async (input, options) => {
       current: { time: "2026-11-08T12:00", temperature_2m: 12 },
       current_units: { temperature_2m: "°C" },
       hourly: { time: ["2026-11-08T12:00"], temperature_2m: [12] },
-      daily: { sunrise: ["2026-11-08T07:00"], sunset: ["2026-11-08T16:30"] },
+      daily_units: {
+        precipitation_probability_max: "%",
+        precipitation_sum: "mm",
+      },
+      daily: {
+        time: ["2026-11-08", "2026-11-09", "2026-11-10"],
+        sunrise: ["2026-11-08T07:00", "2026-11-09T07:02", "2026-11-10T07:03"],
+        sunset: ["2026-11-08T16:30", "2026-11-09T16:28", "2026-11-10T16:27"],
+        temperature_2m_max: [12, 11, 10],
+        temperature_2m_min: [6, 5, 4],
+        precipitation_probability_max: [10, 60, 30],
+        precipitation_sum: [0, 2.4, 0.6],
+        weather_code: [3, 61, 3],
+      },
     });
   }
   if (url.hostname !== "api.groq.com" && url.hostname !== "api.openai.com") {

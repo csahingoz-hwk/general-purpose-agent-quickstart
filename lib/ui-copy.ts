@@ -24,6 +24,11 @@ const en = {
   usageAndSettings: "Usage & settings",
   backToChat: "Back to chat",
   deleteAllChats: "Delete all chats…",
+  searchedWeb: "Searched the web",
+  searchingWeb: "Searching the web…",
+  searchFailed: "The web search could not be completed.",
+  searchNoResults: "No results were found.",
+  searchSources: "Sources",
 } as const;
 
 type Widen<T> = T extends string
@@ -52,6 +57,11 @@ const tr: UiCopy = {
   usageAndSettings: "Kullanım ve ayarlar",
   backToChat: "Sohbete dön",
   deleteAllChats: "Tüm sohbetleri sil…",
+  searchedWeb: "Web'de arandı",
+  searchingWeb: "Web'de aranıyor…",
+  searchFailed: "Web araması tamamlanamadı.",
+  searchNoResults: "Sonuç bulunamadı.",
+  searchSources: "Kaynaklar",
 };
 
 export const uiCopy: { readonly en: UiCopy; readonly tr: UiCopy } = {

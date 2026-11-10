@@ -21,6 +21,7 @@ import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
 import { PreviewAttachment } from "./preview-attachment";
 import { Weather } from "./weather";
+import { WebSearchCard } from "./web-search-card";
 
 const PurePreviewMessage = ({
   addToolApprovalResponse,
@@ -151,6 +152,16 @@ const PurePreviewMessage = ({
     ) {
       // Internal helpers: the assistant states the result in its reply.
       return null;
+    }
+
+    if (type === "tool-webSearch") {
+      return (
+        <WebSearchCard
+          key={part.toolCallId}
+          output={"output" in part ? part.output : undefined}
+          state={part.state}
+        />
+      );
     }
 
     if (type === "tool-getWeather") {

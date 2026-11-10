@@ -6,6 +6,7 @@ import type { demoInbox } from "./ai/tools/demo-inbox";
 import type { getWeather } from "./ai/tools/get-weather";
 import type { requestSuggestions } from "./ai/tools/request-suggestions";
 import type { updateDocument } from "./ai/tools/update-document";
+import type { webSearch } from "./ai/tools/web-search";
 import type { Suggestion } from "./db/schema";
 
 export const messageMetadataSchema = z.object({
@@ -15,6 +16,7 @@ export const messageMetadataSchema = z.object({
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>;
 
 type weatherTool = InferUITool<ReturnType<typeof getWeather>>;
+type webSearchTool = InferUITool<ReturnType<typeof webSearch>>;
 type createDocumentTool = InferUITool<ReturnType<typeof createDocument>>;
 type demoInboxTool = InferUITool<typeof demoInbox>;
 type updateDocumentTool = InferUITool<ReturnType<typeof updateDocument>>;
@@ -25,6 +27,7 @@ type requestSuggestionsTool = InferUITool<
 export type ChatTools = {
   demoInbox: demoInboxTool;
   getWeather: weatherTool;
+  webSearch: webSearchTool;
   createDocument: createDocumentTool;
   updateDocument: updateDocumentTool;
   requestSuggestions: requestSuggestionsTool;

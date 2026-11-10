@@ -12,9 +12,34 @@ export const AVAILABLE_CHAT_TOOLS = [
   "listMySchedules",
   "cancelSchedule",
   "setSoul",
+  "webSearch",
 ] as const;
 
 export type ChatToolName = (typeof AVAILABLE_CHAT_TOOLS)[number];
+
+const WEATHER_PATTERN =
+  /weather|forecast|temperature|rain|havadurumu|hava durumu|hava nasıl|hava nasil|yağmur|sıcaklık|sicaklik|kaç derece|kac derece/;
+
+/**
+ * Explicit search / "current facts" intent in English and Turkish. Turkish words
+ * use unicode-aware boundaries because JS \b is ASCII-only ("güncelle" = update
+ * must not match "güncel"; "para"/"araba" must not match "ara").
+ */
+const SEARCH_PATTERN_EN =
+  /\b(search|look(?:ing)? (?:it |this |that |them )?up|google|find (?:it |this |that |out )?(?:online|on the web)|on the web|web search|latest|news|breaking|who won|(?:current|today'?s|live) (?:price|prices|score|scores|result|results|rate|rates|exchange rate)|exchange rate|stock price|share price)\b/;
+const SEARCH_PATTERN_TR =
+  /(?<![\p{L}])(?:ara|arar mısın|arama yap\p{L}*|araştır\p{L}*|internette|internetten|güncel|haber|haberler\p{L}*|haberi|son dakika|bugünkü|bugunku|kim kazandı|maç sonucu|dolar kaç|euro kaç|altın fiyat\p{L}*)(?![\p{L}])/u;
+
+/** Tools that change stored state; never offered in a turn that reads web content. */
+const STATE_CHANGING_TOOLS: readonly ChatToolName[] = [
+  "setHomeLocation",
+  "setSoul",
+  "cancelSchedule",
+  "createDocument",
+  "editDocument",
+  "updateDocument",
+  "requestSuggestions",
+];
 
 function userText(message: ChatMessage): string {
   return message.parts
@@ -26,7 +51,13 @@ function userText(message: ChatMessage): string {
 /** Only offer the model tools relevant to what the owner actually asked. */
 export function selectActiveTools(
   messages: ChatMessage[],
-  canPersonalize: boolean
+  canPersonalize: boolean,
+  /**
+   * True only when this request is served by the AI Gateway lane (see
+   * webSearchLane in routing/catalog). On every other lane web search is never
+   * offered, whatever the user types.
+   */
+  webSearchAvailable = false
 ): ChatToolName[] {
   const recentUserText = messages
     .filter((msg) => msg.role === "user")
@@ -50,11 +81,7 @@ export function selectActiveTools(
     : phrase;
   const enabled: ChatToolName[] = [];
 
-  if (
-    /weather|forecast|temperature|rain|havadurumu|hava durumu|hava nasıl|hava nasil|yağmur|sıcaklık|sicaklik|kaç derece|kac derece/.test(
-      weatherPhrase
-    )
-  ) {
+  if (WEATHER_PATTERN.test(weatherPhrase)) {
     enabled.push("getWeather");
   }
 
@@ -122,6 +149,23 @@ export function selectActiveTools(
     )
   ) {
     enabled.push("setSoul");
+  }
+
+  // A weather question in the latest message is answered by getWeather, never by
+  // a paid web search.
+  if (
+    webSearchAvailable &&
+    !WEATHER_PATTERN.test(phrase) &&
+    (SEARCH_PATTERN_EN.test(phrase) || SEARCH_PATTERN_TR.test(phrase))
+  ) {
+    // Search results are untrusted web content: from this turn onward only
+    // read-only tools may sit beside webSearch.
+    return [
+      ...new Set([
+        ...enabled.filter((name) => !STATE_CHANGING_TOOLS.includes(name)),
+        "webSearch" as const,
+      ]),
+    ];
   }
 
   return [...new Set(enabled)];

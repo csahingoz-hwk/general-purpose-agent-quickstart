@@ -7,7 +7,15 @@ import type {
 } from "@ai-sdk/provider";
 import { createGateway } from "ai";
 import { z } from "zod";
-import { LUNA, type PremiumModelId, premiumModels, TERRA } from "./catalog";
+import {
+  LUNA,
+  type PremiumModelId,
+  premiumModels,
+  TERRA,
+  WEB_SEARCH_COST_USD,
+  WEB_SEARCH_MAX_CALLS,
+  WEB_SEARCH_TOOL_ID,
+} from "./catalog";
 import { inputTokenBound, reserveCost } from "./cost";
 import { gatewaySlug } from "./gateway";
 import { failureKind, ModelFailure, mayFallback } from "./policy";
@@ -128,22 +136,55 @@ export function createRoutedModel(
     ) {
       throw new ModelFailure("context");
     }
-    if (params.tools?.some((tool) => tool.type !== "function")) {
+    // The only provider-executed tool ever allowed is AI Gateway web search,
+    // and only on the Gateway lane. Anything else (OpenAI hosted tools, etc.) fails.
+    const searchTools =
+      params.tools?.filter(
+        (tool) => tool.type === "provider" && tool.id === WEB_SEARCH_TOOL_ID
+      ).length ?? 0;
+    if (
+      params.tools?.some(
+        (tool) =>
+          tool.type !== "function" &&
+          !(
+            gateway &&
+            tool.type === "provider" &&
+            tool.id === WEB_SEARCH_TOOL_ID
+          )
+      ) ||
+      searchTools > 1
+    ) {
       throw new ModelFailure("tool");
     }
     return session.ledger.reserve({
       model,
-      reserveUsd: reserveCost(
-        model,
-        {
-          prompt: params.prompt,
-          tools: params.tools,
-          responseFormat: params.responseFormat,
-        },
-        params.maxOutputTokens ?? premiumModels[model].outputLimit
-      ),
+      // Search is billed outside token usage: reserve the capped worst case so a
+      // call whose token usage is never reported cannot under-count it.
+      reserveUsd:
+        reserveCost(
+          model,
+          {
+            prompt: params.prompt,
+            tools: params.tools,
+            responseFormat: params.responseFormat,
+          },
+          params.maxOutputTokens ?? premiumModels[model].outputLimit
+        ) +
+        searchTools * WEB_SEARCH_MAX_CALLS * WEB_SEARCH_COST_USD,
       fallbackReason,
     });
+  }
+  /**
+   * AI Gateway runs the search internally and the model keeps writing in the same
+   * call, so searches appear as provider-executed tool calls inside one stream.
+   * Count every attempt (failed searches are not billed, but we never under-count).
+   */
+  function searchCalls(
+    parts: readonly { type: string; providerExecuted?: boolean }[]
+  ) {
+    return parts.filter(
+      (part) => part.type === "tool-call" && part.providerExecuted === true
+    ).length;
   }
   function exposed(part: LanguageModelV4StreamPart) {
     if (
@@ -172,9 +213,14 @@ export function createRoutedModel(
         const opts = options(model, params);
         const id = await reserve(model, opts, reason);
         let usage: LanguageModelV4Usage | undefined;
+        let searches = 0;
         try {
           const result = await factory(model).doGenerate(opts);
           usage = result.usage;
+          searches = searchCalls(result.content);
+          if (searches > WEB_SEARCH_MAX_CALLS) {
+            throw new ModelFailure("tool");
+          }
           if (
             result.finishReason.unified === "length" ||
             result.finishReason.unified === "error"
@@ -203,7 +249,13 @@ export function createRoutedModel(
               throw new ModelFailure("structured");
             }
           }
-          await session.ledger.settle(id, model, "completed", usage);
+          await session.ledger.settle(
+            id,
+            model,
+            "completed",
+            usage,
+            searches * WEB_SEARCH_COST_USD
+          );
           session.exposed = true;
           if (result.content.some((p) => p.type === "tool-call")) {
             session.toolBoundary = true;
@@ -214,7 +266,8 @@ export function createRoutedModel(
             id,
             model,
             recordedOutcome(model, error),
-            usage
+            usage,
+            searches * WEB_SEARCH_COST_USD
           );
           reason = next(model, error, params);
           model = TERRA;
@@ -235,6 +288,7 @@ export function createRoutedModel(
               const opts = options(model, params);
               let id: string | undefined;
               let usage: LanguageModelV4Usage | undefined;
+              let searches = 0;
               try {
                 id = await reserve(model, opts, reason);
                 const result = await factory(model).doStream(opts);
@@ -254,6 +308,13 @@ export function createRoutedModel(
                   const part = item.value;
                   if (part.type === "error") {
                     throw part.error;
+                  }
+                  if (searchCalls([part]) > 0) {
+                    searches++;
+                    // Cancelling the read ends the Gateway-side loop; no new search starts.
+                    if (searches > WEB_SEARCH_MAX_CALLS) {
+                      throw new ModelFailure("tool");
+                    }
                   }
                   if (part.type === "finish") {
                     usage = part.usage;
@@ -313,7 +374,13 @@ export function createRoutedModel(
                   }
                   session.exposed = true;
                 }
-                await session.ledger.settle(id, model, "completed", usage);
+                await session.ledger.settle(
+                  id,
+                  model,
+                  "completed",
+                  usage,
+                  searches * WEB_SEARCH_COST_USD
+                );
                 for (const h of held) {
                   controller.enqueue(h);
                 }
@@ -328,7 +395,8 @@ export function createRoutedModel(
                     id,
                     model,
                     recordedOutcome(model, error),
-                    usage
+                    usage,
+                    searches * WEB_SEARCH_COST_USD
                   );
                 }
                 if (cancelled) {

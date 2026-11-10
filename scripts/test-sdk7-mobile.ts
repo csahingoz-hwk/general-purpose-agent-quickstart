@@ -7,6 +7,13 @@ import postgres from "postgres";
 import { acquireChatLock } from "../lib/db/chat-lock";
 import type { ChatMessage } from "../lib/types";
 
+// Optional local override for environments with a preinstalled Chromium.
+const launchBrowser = () =>
+  chromium.launch({
+    executablePath:
+      process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
+  });
+
 const premiumTest = process.env.SDK7_PROVIDER === "openai";
 const everydayId = premiumTest ? "gpt-6-luna" : "openai/gpt-oss-20b";
 const detailedId = premiumTest ? "gpt-6.1-terra" : "openai/gpt-oss-120b";
@@ -29,7 +36,7 @@ async function authenticate(context: BrowserContext) {
 }
 
 test("real local chat routes: both models, bilingual streaming, weather, interactive inbox and PostgreSQL History", async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   try {
     const context = await browser.newContext({
       viewport: { width: 390, height: 844 },
@@ -282,7 +289,7 @@ test("real local chat routes: both models, bilingual streaming, weather, interac
 });
 
 test("real local retry recovers one persisted turn; repeated and simultaneous requests cannot duplicate work", async () => {
-  const browser = await chromium.launch();
+  const browser = await launchBrowser();
   try {
     const context = await browser.newContext({
       viewport: { width: 390, height: 844 },

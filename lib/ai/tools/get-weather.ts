@@ -6,7 +6,7 @@ import type { HomeLocation } from "@/lib/temporal";
 export const getWeather = ({ home }: { home: HomeLocation | null }) =>
   tool({
     description:
-      "Get the current weather. Provide a city name or coordinates the user gave; if they gave neither, the saved home location is used. If no location is known the tool returns location_required: ask the user for a city and never guess one.",
+      "Get the current weather and a 3-day forecast (today, tomorrow and the day after) including daily min/max temperature and chance of rain. Provide a city name or coordinates the user gave; if they gave neither, the saved home location is used. If no location is known the tool returns location_required: ask the user for a city and never guess one.",
     inputSchema: z.object({
       latitude: z.number().optional(),
       longitude: z.number().optional(),
@@ -22,8 +22,29 @@ export const getWeather = ({ home }: { home: HomeLocation | null }) =>
         cityName?: string;
         current?: { time?: string; temperature_2m?: number };
         current_units?: { temperature_2m?: string };
-        daily?: { sunrise?: string[]; sunset?: string[] };
+        daily?: {
+          time?: string[];
+          sunrise?: string[];
+          sunset?: string[];
+          temperature_2m_max?: number[];
+          temperature_2m_min?: number[];
+          precipitation_probability_max?: (number | null)[];
+          precipitation_sum?: (number | null)[];
+        };
+        daily_units?: {
+          precipitation_probability_max?: string;
+          precipitation_sum?: string;
+        };
       };
+      // Compact per-day outlook (today, tomorrow, day after) so "will it rain
+      // tomorrow?" is answerable without replaying the hourly arrays.
+      const daily = (forecast.daily?.time ?? []).slice(0, 3).map((date, i) => ({
+        date,
+        min: forecast.daily?.temperature_2m_min?.[i],
+        max: forecast.daily?.temperature_2m_max?.[i],
+        rainChance: forecast.daily?.precipitation_probability_max?.[i],
+        rainSum: forecast.daily?.precipitation_sum?.[i],
+      }));
       return {
         type: "text",
         value: JSON.stringify({
@@ -33,6 +54,11 @@ export const getWeather = ({ home }: { home: HomeLocation | null }) =>
           unit: forecast.current_units?.temperature_2m,
           sunrise: forecast.daily?.sunrise?.[0],
           sunset: forecast.daily?.sunset?.[0],
+          daily,
+          dailyUnits: {
+            rainChance: forecast.daily_units?.precipitation_probability_max,
+            rainSum: forecast.daily_units?.precipitation_sum,
+          },
           note: "Full forecast available to the client weather card.",
         }),
       } as const;
@@ -67,7 +93,7 @@ export const getWeather = ({ home }: { home: HomeLocation | null }) =>
       }
 
       const response = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m&hourly=temperature_2m&daily=sunrise,sunset&timezone=auto`,
+        `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m&hourly=temperature_2m&daily=sunrise,sunset,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,weather_code&forecast_days=3&timezone=auto`,
         {
           signal: AbortSignal.any([
             AbortSignal.timeout(10_000),
