@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useMessages } from "@/hooks/use-messages";
 import { canRetryReply, interruptedReply } from "@/lib/ai/conversation-state";
 import type { Vote } from "@/lib/db/schema";
+import { textLocale } from "@/lib/fixtures";
 import type { MascotState } from "@/lib/mascot";
 import type { ChatMessage } from "@/lib/types";
 import { getCopy } from "@/lib/ui-copy";
@@ -186,6 +187,15 @@ function PureMessages({
               }
               isReadonly={isReadonly}
               key={message.id}
+              locale={textLocale(
+                messages
+                  .slice(0, index)
+                  .reverse()
+                  .find((item) => item.role === "user")
+                  ?.parts.filter((part) => part.type === "text")
+                  .map((part) => part.text)
+                  .join(" ") ?? ""
+              )}
               mascotState={message.id === animatedMessageId ? activity : "idle"}
               message={message}
               onEdit={onEditMessage}

@@ -46,6 +46,7 @@ import { createDocument } from "@/lib/ai/tools/create-document";
 import { demoInbox } from "@/lib/ai/tools/demo-inbox";
 import { editDocument } from "@/lib/ai/tools/edit-document";
 import { getCurrentTime } from "@/lib/ai/tools/get-current-time";
+import { getFixtures } from "@/lib/ai/tools/get-fixtures";
 import { getWeather } from "@/lib/ai/tools/get-weather";
 import { listMySchedules } from "@/lib/ai/tools/list-my-schedules";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
@@ -288,6 +289,7 @@ export async function POST(request: Request) {
       needsOnboarding,
       includeArtifacts: needsArtifactInstructions(requestedTools),
       includeWebSearch: searchLane && requestedTools.includes("webSearch"),
+      includeFixtures: requestedTools.includes("getFixtures"),
       includeVisual: requestedTools.some(
         (name) => name === "webSearch" || name === "getWeather"
       ),
@@ -321,6 +323,10 @@ export async function POST(request: Request) {
           const localTools = {
             demoInbox,
             getWeather: getWeather({ home: homeLocation }),
+            getFixtures: getFixtures({
+              now: () => requestNow,
+              footballDataKey: process.env.FOOTBALL_DATA_API_KEY ?? null,
+            }),
             getCurrentTime: getCurrentTime({
               defaultTimeZone:
                 requestTimeZone ?? homeLocation?.timeZone ?? null,
@@ -385,7 +391,14 @@ export async function POST(request: Request) {
             // webSearch inside step 1's model call (provider-executed), so the
             // search result and the answer need no extra step. The number of
             // searches is capped in the routed model (WEB_SEARCH_MAX_CALLS).
-            stopWhen: isStepCount(activeTools.length > 0 ? 2 : 1),
+            stopWhen: isStepCount(
+              activeTools.length === 0
+                ? 1
+                : activeTools.includes("getFixtures") &&
+                    activeTools.includes("webSearch")
+                  ? 3
+                  : 2
+            ),
             maxOutputTokens: replyTokens,
             maxRetries: 0,
             // The SDK default logs raw upstream errors, including request content.

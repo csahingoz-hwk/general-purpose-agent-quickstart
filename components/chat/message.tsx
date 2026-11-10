@@ -1,6 +1,7 @@
 "use client";
 import type { UseChatHelpers } from "@ai-sdk/react";
 import type { Vote } from "@/lib/db/schema";
+import { readFixturePayload } from "@/lib/fixtures";
 import type { MascotState } from "@/lib/mascot";
 import { visualPayload } from "@/lib/openui/attach";
 import type { ChatMessage } from "@/lib/types";
@@ -20,6 +21,7 @@ import { useDataStream } from "./data-stream-provider";
 import { DocumentToolResult } from "./document";
 import { DocumentPreview } from "./document-preview";
 import { FictionalInboxCard } from "./fictional-inbox-card";
+import { FixtureCard } from "./fixture-card";
 import { useMascotPreference } from "./mascot-preference";
 import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
@@ -43,6 +45,7 @@ const PurePreviewMessage = ({
   isReadonly,
   requiresScrollPadding: _requiresScrollPadding,
   onEdit,
+  locale = "en",
 }: {
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
   animateMascot?: boolean;
@@ -56,6 +59,7 @@ const PurePreviewMessage = ({
   isReadonly: boolean;
   requiresScrollPadding: boolean;
   onEdit?: (message: ChatMessage) => void;
+  locale?: "en" | "tr";
 }) => {
   const attachmentsFromMessage = message.parts.filter(
     (part) => part.type === "file"
@@ -66,7 +70,8 @@ const PurePreviewMessage = ({
   const { variant } = useMascotPreference();
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
-  const visual = isAssistant ? visualPayload(message.parts) : null;
+  const fixture = isAssistant ? fixtureFromParts(message.parts) : null;
+  const visual = isAssistant && !fixture ? visualPayload(message.parts) : null;
 
   const hasAnyContent = message.parts?.some(
     (part) =>
@@ -175,9 +180,25 @@ const PurePreviewMessage = ({
       return (
         <WebSearchCard
           key={part.toolCallId}
+          locale={locale}
           output={"output" in part ? part.output : undefined}
           state={part.state}
         />
+      );
+    }
+
+    if (type === "tool-getFixtures") {
+      const pending =
+        part.state === "input-streaming" || part.state === "input-available";
+      if (!pending) {
+        return null;
+      }
+      return (
+        <p className="text-[13px] text-muted-foreground" key={part.toolCallId}>
+          {locale === "tr"
+            ? "Fikstür bakılıyor…"
+            : "Checking the fixture list…"}
+        </p>
       );
     }
 
@@ -434,6 +455,7 @@ const PurePreviewMessage = ({
     <>
       {attachments}
       {parts}
+      {fixture && <FixtureCard locale={locale} payload={fixture} />}
       {actions}
     </>
   );
@@ -475,6 +497,25 @@ const PurePreviewMessage = ({
     </div>
   );
 };
+
+function fixtureFromParts(parts: ChatMessage["parts"]) {
+  for (const part of parts) {
+    if (part.type !== "tool-getFixtures") {
+      continue;
+    }
+    if ("state" in part && part.state && part.state !== "output-available") {
+      continue;
+    }
+    if (!("output" in part)) {
+      continue;
+    }
+    const payload = readFixturePayload(part.output);
+    if (payload) {
+      return payload;
+    }
+  }
+  return null;
+}
 
 export const PreviewMessage = PurePreviewMessage;
 

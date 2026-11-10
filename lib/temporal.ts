@@ -152,5 +152,9 @@ export function contextBlock({
       ? `- Saved home location: ${home.label}${home.country ? `, ${home.country}` : ""} (chosen by the user)`
       : "- Saved home location: none. The user's physical location is unknown; never guess it."
   );
+  const owner = describeTime(now, "Europe/London");
+  lines.push(
+    `- Owner clock (Europe/London): ${owner.local} (${owner.weekday}, ${owner.abbreviation}). Next/upcoming/sıradaki events must start after this. If sources disagree or only show earlier events, say so and do not guess a date or kickoff.`
+  );
   return lines.join("\n");
 }

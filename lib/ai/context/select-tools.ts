@@ -13,6 +13,7 @@ export const AVAILABLE_CHAT_TOOLS = [
   "cancelSchedule",
   "setSoul",
   "webSearch",
+  "getFixtures",
 ] as const;
 
 export type ChatToolName = (typeof AVAILABLE_CHAT_TOOLS)[number];
@@ -48,6 +49,11 @@ const CHITCHAT_PATTERN =
 const DOCUMENT_PATTERN =
   /\b(document|artifact|spreadsheet|script|excel file|csv file|write a file|create a file)\b|belge|doküman|dosya oluştur|dosya yarat|tablo dosyası/;
 
+const FIXTURE_PATTERN_EN =
+  /\b(next|upcoming|last|latest)\b.{0,40}\b(match|game|fixture|kick-?off|result|score)\b|\b(match|game|fixture|kick-?off)\b.{0,40}\b(next|upcoming|when|score|result)\b|\b(score|result)\b.{0,40}\b(match|game|fixture)\b|\bfixtures?\b|\bkick-?off\b/i;
+const FIXTURE_PATTERN_TR =
+  /(?<![\p{L}])(?:sıradaki|siradaki|bir sonraki|bi(?:r)? dahaki|sonraki ma\p{L}*|gelecek ma\p{L}*|fikst[uü]r\p{L}*|maç sonucu|mac sonucu|son ma\p{L}*|sonuç|sonuc|skor\p{L}*|ne zaman.{0,40}ma[cç]|ma[cç]\p{L}*.{0,24}ne zaman)(?![\p{L}])/iu;
+
 const LOCAL_COMMAND_PATTERN =
   /\b(demo|mock|fictional|sample|test inbox|my home city|set my city|my city is|i live in|i'?m based in|home is in|my schedules|scheduled tasks|recurring tasks|cancel schedule|customize your personality|change your personality|remember my preferred style|set your personality)\b|hayal[iî]|örnek gelen kutusu|sahte e.?posta|ev şehrim|şehrim|yaşıyorum|zamanlanmış görev|planlanmış görev|görevlerimi listele|görevi iptal|kişiliğini değiştir|tarzını kaydet|kişiselleştir/;
 
@@ -74,6 +80,10 @@ function normalizePhrase(text: string): string {
     .replace(/[\u2018\u2019\u201B]/g, "'")
     .toLocaleLowerCase("en")
     .normalize("NFC");
+}
+
+export function isFixtureQuestion(phrase: string): boolean {
+  return FIXTURE_PATTERN_EN.test(phrase) || FIXTURE_PATTERN_TR.test(phrase);
 }
 
 function wantsLiveFacts(phrase: string): boolean {
@@ -170,6 +180,10 @@ export function selectActiveTools(
 
   if (CLOCK_PATTERN.test(phrase)) {
     enabled.push("getCurrentTime");
+  }
+
+  if (isFixtureQuestion(phrase) && !WEATHER_PATTERN.test(phrase)) {
+    enabled.push("getFixtures");
   }
 
   if (

@@ -1,3 +1,4 @@
+import { readFixturePayload } from "@/lib/fixtures";
 import type { ChatMessage } from "@/lib/types";
 import {
   buildSearchSnapshot,
@@ -31,6 +32,23 @@ function answerText(parts: readonly { type: string; text?: string }[]): string {
     }
   }
   return blocks.join("\n");
+}
+
+function hasFixtureCard(
+  parts: readonly { type: string; output?: unknown; state?: string }[]
+): boolean {
+  for (const part of parts) {
+    if (part.type !== "tool-getFixtures") {
+      continue;
+    }
+    if (part.state && part.state !== "output-available") {
+      continue;
+    }
+    if (readFixturePayload(part.output)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function snapshotFromParts(
@@ -106,6 +124,9 @@ export function buildOpenUiPayload(
   sourceModel: string,
   createdAt = new Date().toISOString()
 ): OpenUiPayload | null {
+  if (hasFixtureCard(parts)) {
+    return null;
+  }
   const grounded = snapshotFromParts(parts);
   if (!grounded) {
     return null;
