@@ -1,16 +1,24 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
 import { ArrowDownIcon, RotateCcwIcon } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useMessages } from "@/hooks/use-messages";
 import { canRetryReply, interruptedReply } from "@/lib/ai/conversation-state";
 import type { Vote } from "@/lib/db/schema";
+import { textLocale } from "@/lib/fixtures";
+import type { MascotState } from "@/lib/mascot";
 import type { ChatMessage } from "@/lib/types";
+import { getCopy } from "@/lib/ui-copy";
 import { cn } from "@/lib/utils";
 import { useDataStream } from "./data-stream-provider";
 import { Greeting } from "./greeting";
 import { PreviewMessage, ThinkingMessage } from "./message";
+import { SuggestedActions } from "./suggested-actions";
+import type { VisibilityType } from "./visibility-selector";
+
+const copy = getCopy();
 
 type MessagesProps = {
+  activity: MascotState;
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
   chatId: string;
   status: UseChatHelpers<ChatMessage>["status"];
@@ -22,10 +30,13 @@ type MessagesProps = {
   isArtifactVisible: boolean;
   isLoading?: boolean;
   selectedModelId: string;
+  selectedVisibilityType: VisibilityType;
+  sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
   onEditMessage?: (message: ChatMessage) => void;
 };
 
 function PureMessages({
+  activity,
   addToolApprovalResponse,
   chatId,
   status,
@@ -37,12 +48,14 @@ function PureMessages({
   isArtifactVisible,
   isLoading,
   selectedModelId: _selectedModelId,
+  selectedVisibilityType,
+  sendMessage,
   onEditMessage,
 }: MessagesProps) {
   const {
     containerRef: messagesContainerRef,
     endRef: messagesEndRef,
-    isAtBottom,
+    showJumpToLatest,
     scrollToBottom,
     hasSentMessage,
     reset,
@@ -52,6 +65,46 @@ function PureMessages({
 
   useDataStream();
 
+  const lastMessage = messages.at(-1);
+  const interrupted = interruptedReply(lastMessage);
+  const showRetry =
+    !isReadonly &&
+    status !== "submitted" &&
+    status !== "streaming" &&
+    (canRetryReply(messages) ||
+      (status === "error" &&
+        lastMessage?.role === "assistant" &&
+        !lastMessage.parts.some((p) => p.type.startsWith("tool-"))));
+  // Existing state only: a tool part that has input but no output yet.
+  const toolRunning =
+    status === "streaming" &&
+    lastMessage?.role === "assistant" &&
+    lastMessage.parts.some(
+      (p) =>
+        p.type.startsWith("tool-") &&
+        "state" in p &&
+        (p.state === "input-streaming" || p.state === "input-available")
+    );
+  // `visible` text is shown; the rest is only announced to screen readers
+  // (the pending "Thinking…" indicator is already drawn by ThinkingMessage).
+  let replyStatus: { text: string; visible: boolean } | null = null;
+  if (status === "submitted") {
+    replyStatus = { text: copy.statusThinking, visible: false };
+  } else if (toolRunning) {
+    replyStatus = { text: copy.statusWorking, visible: true };
+  } else if (status === "streaming") {
+    replyStatus = { text: copy.statusReplying, visible: false };
+  } else if (interrupted?.status === "interrupted") {
+    replyStatus = {
+      text: interrupted.retryable
+        ? copy.statusInterrupted
+        : copy.interruptedAfterTool,
+      visible: true,
+    };
+  } else if (status === "error") {
+    replyStatus = { text: copy.statusError, visible: true };
+  }
+
   const prevChatIdRef = useRef(chatId);
   useEffect(() => {
     if (prevChatIdRef.current !== chatId) {
@@ -60,31 +113,90 @@ function PureMessages({
     }
   }, [chatId, reset]);
 
+  // When the transcript scroller starts underneath the fixed header, pad by
+  // that overlap so the first card is fully visible at the top of the scroll.
+  const [headerClearance, setHeaderClearance] = useState(0);
+  useLayoutEffect(() => {
+    const scroller = messagesContainerRef.current;
+    const header = document.querySelector("[data-chat-header]");
+    if (!scroller || !(header instanceof HTMLElement)) {
+      return;
+    }
+    const measure = () => {
+      const overlap = Math.ceil(
+        header.getBoundingClientRect().bottom -
+          scroller.getBoundingClientRect().top
+      );
+      const next = Math.max(0, overlap);
+      setHeaderClearance((current) => (current === next ? current : next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, [messagesContainerRef]);
+
+  const latestMessage = messages.at(-1);
+  const animatedMessageId =
+    latestMessage?.role === "assistant" ? latestMessage.id : null;
+
   return (
-    <div className="relative flex-1 bg-background">
+    <div className="relative z-20 flex min-h-0 flex-1 flex-col bg-background">
       {messages.length === 0 && !isLoading && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-          <Greeting />
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-4">
+          <div className="pointer-events-auto flex w-full max-w-md flex-col items-center gap-6">
+            <Greeting activity={activity} />
+            <SuggestedActions
+              chatId={chatId}
+              selectedVisibilityType={selectedVisibilityType}
+              sendMessage={sendMessage}
+            />
+          </div>
         </div>
       )}
       <div
         className={cn(
-          "absolute inset-0 touch-pan-y overflow-y-auto",
+          "min-h-0 flex-1 touch-pan-y overflow-y-auto",
           messages.length > 0 ? "bg-background" : "bg-transparent"
         )}
         ref={messagesContainerRef}
-        style={isArtifactVisible ? { scrollbarWidth: "none" } : undefined}
+        style={{
+          ...(isArtifactVisible ? { scrollbarWidth: "none" as const } : {}),
+          ...(headerClearance > 0 ? { scrollPaddingTop: headerClearance } : {}),
+        }}
       >
-        <div className="mx-auto flex min-h-full min-w-0 max-w-4xl flex-col gap-5 px-2 py-6 md:gap-7 md:px-4">
+        <div
+          className="mx-auto flex min-h-full min-w-0 max-w-[760px] flex-col gap-4 px-4 py-4 md:px-6"
+          style={
+            headerClearance > 0
+              ? {
+                  paddingTop: `calc(1rem + ${headerClearance}px)`,
+                  scrollMarginTop: headerClearance,
+                }
+              : undefined
+          }
+        >
           {messages.map((message, index) => (
             <PreviewMessage
               addToolApprovalResponse={addToolApprovalResponse}
+              animateMascot={message.id === animatedMessageId}
               chatId={chatId}
               isLoading={
                 status === "streaming" && messages.length - 1 === index
               }
               isReadonly={isReadonly}
               key={message.id}
+              locale={textLocale(
+                messages
+                  .slice(0, index)
+                  .reverse()
+                  .find((item) => item.role === "user")
+                  ?.parts.filter((part) => part.type === "text")
+                  .map((part) => part.text)
+                  .join(" ") ?? ""
+              )}
+              mascotState={message.id === animatedMessageId ? activity : "idle"}
               message={message}
               onEdit={onEditMessage}
               regenerate={regenerate}
@@ -100,39 +212,41 @@ function PureMessages({
             />
           ))}
 
-          {!isReadonly &&
-            status !== "submitted" &&
-            status !== "streaming" &&
-            (canRetryReply(messages) ||
-              (status === "error" &&
-                messages.at(-1)?.role === "assistant" &&
-                !messages
-                  .at(-1)
-                  ?.parts.some((p) => p.type.startsWith("tool-")))) && (
-              <div className="flex justify-start pl-10">
-                <button
-                  className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-sm transition-colors hover:bg-muted"
-                  data-testid="retry-response"
-                  onClick={() => regenerate({ body: { retry: true } })}
-                  type="button"
-                >
-                  <RotateCcwIcon className="size-4" />
-                  Retry response
-                </button>
-              </div>
-            )}
+          {replyStatus?.visible && (
+            <p
+              aria-hidden="true"
+              className="px-10 text-sm text-muted-foreground"
+              data-testid="reply-status-text"
+            >
+              {replyStatus.text}
+            </p>
+          )}
 
-          {interruptedReply(messages.at(-1))?.status === "interrupted" &&
-            interruptedReply(messages.at(-1))?.retryable === false && (
-              <p className="px-10 text-sm text-muted-foreground">
-                This reply stopped after a tool ran. Send a follow-up to
-                continue without repeating its action.
-              </p>
-            )}
+          {showRetry && (
+            <div className="flex justify-start pl-10">
+              <button
+                className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm transition-colors hover:bg-muted motion-reduce:transition-none"
+                data-testid="retry-response"
+                onClick={() => regenerate({ body: { retry: true } })}
+                type="button"
+              >
+                <RotateCcwIcon className="size-4" />
+                {copy.retryResponse}
+              </button>
+            </div>
+          )}
 
           {status === "submitted" && messages.at(-1)?.role !== "assistant" && (
-            <ThinkingMessage />
+            <ThinkingMessage state={activity} />
           )}
+
+          <output
+            aria-live="polite"
+            className="sr-only"
+            data-testid="reply-status"
+          >
+            {replyStatus?.text}
+          </output>
 
           <div
             className="min-h-[24px] min-w-[24px] shrink-0"
@@ -141,18 +255,28 @@ function PureMessages({
         </div>
       </div>
 
-      <button
-        aria-label="Scroll to bottom"
-        className={`absolute bottom-4 left-1/2 z-10 flex -translate-x-1/2 items-center rounded-full border border-border/50 bg-card/90 px-3.5 shadow-[var(--shadow-float)] backdrop-blur-lg transition-all duration-200 h-7 text-[10px] ${
-          isAtBottom
-            ? "pointer-events-none scale-90 opacity-0"
-            : "pointer-events-auto scale-100 opacity-100"
-        }`}
-        onClick={() => scrollToBottom("smooth")}
-        type="button"
+      <div
+        className={cn(
+          "flex shrink-0 justify-center bg-background",
+          showJumpToLatest ? "px-4 pt-3 pb-2" : "h-0 overflow-hidden p-0"
+        )}
       >
-        <ArrowDownIcon className="size-3 text-muted-foreground" />
-      </button>
+        <button
+          aria-hidden={!showJumpToLatest}
+          className={cn(
+            "inline-flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.12)]",
+            showJumpToLatest ? "pointer-events-auto" : "pointer-events-none"
+          )}
+          data-testid="jump-to-latest"
+          data-visible={showJumpToLatest}
+          onClick={() => scrollToBottom("smooth")}
+          tabIndex={showJumpToLatest ? 0 : -1}
+          type="button"
+        >
+          <ArrowDownIcon className="size-4" />
+          {copy.jumpToLatest}
+        </button>
+      </div>
     </div>
   );
 }

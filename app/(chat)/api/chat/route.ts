@@ -16,6 +16,8 @@ import {
   budgetModelMessages,
   DEFAULT_REPLY_TOKENS,
   estimateToolSchemaTokens,
+  followUpBudget,
+  GROQ_TOOL_TURN_BUDGET,
 } from "@/lib/ai/context/budget";
 import { safeModelError } from "@/lib/ai/context/errors";
 import {
@@ -28,19 +30,30 @@ import {
   replyForStorage,
   safeUIStream,
 } from "@/lib/ai/conversation-state";
-import { parseVerification } from "@/lib/ai/groq-verification";
+import { getRequestModelAvailability } from "@/lib/ai/model-runtime";
 import { chatModels, getCapabilities } from "@/lib/ai/models";
 import { systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
+import {
+  isPremiumModel,
+  premiumModels,
+  webSearchLane,
+} from "@/lib/ai/routing/catalog";
+import { createUsageLedger } from "@/lib/ai/routing/ledger";
+import { inferenceSession } from "@/lib/ai/routing/session";
 import { cancelSchedule } from "@/lib/ai/tools/cancel-schedule";
 import { createDocument } from "@/lib/ai/tools/create-document";
 import { demoInbox } from "@/lib/ai/tools/demo-inbox";
 import { editDocument } from "@/lib/ai/tools/edit-document";
+import { getCurrentTime } from "@/lib/ai/tools/get-current-time";
+import { getFixtures } from "@/lib/ai/tools/get-fixtures";
 import { getWeather } from "@/lib/ai/tools/get-weather";
 import { listMySchedules } from "@/lib/ai/tools/list-my-schedules";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
+import { setHomeLocation } from "@/lib/ai/tools/set-home-location";
 import { setSoul } from "@/lib/ai/tools/set-soul";
 import { updateDocument } from "@/lib/ai/tools/update-document";
+import { webSearch } from "@/lib/ai/tools/web-search";
 import { isProductionEnvironment } from "@/lib/constants";
 import { acquireChatLock } from "@/lib/db/chat-lock";
 import {
@@ -48,6 +61,7 @@ import {
   deleteChatById,
   getChatById,
   getMessagesByChatId,
+  getUserHomeLocation,
   getUserSoul,
   saveChat,
   saveMessages,
@@ -56,7 +70,9 @@ import {
 } from "@/lib/db/queries";
 import type { DBMessage } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
+import { attachOpenUiPart } from "@/lib/openui/attach";
 import { checkIpRateLimit } from "@/lib/ratelimit";
+import { contextBlock, validTimeZone } from "@/lib/temporal";
 import type { ChatMessage } from "@/lib/types";
 import { convertToUIMessages, generateUUID } from "@/lib/utils";
 import { generateTitleFromUserMessage } from "../../actions";
@@ -89,6 +105,23 @@ function sanitizeToolCallIds(messages: ChatMessage[]): ChatMessage[] {
   }));
 }
 
+/**
+ * Earlier web-search results are untrusted, can be large and are provider-
+ * executed (AI Gateway ran them), so they are never replayed to the model: the
+ * assistant's own cited answer in the same message carries what mattered. The
+ * stored parts stay complete for the UI.
+ */
+function dropWebSearchHistory(messages: ChatMessage[]): ChatMessage[] {
+  return messages.map((message) => ({
+    ...message,
+    parts: message.parts.filter(
+      (part) =>
+        (part.type as string) !== "tool-webSearch" &&
+        part.type !== "data-openui"
+    ),
+  }));
+}
+
 function getStreamContext() {
   try {
     return createResumableStreamContext({ waitUntil: after });
@@ -118,6 +151,7 @@ export async function POST(request: Request) {
       messages,
       selectedChatModel,
       selectedVisibilityType,
+      timeZone,
       retry,
     } = requestBody;
 
@@ -130,13 +164,11 @@ export async function POST(request: Request) {
       return new ChatbotError("unauthorized:chat").toResponse();
     }
 
-    // The verified allowlist already exists in protected environment settings.
-    // Never make an 8-second live model-catalogue request on every chat turn.
-    const verified = parseVerification(process.env.VERIFIED_GROQ_MODELS);
-    if (!process.env.GROQ_API_KEY || verified.status !== "ready") {
+    const availability = await getRequestModelAvailability();
+    if (availability.status !== "ready") {
       return new ChatbotError("offline:model_setup").toResponse();
     }
-    if (!verified.modelIds.includes(selectedChatModel)) {
+    if (!availability.models.some((model) => model.id === selectedChatModel)) {
       return new ChatbotError("bad_request:api").toResponse();
     }
     const chatModel = selectedChatModel;
@@ -235,9 +267,14 @@ export async function POST(request: Request) {
     const supportsTools = capabilities?.tools === true;
 
     const soul = await getUserSoul({ userId: session.user.id });
+    const homeLocation = await getUserHomeLocation({ userId: session.user.id });
+    const requestTimeZone = validTimeZone(timeZone);
+    const requestNow = new Date();
     const needsOnboarding = !soul && session.user.type !== "guest";
+    // Web search exists only when this request is served by the AI Gateway lane.
+    const searchLane = supportsTools && webSearchLane(chatModel);
     const requestedTools = supportsTools
-      ? selectActiveTools(uiMessages, session.user.type !== "guest")
+      ? selectActiveTools(uiMessages, session.user.type !== "guest", searchLane)
       : [];
     const finalUserText =
       [...uiMessages]
@@ -251,119 +288,178 @@ export async function POST(request: Request) {
       soul,
       needsOnboarding,
       includeArtifacts: needsArtifactInstructions(requestedTools),
+      includeWebSearch: searchLane && requestedTools.includes("webSearch"),
+      includeFixtures: requestedTools.includes("getFixtures"),
+      includeVisual: requestedTools.some(
+        (name) => name === "webSearch" || name === "getWeather"
+      ),
+      context: contextBlock({
+        now: requestNow,
+        timeZone: requestTimeZone ?? homeLocation?.timeZone ?? null,
+        home: homeLocation,
+      }),
     });
     // A single text step may use most of the budget; a tool call and a
     // follow-up must share a minute on Groq's limited free account.
-    const requestBudget = requestedTools.length > 0 ? 3400 : 7000;
+    const premium = isPremiumModel(chatModel) ? premiumModels[chatModel] : null;
+    const requestBudget =
+      premium?.inferenceBudget ??
+      (requestedTools.length > 0 ? GROQ_TOOL_TURN_BUDGET : 7000);
+    const replyTokens = premium?.outputLimit ?? DEFAULT_REPLY_TOKENS;
+    const execution = {
+      ledger: createUsageLedger(session.user.id, message?.id ?? generateUUID()),
+      available: availability.models
+        .map((model) => model.id)
+        .filter(isPremiumModel),
+      exposed: false,
+      toolBoundary: false,
+      fallbackUsed: false,
+    };
 
     const stream = createUIMessageStream<ChatMessage>({
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
-      execute: async ({ writer: dataStream }) => {
-        const localTools = {
-          demoInbox,
-          getWeather,
-          createDocument: createDocument({
-            session,
-            dataStream,
-            modelId: chatModel,
-          }),
-          editDocument: editDocument({ dataStream, session }),
-          updateDocument: updateDocument({
-            session,
-            dataStream,
-            modelId: chatModel,
-          }),
-          requestSuggestions: requestSuggestions({
-            session,
-            dataStream,
-            modelId: chatModel,
-          }),
-          listMySchedules: listMySchedules({ session }),
-          cancelSchedule: cancelSchedule({ session }),
-          ...(session.user.type !== "guest"
-            ? { setSoul: setSoul({ userId: session.user.id }) }
-            : {}),
-        };
-
-        // Only reviewed local tools are available. External integrations stay disconnected.
-        const tools = localTools;
-        const activeTools = requestedTools.filter(
-          (name) => name in tools
-        ) as Array<keyof typeof tools>;
-        const toolSchemaTokens = await estimateToolSchemaTokens(
-          tools,
-          activeTools
-        );
-        const convertedMessages = await convertToModelMessages(
-          sanitizeToolCallIds(uiMessages),
-          { tools, ignoreIncompleteToolCalls: true }
-        );
-        const prepared = budgetModelMessages({
-          messages: convertedMessages,
-          system: replySystemPrompt,
-          toolCount: activeTools.length,
-          toolSchemaTokens,
-          maxOutputTokens: DEFAULT_REPLY_TOKENS,
-          requestBudget,
-        });
-        if (prepared.tooLarge) {
-          throw new Error("chat_context_budget");
-        }
-        const result = streamText({
-          model: getLanguageModel(chatModel),
-          instructions: replySystemPrompt,
-          messages: prepared.messages,
-          stopWhen: isStepCount(activeTools.length > 0 ? 2 : 1),
-          maxOutputTokens: DEFAULT_REPLY_TOKENS,
-          maxRetries: 0,
-          abortSignal: AbortSignal.any([
-            request.signal,
-            AbortSignal.timeout(50_000),
-          ]),
-          activeTools,
-          prepareStep: ({ messages: stepMessages }) => {
-            const next = budgetModelMessages({
-              messages: stepMessages,
-              system: replySystemPrompt,
-              toolCount: activeTools.length,
-              toolSchemaTokens,
-              maxOutputTokens: DEFAULT_REPLY_TOKENS,
-              requestBudget,
-            });
-            if (next.tooLarge) {
-              throw new Error("chat_context_budget");
-            }
-            return { messages: next.messages };
-          },
-          providerOptions: {
-            ...(modelConfig?.reasoningEffort && {
-              openai: { reasoningEffort: modelConfig.reasoningEffort },
+      execute: ({ writer: dataStream }) =>
+        inferenceSession.run(execution, async () => {
+          const localTools = {
+            demoInbox,
+            getWeather: getWeather({ home: homeLocation }),
+            getFixtures: getFixtures({
+              now: () => requestNow,
+              footballDataKey: process.env.FOOTBALL_DATA_API_KEY ?? null,
             }),
-          },
-          tools,
-          telemetry: {
-            isEnabled: isProductionEnvironment,
-            recordInputs: false,
-            recordOutputs: false,
-            functionId: "stream-text",
-          },
-        });
+            getCurrentTime: getCurrentTime({
+              defaultTimeZone:
+                requestTimeZone ?? homeLocation?.timeZone ?? null,
+            }),
+            createDocument: createDocument({
+              session,
+              dataStream,
+              modelId: chatModel,
+            }),
+            editDocument: editDocument({ dataStream, session }),
+            updateDocument: updateDocument({
+              session,
+              dataStream,
+              modelId: chatModel,
+            }),
+            requestSuggestions: requestSuggestions({
+              session,
+              dataStream,
+              modelId: chatModel,
+            }),
+            ...(searchLane ? { webSearch: webSearch() } : {}),
+            listMySchedules: listMySchedules({ session }),
+            cancelSchedule: cancelSchedule({ session }),
+            ...(session.user.type !== "guest"
+              ? {
+                  setSoul: setSoul({ userId: session.user.id }),
+                  setHomeLocation: setHomeLocation({ userId: session.user.id }),
+                }
+              : {}),
+          };
 
-        dataStream.merge(
-          toUIMessageStream<typeof tools, ChatMessage>({
-            stream: result.stream,
-            onEnd: ({ outcome }) => dataStream.setOutcome(outcome),
-            sendReasoning: false,
-            onError: (error) => safeModelError(error, finalUserText),
-          }).pipeThrough(safeUIStream(finalUserText))
-        );
+          // Only reviewed local tools are available. External integrations stay disconnected.
+          const tools = localTools;
+          const activeTools = requestedTools.filter(
+            (name) => name in tools
+          ) as Array<keyof typeof tools>;
+          const toolSchemaTokens = await estimateToolSchemaTokens(
+            tools,
+            activeTools
+          );
+          const convertedMessages = await convertToModelMessages(
+            sanitizeToolCallIds(dropWebSearchHistory(uiMessages)),
+            { tools, ignoreIncompleteToolCalls: true }
+          );
+          const prepared = budgetModelMessages({
+            messages: convertedMessages,
+            system: replySystemPrompt,
+            toolCount: activeTools.length,
+            toolSchemaTokens,
+            maxOutputTokens: replyTokens,
+            requestBudget,
+          });
+          if (prepared.tooLarge) {
+            throw new Error("chat_context_budget");
+          }
+          let firstCallTokens = 0;
+          const result = streamText({
+            model: getLanguageModel(chatModel),
+            instructions: replySystemPrompt,
+            messages: prepared.messages,
+            // Step 1 = tool call(s); step 2 = the written answer. AI Gateway runs
+            // webSearch inside step 1's model call (provider-executed), so the
+            // search result and the answer need no extra step. The number of
+            // searches is capped in the routed model (WEB_SEARCH_MAX_CALLS).
+            stopWhen: isStepCount(
+              activeTools.length === 0
+                ? 1
+                : activeTools.includes("getFixtures") &&
+                    activeTools.includes("webSearch")
+                  ? 3
+                  : 2
+            ),
+            maxOutputTokens: replyTokens,
+            maxRetries: 0,
+            // The SDK default logs raw upstream errors, including request content.
+            onError: () => {
+              /* Ledger and UI handle safe errors; never log upstream request bodies. */
+            },
+            abortSignal: AbortSignal.any([
+              request.signal,
+              AbortSignal.timeout(50_000),
+            ]),
+            activeTools,
+            prepareStep: ({ messages: stepMessages, stepNumber }) => {
+              const next = budgetModelMessages({
+                messages: stepMessages,
+                system: replySystemPrompt,
+                toolCount: activeTools.length,
+                toolSchemaTokens,
+                maxOutputTokens: replyTokens,
+                // Groq lane: the follow-up shares the minute with the first call.
+                requestBudget:
+                  !premium && stepNumber > 0 && firstCallTokens > 0
+                    ? followUpBudget(firstCallTokens)
+                    : requestBudget,
+              });
+              if (stepNumber === 0) {
+                firstCallTokens = next.estimatedRequestTokens;
+              }
+              if (next.tooLarge) {
+                throw new Error("chat_context_budget");
+              }
+              return { messages: next.messages };
+            },
+            providerOptions: {
+              ...(modelConfig?.reasoningEffort && {
+                openai: { reasoningEffort: modelConfig.reasoningEffort },
+              }),
+            },
+            tools,
+            telemetry: {
+              isEnabled: isProductionEnvironment,
+              recordInputs: false,
+              recordOutputs: false,
+              functionId: "stream-text",
+            },
+          });
 
-        if (titlePromise) {
-          const title = await titlePromise;
-          dataStream.write({ type: "data-chat-title", data: title });
-          await updateChatTitleById({ chatId: id, title });
-        }
-      },
+          dataStream.merge(
+            toUIMessageStream<typeof tools, ChatMessage>({
+              stream: result.stream,
+              onEnd: ({ outcome }) => dataStream.setOutcome(outcome),
+              sendReasoning: false,
+              onError: (error) => safeModelError(error, finalUserText),
+            }).pipeThrough(safeUIStream(finalUserText))
+          );
+
+          if (titlePromise) {
+            const title = await titlePromise;
+            dataStream.write({ type: "data-chat-title", data: title });
+            await updateChatTitleById({ chatId: id, title });
+          }
+        }),
       generateId: () => replacementReplyId ?? generateUUID(),
       onEnd: async ({ responseMessage, outcome, isAborted, isCancelled }) => {
         try {
@@ -374,16 +470,17 @@ export async function POST(request: Request) {
           if (!reply) {
             return;
           }
-          const saved = messagesFromDb.find((m) => m.id === reply.id);
+          const withVisual = attachOpenUiPart(reply, chatModel);
+          const saved = messagesFromDb.find((m) => m.id === withVisual.id);
           if (saved) {
-            await updateMessage({ id: reply.id, parts: reply.parts });
+            await updateMessage({ id: withVisual.id, parts: withVisual.parts });
           } else {
             await saveMessages({
               messages: [
                 {
-                  id: reply.id,
-                  role: reply.role,
-                  parts: reply.parts,
+                  id: withVisual.id,
+                  role: withVisual.role,
+                  parts: withVisual.parts,
                   createdAt: new Date(),
                   attachments: [],
                   chatId: id,

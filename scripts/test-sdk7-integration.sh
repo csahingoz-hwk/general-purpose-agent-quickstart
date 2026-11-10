@@ -5,7 +5,19 @@ set -euo pipefail
 # Deliberately override service configuration only in this test subprocess.
 export POSTGRES_URL='postgres://postgres:synthetic-local-test-password@127.0.0.1:55432/sdk7_tests'
 export POSTGRES_URL_NON_POOLING="$POSTGRES_URL"
+export CHAT_PROVIDER=groq-legacy
+export ENABLE_LEGACY_GROQ=true
 export GROQ_API_KEY=synthetic-sdk7-provider-key
+# Both providers use isolated synthetic wire fixtures. No real key can pass.
+if [ "${SDK7_PROVIDER:-legacy}" = openai ]; then
+  export CHAT_PROVIDER=openai
+  export ENABLE_LEGACY_GROQ=false
+  export OPENAI_API_KEY=synthetic-sdk7-openai-key
+  export OPENAI_API_USAGE_ENABLED=true
+else
+  export OPENAI_API_USAGE_ENABLED=false
+  unset OPENAI_API_KEY
+fi
 export APP_OWNER_EMAIL=owner@example.test
 export AUTH_SECRET=synthetic-readiness-ui-secret-with-at-least-32-characters
 export SDK7_CALL_LOG=/tmp/sdk7-provider-calls.jsonl
@@ -16,8 +28,10 @@ export PORT=3101
 pnpm exec tsx lib/db/migrate.ts
 node --input-type=module <<'JS'
 import postgres from 'postgres';
+import { readFileSync } from 'node:fs';
 const sql = postgres(process.env.POSTGRES_URL);
 try {
+  await sql.unsafe(readFileSync('lib/db/usage-schema.sql', 'utf8'));
   await sql`INSERT INTO "User" (id,email,password) VALUES ('97a9a7c5-e220-425d-9589-7e63b607ca75','owner@example.test',null) ON CONFLICT (id) DO NOTHING`;
 } finally { await sql.end(); }
 JS
@@ -39,3 +53,6 @@ done
 kill -0 "$server_pid"
 curl --silent --fail http://localhost:3101/login > /dev/null
 node --import tsx scripts/test-sdk7-mobile.ts
+if [ "${SDK7_PROVIDER:-legacy}" = openai ]; then
+  node --import tsx scripts/test-premium-routing.ts
+fi

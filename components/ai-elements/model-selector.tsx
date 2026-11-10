@@ -43,7 +43,7 @@ export const ModelSelectorContent = ({
   <PopoverContent
     align="start"
     className={cn(
-      "w-[280px] p-0 rounded-xl border border-border/60 bg-card/95 backdrop-blur-xl shadow-[var(--shadow-float)]",
+      "w-[min(20rem,calc(100vw-2rem))] p-0 rounded-xl border border-border/60 bg-card/95 backdrop-blur-xl shadow-[var(--shadow-float)]",
       className
     )}
     side="top"
@@ -62,7 +62,7 @@ export const ModelSelectorInput = ({
   className,
   ...props
 }: ModelSelectorInputProps) => (
-  <CommandInput className={cn("h-auto py-2.5 text-[13px]", className)} {...props} />
+  <CommandInput className={cn("h-auto py-2.5 text-base md:text-[13px]", className)} {...props} />
 );
 
 export type ModelSelectorListProps = ComponentProps<typeof CommandList>;

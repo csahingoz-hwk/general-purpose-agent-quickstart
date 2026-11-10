@@ -1,7 +1,11 @@
 "use client";
 import type { UseChatHelpers } from "@ai-sdk/react";
 import type { Vote } from "@/lib/db/schema";
+import { readFixturePayload } from "@/lib/fixtures";
+import type { MascotState } from "@/lib/mascot";
+import { visualPayload } from "@/lib/openui/attach";
 import type { ChatMessage } from "@/lib/types";
+import { getCopy } from "@/lib/ui-copy";
 import { cn, sanitizeText } from "@/lib/utils";
 import { MessageContent, MessageResponse } from "../ai-elements/message";
 import { Shimmer } from "../ai-elements/shimmer";
@@ -12,19 +16,27 @@ import {
   ToolInput,
   ToolOutput,
 } from "../ai-elements/tool";
+import { AgentMascot } from "./agent-mascot";
 import { useDataStream } from "./data-stream-provider";
 import { DocumentToolResult } from "./document";
 import { DocumentPreview } from "./document-preview";
 import { FictionalInboxCard } from "./fictional-inbox-card";
-import { SparklesIcon } from "./icons";
+import { FixtureCard } from "./fixture-card";
+import { useMascotPreference } from "./mascot-preference";
 import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
+import { OpenUiCard } from "./openui-card";
 import { PreviewAttachment } from "./preview-attachment";
 import { Weather } from "./weather";
+import { WebSearchCard } from "./web-search-card";
+
+const copy = getCopy();
 
 const PurePreviewMessage = ({
   addToolApprovalResponse,
+  animateMascot = false,
   chatId,
+  mascotState = "idle",
   message,
   vote,
   isLoading,
@@ -33,9 +45,12 @@ const PurePreviewMessage = ({
   isReadonly,
   requiresScrollPadding: _requiresScrollPadding,
   onEdit,
+  locale = "en",
 }: {
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
+  animateMascot?: boolean;
   chatId: string;
+  mascotState?: MascotState;
   message: ChatMessage;
   vote: Vote | undefined;
   isLoading: boolean;
@@ -44,6 +59,7 @@ const PurePreviewMessage = ({
   isReadonly: boolean;
   requiresScrollPadding: boolean;
   onEdit?: (message: ChatMessage) => void;
+  locale?: "en" | "tr";
 }) => {
   const attachmentsFromMessage = message.parts.filter(
     (part) => part.type === "file"
@@ -51,8 +67,11 @@ const PurePreviewMessage = ({
 
   useDataStream();
 
+  const { variant } = useMascotPreference();
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
+  const fixture = isAssistant ? fixtureFromParts(message.parts) : null;
+  const visual = isAssistant && !fixture ? visualPayload(message.parts) : null;
 
   const hasAnyContent = message.parts?.some(
     (part) =>
@@ -117,14 +136,18 @@ const PurePreviewMessage = ({
     if (type === "text") {
       return (
         <MessageContent
-          className={cn("text-[13px] leading-[1.65]", {
-            "w-fit max-w-[min(80%,56ch)] overflow-hidden break-words rounded-2xl rounded-br-lg border border-border/30 bg-gradient-to-br from-secondary to-muted px-3.5 py-2 shadow-[var(--shadow-card)]":
-              message.role === "user",
-          })}
+          className={cn(
+            "w-fit max-w-[min(85%,40rem)] overflow-hidden break-words rounded-[22px] px-4 py-2.5 text-[17px] leading-[1.45]",
+            message.role === "user"
+              ? "bg-bubble-user text-bubble-user-foreground [&_a]:text-bubble-user-foreground [&_a]:underline"
+              : "bg-bubble-assistant text-foreground"
+          )}
           data-testid="message-content"
           key={key}
         >
-          <MessageResponse>{sanitizeText(part.text)}</MessageResponse>
+          <MessageResponse className="text-inherit">
+            {sanitizeText(part.text)}
+          </MessageResponse>
         </MessageContent>
       );
     }
@@ -145,6 +168,40 @@ const PurePreviewMessage = ({
       );
     }
 
+    if (
+      (type as string) === "tool-getCurrentTime" ||
+      (type as string) === "tool-setHomeLocation"
+    ) {
+      // Internal helpers: the assistant states the result in its reply.
+      return null;
+    }
+
+    if (type === "tool-webSearch") {
+      return (
+        <WebSearchCard
+          key={part.toolCallId}
+          locale={locale}
+          output={"output" in part ? part.output : undefined}
+          state={part.state}
+        />
+      );
+    }
+
+    if (type === "tool-getFixtures") {
+      const pending =
+        part.state === "input-streaming" || part.state === "input-available";
+      if (!pending) {
+        return null;
+      }
+      return (
+        <p className="text-[13px] text-muted-foreground" key={part.toolCallId}>
+          {locale === "tr"
+            ? "Fikstür bakılıyor…"
+            : "Checking the fixture list…"}
+        </p>
+      );
+    }
+
     if (type === "tool-getWeather") {
       const { toolCallId, state } = part;
       const approvalId = (part as { approval?: { id: string } }).approval?.id;
@@ -155,7 +212,24 @@ const PurePreviewMessage = ({
             false);
       const widthClass = "w-[min(100%,450px)]";
 
+      if (state === "output-available" && "error" in part.output) {
+        // location_required: the assistant asks which city, so no card is shown.
+        return part.output.error === "location_required" ? null : (
+          <p
+            className={`${widthClass} rounded-xl border border-border bg-muted/50 p-3 text-muted-foreground text-sm`}
+            key={toolCallId}
+            role="alert"
+          >
+            The weather forecast could not be loaded. Please try another
+            location.
+          </p>
+        );
+      }
+
       if (state === "output-available") {
+        if (visual) {
+          return null;
+        }
         return (
           <div className={widthClass} key={toolCallId}>
             <Weather weatherAtLocation={part.output} />
@@ -372,15 +446,16 @@ const PurePreviewMessage = ({
   );
 
   const content = isThinking ? (
-    <div className="flex h-[calc(13px*1.65)] items-center text-[13px] leading-[1.65]">
+    <div className="w-fit rounded-[22px] bg-bubble-assistant px-4 py-2.5 text-[17px] leading-[1.45]">
       <Shimmer className="font-medium" duration={1}>
-        Thinking...
+        {copy.statusThinking}
       </Shimmer>
     </div>
   ) : (
     <>
       {attachments}
       {parts}
+      {fixture && <FixtureCard locale={locale} payload={fixture} />}
       {actions}
     </>
   );
@@ -396,45 +471,72 @@ const PurePreviewMessage = ({
     >
       <div
         className={cn(
-          isUser ? "flex flex-col items-end gap-2" : "flex items-start gap-3"
+          "flex min-w-0 gap-2",
+          isUser ? "justify-end" : "items-start"
         )}
       >
-        {isAssistant && (
-          <div className="flex h-[calc(13px*1.65)] shrink-0 items-center">
-            <div className="flex size-7 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground ring-1 ring-border/50">
-              <SparklesIcon size={13} />
-            </div>
-          </div>
-        )}
         {isAssistant ? (
-          <div className="flex min-w-0 flex-1 flex-col gap-2">{content}</div>
-        ) : (
-          content
-        )}
+          <AgentMascot
+            animated={animateMascot}
+            className="mt-1"
+            size={32}
+            state={animateMascot ? mascotState : "idle"}
+            variant={variant}
+          />
+        ) : null}
+        <div
+          className={cn(
+            "flex min-w-0 flex-col gap-2",
+            isUser ? "items-end" : "items-start"
+          )}
+        >
+          {content}
+          {visual && <OpenUiCard payload={visual} />}
+        </div>
       </div>
     </div>
   );
 };
 
+function fixtureFromParts(parts: ChatMessage["parts"]) {
+  for (const part of parts) {
+    if (part.type !== "tool-getFixtures") {
+      continue;
+    }
+    if ("state" in part && part.state && part.state !== "output-available") {
+      continue;
+    }
+    if (!("output" in part)) {
+      continue;
+    }
+    const payload = readFixturePayload(part.output);
+    if (payload) {
+      return payload;
+    }
+  }
+  return null;
+}
+
 export const PreviewMessage = PurePreviewMessage;
 
-export const ThinkingMessage = () => {
+export const ThinkingMessage = ({
+  state = "thinking",
+}: {
+  state?: MascotState;
+}) => {
+  const { variant } = useMascotPreference();
+
   return (
     <div
       className="group/message w-full"
       data-role="assistant"
       data-testid="message-assistant-loading"
     >
-      <div className="flex items-start gap-3">
-        <div className="flex h-[calc(13px*1.65)] shrink-0 items-center">
-          <div className="flex size-7 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground ring-1 ring-border/50">
-            <SparklesIcon size={13} />
-          </div>
-        </div>
-
-        <div className="flex h-[calc(13px*1.65)] items-center text-[13px] leading-[1.65]">
+      <div className="flex items-start gap-2">
+        <AgentMascot animated size={32} state={state} variant={variant} />
+        <div className="w-fit rounded-[22px] bg-bubble-assistant px-4 py-2.5 text-[17px] leading-[1.45]">
           <Shimmer className="font-medium" duration={1}>
-            Thinking...
+            {copy.statusThinking}
           </Shimmer>
         </div>
       </div>

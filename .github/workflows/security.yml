@@ -76,3 +76,8 @@ jobs:
 
       - name: Verify SDK 7 streaming, tools, PostgreSQL History and retries on mobile
         run: pnpm test:sdk7-integration
+
+      - name: Verify premium routing, costs and OpenAI mobile integration without credits
+        env:
+          SDK7_PROVIDER: openai
+        run: pnpm test:sdk7-integration

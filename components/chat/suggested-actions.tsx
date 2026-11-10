@@ -3,6 +3,8 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
 import { motion } from "framer-motion";
 import { memo } from "react";
+import useSWR from "swr";
+import type { ChatModel } from "@/lib/ai/models";
 import { suggestions } from "@/lib/constants";
 import type { ChatMessage } from "@/lib/types";
 import { Suggestion } from "../ai-elements/suggestion";
@@ -15,33 +17,44 @@ type SuggestedActionsProps = {
 };
 
 function PureSuggestedActions({ chatId, sendMessage }: SuggestedActionsProps) {
-  const suggestedActions = suggestions;
+  const { data: modelAvailability } = useSWR(
+    `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/models`,
+    (url: string) =>
+      fetch(url).then((response) => {
+        if (!response.ok) {
+          throw new Error("Model check failed");
+        }
+        return response.json();
+      }),
+    { revalidateOnFocus: true, dedupingInterval: 60_000 }
+  );
+  const modelReady =
+    modelAvailability?.status === "ready" &&
+    modelAvailability.models?.some((model: ChatModel) => model.id);
+
+  if (!modelReady) {
+    return null;
+  }
 
   return (
     <div
-      className="flex w-full gap-2.5 overflow-x-auto pb-1 sm:grid sm:grid-cols-2 sm:overflow-visible"
+      className="flex w-full max-w-md flex-wrap justify-center gap-2"
       data-testid="suggested-actions"
-      style={{
-        scrollbarWidth: "none",
-        WebkitOverflowScrolling: "touch",
-        msOverflowStyle: "none",
-      }}
     >
-      {suggestedActions.map((suggestedAction, index) => (
+      {suggestions.map((suggestedAction, index) => (
         <motion.div
           animate={{ opacity: 1, y: 0 }}
-          className="min-w-[200px] shrink-0 sm:min-w-0 sm:shrink"
-          exit={{ opacity: 0, y: 16 }}
-          initial={{ opacity: 0, y: 16 }}
+          className="max-w-full"
+          initial={{ opacity: 0, y: 8 }}
           key={suggestedAction}
           transition={{
-            delay: 0.06 * index,
-            duration: 0.4,
+            delay: 0.04 * index,
+            duration: 0.3,
             ease: [0.22, 1, 0.36, 1],
           }}
         >
           <Suggestion
-            className="h-auto w-full whitespace-nowrap rounded-xl border border-border/50 bg-card/30 px-4 py-3 text-left text-[12px] leading-relaxed text-muted-foreground transition-all duration-200 sm:whitespace-normal sm:p-4 sm:text-[13px] hover:-translate-y-0.5 hover:bg-card/60 hover:text-foreground hover:shadow-[var(--shadow-card)]"
+            className="h-auto! min-h-11 w-auto max-w-full whitespace-normal rounded-full border border-[color:var(--hairline)] bg-[var(--bot-tint)] px-4 py-2.5 text-left text-[15px] leading-snug text-foreground shadow-[var(--shadow-float)] hover:bg-[var(--bot-tint)]"
             onClick={(suggestion) => {
               window.history.pushState(
                 {},

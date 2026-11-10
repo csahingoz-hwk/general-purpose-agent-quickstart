@@ -1,3 +1,4 @@
+import type { HomeLocation } from "../temporal";
 import "server-only";
 
 import {
@@ -978,6 +979,46 @@ export async function getStreamIdsByChatId({ chatId }: { chatId: string }) {
     throw new ChatbotError(
       "bad_request:database",
       "Failed to get stream ids by chat id"
+    );
+  }
+}
+
+export async function getUserHomeLocation({
+  userId,
+}: {
+  userId: string;
+}): Promise<HomeLocation | null> {
+  try {
+    const [row] = await db
+      .select({ homeLocation: user.homeLocation })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    return row?.homeLocation ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get home location"
+    );
+  }
+}
+
+export async function setUserHomeLocation({
+  userId,
+  homeLocation,
+}: {
+  userId: string;
+  homeLocation: HomeLocation | null;
+}): Promise<void> {
+  try {
+    await db
+      .update(user)
+      .set({ homeLocation, updatedAt: new Date() })
+      .where(eq(user.id, userId));
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to save home location"
     );
   }
 }

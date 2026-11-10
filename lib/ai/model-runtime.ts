@@ -1,8 +1,99 @@
 import "server-only";
 import { GROQ_BASE_URL, parseVerification } from "./groq-verification";
 import { chatModels, DEFAULT_CHAT_MODEL } from "./models";
+import {
+  gatewayEnabled,
+  isPremiumModel,
+  legacyEnabled,
+  openAIEnabled,
+} from "./routing/catalog";
+import { discoverGatewayReadiness, type Readiness } from "./routing/gateway";
+
+let premiumCache:
+  | { key: string; expires: number; result: Readiness }
+  | undefined;
+
+/** Only a successful, authenticated catalog check is cached; failures are always rechecked. */
+async function premiumAvailability(): Promise<Readiness> {
+  if (gatewayEnabled()) {
+    const cached = premiumCache;
+    if (cached?.key === "gateway" && cached.expires > Date.now()) {
+      return cached.result;
+    }
+    const result = await discoverGatewayReadiness();
+    if (result.status === "ready") {
+      premiumCache = { key: "gateway", expires: Date.now() + 60_000, result };
+    }
+    return result;
+  }
+  const empty: Readiness = {
+    status: "setup_required",
+    reason: "provider_opt_in_missing",
+    hint: "No paid model lane is enabled for this deployment. Set AI_GATEWAY_USAGE_ENABLED=true for this Preview environment and redeploy.",
+    models: [],
+    defaultModelId: null,
+    checkedAt: null,
+    unavailableModels: [],
+  };
+  if (!openAIEnabled()) {
+    return empty;
+  }
+  const key = process.env.OPENAI_API_KEY?.trim() ?? "";
+  const cacheKey = `openai:${key}`;
+  if (premiumCache?.key === cacheKey && premiumCache.expires > Date.now()) {
+    return premiumCache.result;
+  }
+  const unavailable = (
+    reason: "catalog_unavailable" | "model_unavailable"
+  ) => ({
+    ...empty,
+    status: "temporarily_unavailable" as const,
+    reason,
+    hint:
+      reason === "model_unavailable"
+        ? "The default model is not listed for this OpenAI account."
+        : "The OpenAI model catalog could not be reached. Try again shortly.",
+  });
+  try {
+    const response = await fetch("https://api.openai.com/v1/models", {
+      headers: { authorization: `Bearer ${key}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!response.ok) {
+      return unavailable("catalog_unavailable");
+    }
+    const body = await response.json();
+    const listed = new Set(
+      (body.data ?? []).map((model: { id: string }) => model.id)
+    );
+    const models = chatModels.filter(
+      (model) => isPremiumModel(model.id) && listed.has(model.id)
+    );
+    // Luna must be available; never silently replace the default with Terra.
+    if (!models.some((model) => model.id === DEFAULT_CHAT_MODEL)) {
+      return unavailable("model_unavailable");
+    }
+    const result: Readiness = {
+      status: "ready",
+      reason: "ready",
+      hint: null,
+      models,
+      defaultModelId: DEFAULT_CHAT_MODEL,
+      checkedAt: new Date().toISOString(),
+      unavailableModels: [],
+    };
+    premiumCache = { key: cacheKey, expires: Date.now() + 60_000, result };
+    return result;
+  } catch {
+    return unavailable("catalog_unavailable");
+  }
+}
 
 export async function getModelAvailability() {
+  if (!legacyEnabled()) {
+    return premiumAvailability();
+  }
   const verified = parseVerification(process.env.VERIFIED_GROQ_MODELS);
   const empty = {
     status: "setup_required" as const,
@@ -45,4 +136,19 @@ export async function getModelAvailability() {
   } catch {
     return { ...empty, status: "temporarily_unavailable" as const };
   }
+}
+
+/** Keep the verified legacy path free of per-turn catalog network I/O. */
+export function getRequestModelAvailability() {
+  if (!legacyEnabled()) {
+    return getModelAvailability();
+  }
+  const verified = parseVerification(process.env.VERIFIED_GROQ_MODELS);
+  return Promise.resolve({
+    status:
+      process.env.GROQ_API_KEY && verified.status === "ready"
+        ? "ready"
+        : "setup_required",
+    models: chatModels.filter((model) => verified.modelIds.includes(model.id)),
+  });
 }

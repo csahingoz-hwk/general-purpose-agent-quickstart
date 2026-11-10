@@ -1,4 +1,4 @@
-export const DEFAULT_CHAT_MODEL = "openai/gpt-oss-20b";
+export const DEFAULT_CHAT_MODEL = "gpt-6-luna";
 
 export type ModelCapabilities = {
   tools: boolean;
@@ -16,6 +16,20 @@ export type ChatModel = {
 
 // Candidates, not an availability assertion. Only verified IDs reach the UI.
 export const chatModels: ChatModel[] = [
+  {
+    id: "gpt-6-luna",
+    name: "Everyday chat",
+    provider: "openai",
+    description: "GPT-6 Luna · economical bilingual conversation",
+    reasoningEffort: "low",
+  },
+  {
+    id: "gpt-6.1-terra",
+    name: "Detailed chat",
+    provider: "openai",
+    description: "GPT-6.1 Terra · deeper thinking when needed",
+    reasoningEffort: "medium",
+  },
   {
     id: "openai/gpt-oss-20b",
     name: "Everyday chat",

@@ -1,116 +1,119 @@
 import { tool } from "ai";
 import { z } from "zod";
+import { geocodeCity } from "@/lib/location";
+import type { HomeLocation } from "@/lib/temporal";
 
-async function geocodeCity(
-  city: string
-): Promise<{ latitude: number; longitude: number } | null> {
-  try {
-    const response = await fetch(
-      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`,
-      { signal: AbortSignal.timeout(8000) }
-    );
-
-    if (!response.ok) {
-      return null;
-    }
-
-    const data = await response.json();
-
-    if (!data.results || data.results.length === 0) {
-      return null;
-    }
-
-    const result = data.results[0];
-    return {
-      latitude: result.latitude,
-      longitude: result.longitude,
-    };
-  } catch {
-    return null;
-  }
-}
-
-export const getWeather = tool({
-  description:
-    "Get the current weather at a location. You can provide either coordinates or a city name.",
-  inputSchema: z.object({
-    latitude: z.number().optional(),
-    longitude: z.number().optional(),
-    city: z
-      .string()
-      .describe("City name (e.g., 'San Francisco', 'New York', 'London')")
-      .optional(),
-  }),
-  toModelOutput: ({ output }) => {
-    if (output && typeof output === "object" && "error" in output) {
-      return { type: "text", value: String(output.error) } as const;
-    }
-    // The weather card keeps all hourly/daily data; the model receives only
-    // the essential forecast so later turns don't replay huge JSON arrays.
-    const forecast = output as {
-      cityName?: string;
-      current?: { time?: string; temperature_2m?: number };
-      current_units?: { temperature_2m?: string };
-      daily?: { sunrise?: string[]; sunset?: string[] };
-    };
-    return {
-      type: "text",
-      value: JSON.stringify({
-        city: forecast.cityName ?? "requested location",
-        time: forecast.current?.time,
-        temperature: forecast.current?.temperature_2m,
-        unit: forecast.current_units?.temperature_2m,
-        sunrise: forecast.daily?.sunrise?.[0],
-        sunset: forecast.daily?.sunset?.[0],
-        note: "Full forecast available to the client weather card.",
-      }),
-    } as const;
-  },
-  execute: async (input, { abortSignal }) => {
-    let latitude: number;
-    let longitude: number;
-
-    if (input.city) {
-      const coords = await geocodeCity(input.city);
-      if (!coords) {
-        return {
-          error: `Could not find coordinates for "${input.city}". Please check the city name.`,
+export const getWeather = ({ home }: { home: HomeLocation | null }) =>
+  tool({
+    description:
+      "Get the current weather and a 3-day forecast (today, tomorrow and the day after) including daily min/max temperature and chance of rain. Provide a city name or coordinates the user gave; if they gave neither, the saved home location is used. If no location is known the tool returns location_required: ask the user for a city and never guess one.",
+    inputSchema: z.object({
+      latitude: z.number().optional(),
+      longitude: z.number().optional(),
+      city: z.string().describe("City name stated by the user").optional(),
+    }),
+    toModelOutput: ({ output }) => {
+      if (output && typeof output === "object" && "error" in output) {
+        return { type: "text", value: String(output.error) } as const;
+      }
+      // The weather card keeps all hourly/daily data; the model receives only
+      // the essential forecast so later turns don't replay huge JSON arrays.
+      const forecast = output as {
+        cityName?: string;
+        current?: { time?: string; temperature_2m?: number };
+        current_units?: { temperature_2m?: string };
+        daily?: {
+          time?: string[];
+          sunrise?: string[];
+          sunset?: string[];
+          temperature_2m_max?: number[];
+          temperature_2m_min?: number[];
+          precipitation_probability_max?: (number | null)[];
+          precipitation_sum?: (number | null)[];
         };
-      }
-      latitude = coords.latitude;
-      longitude = coords.longitude;
-    } else if (input.latitude !== undefined && input.longitude !== undefined) {
-      latitude = input.latitude;
-      longitude = input.longitude;
-    } else {
-      return {
-        error:
-          "Please provide either a city name or both latitude and longitude coordinates.",
+        daily_units?: {
+          precipitation_probability_max?: string;
+          precipitation_sum?: string;
+        };
       };
-    }
+      // Compact per-day outlook (today, tomorrow, day after) so "will it rain
+      // tomorrow?" is answerable without replaying the hourly arrays.
+      const daily = (forecast.daily?.time ?? []).slice(0, 3).map((date, i) => ({
+        date,
+        min: forecast.daily?.temperature_2m_min?.[i],
+        max: forecast.daily?.temperature_2m_max?.[i],
+        rainChance: forecast.daily?.precipitation_probability_max?.[i],
+        rainSum: forecast.daily?.precipitation_sum?.[i],
+      }));
+      return {
+        type: "text",
+        value: JSON.stringify({
+          city: forecast.cityName ?? "requested location",
+          time: forecast.current?.time,
+          temperature: forecast.current?.temperature_2m,
+          unit: forecast.current_units?.temperature_2m,
+          sunrise: forecast.daily?.sunrise?.[0],
+          sunset: forecast.daily?.sunset?.[0],
+          daily,
+          dailyUnits: {
+            rainChance: forecast.daily_units?.precipitation_probability_max,
+            rainSum: forecast.daily_units?.precipitation_sum,
+          },
+          note: "Full forecast available to the client weather card.",
+        }),
+      } as const;
+    },
+    execute: async (input, { abortSignal }) => {
+      let latitude: number;
+      let longitude: number;
 
-    const response = await fetch(
-      `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m&hourly=temperature_2m&daily=sunrise,sunset&timezone=auto`,
-      {
-        signal: AbortSignal.any([
-          AbortSignal.timeout(10_000),
-          ...(abortSignal ? [abortSignal] : []),
-        ]),
+      let cityName: string | undefined;
+      if (input.city) {
+        const coords = await geocodeCity(input.city);
+        if (!coords) {
+          return {
+            error: `Could not find coordinates for "${input.city}". Please check the city name.`,
+          };
+        }
+        latitude = coords.latitude;
+        longitude = coords.longitude;
+        cityName = input.city;
+      } else if (
+        input.latitude !== undefined &&
+        input.longitude !== undefined
+      ) {
+        latitude = input.latitude;
+        longitude = input.longitude;
+      } else if (home) {
+        latitude = home.latitude;
+        longitude = home.longitude;
+        cityName = home.label;
+      } else {
+        return { error: "location_required" as const };
       }
-    );
 
-    if (!response.ok) {
-      throw new Error("Weather service unavailable");
-    }
-    const weatherData = await response.json();
-    if (!weatherData.current || !weatherData.hourly || !weatherData.daily) {
-      throw new Error("Incomplete weather forecast");
-    }
+      const response = await fetch(
+        `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m&hourly=temperature_2m&daily=sunrise,sunset,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,weather_code&forecast_days=3&timezone=auto`,
+        {
+          signal: AbortSignal.any([
+            AbortSignal.timeout(10_000),
+            ...(abortSignal ? [abortSignal] : []),
+          ]),
+        }
+      );
 
-    if ("city" in input) {
-      weatherData.cityName = input.city;
-    }
+      if (!response.ok) {
+        throw new Error("Weather service unavailable");
+      }
+      const weatherData = await response.json();
+      if (!weatherData.current || !weatherData.hourly || !weatherData.daily) {
+        throw new Error("Incomplete weather forecast");
+      }
 
-    return weatherData;
-  },
-});
+      if (cityName) {
+        weatherData.cityName = cityName;
+      }
+
+      return weatherData;
+    },
+  });
