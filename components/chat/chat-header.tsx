@@ -128,7 +128,7 @@ function PureChatHeader({
         <div className="flex h-[52px] max-w-full min-w-0 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-card py-1 pr-2 pl-1 shadow-[var(--shadow-float)] sm:gap-2 sm:pr-3 sm:pl-1.5 md:h-11">
           <AgentMascot
             animated
-            className="rounded-full ring-2 ring-[var(--bot-avatar-ring)]"
+            className="rounded-full shadow-[0_0_0_1px_color-mix(in_srgb,var(--bot-avatar-ring)_28%,transparent)]"
             size={36}
             state={activity}
             variant={variant}

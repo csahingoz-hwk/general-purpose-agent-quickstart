@@ -7,7 +7,7 @@ Stat(label, statId)
 Slider(label, seriesId)
 Tabs(["Label"], ["datasetId"])
 Map(title, placeId)
-Use dataset ids that already exist in the tool result. Do not write numbers, queries, mutations, images, frames, or actions. Sliders and tabs only filter that same data on the device. If you are unsure, omit the block.`;
+Use dataset ids that already exist in the tool result. Do not write numbers, queries, mutations, images, frames, actions, or a sources table. Sliders and tabs only filter that same data on the device. If you are unsure, omit the block.`;
 
 export function visualPromptTokens(): number {
   return Math.ceil(visualPrompt.length / 4);

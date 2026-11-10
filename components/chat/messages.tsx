@@ -54,7 +54,7 @@ function PureMessages({
   const {
     containerRef: messagesContainerRef,
     endRef: messagesEndRef,
-    isAtBottom,
+    showJumpToLatest,
     scrollToBottom,
     hasSentMessage,
     reset,
@@ -141,7 +141,7 @@ function PureMessages({
     latestMessage?.role === "assistant" ? latestMessage.id : null;
 
   return (
-    <div className="relative flex-1 bg-background">
+    <div className="relative z-20 flex min-h-0 flex-1 flex-col bg-background">
       {messages.length === 0 && !isLoading && (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-4">
           <div className="pointer-events-auto flex w-full max-w-md flex-col items-center gap-6">
@@ -156,7 +156,7 @@ function PureMessages({
       )}
       <div
         className={cn(
-          "absolute inset-0 touch-pan-y overflow-y-auto",
+          "min-h-0 flex-1 touch-pan-y overflow-y-auto",
           messages.length > 0 ? "bg-background" : "bg-transparent"
         )}
         ref={messagesContainerRef}
@@ -245,23 +245,28 @@ function PureMessages({
         </div>
       </div>
 
-      <button
-        aria-hidden={isAtBottom}
+      <div
         className={cn(
-          "absolute bottom-4 left-1/2 z-10 inline-flex h-11 -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm text-foreground shadow-[var(--shadow-float)] transition-[opacity,transform] duration-150 motion-reduce:transition-none",
-          isAtBottom
-            ? "pointer-events-none scale-95 opacity-0"
-            : "pointer-events-auto scale-100 opacity-100"
+          "flex shrink-0 justify-center bg-background",
+          showJumpToLatest ? "px-4 pt-3 pb-2" : "h-0 overflow-hidden p-0"
         )}
-        data-testid="jump-to-latest"
-        data-visible={!isAtBottom}
-        onClick={() => scrollToBottom("smooth")}
-        tabIndex={isAtBottom ? -1 : 0}
-        type="button"
       >
-        <ArrowDownIcon className="size-4" />
-        {copy.jumpToLatest}
-      </button>
+        <button
+          aria-hidden={!showJumpToLatest}
+          className={cn(
+            "inline-flex h-11 items-center gap-2 rounded-full border border-border bg-card px-4 text-sm text-foreground shadow-[0_1px_2px_rgba(0,0,0,0.12)]",
+            showJumpToLatest ? "pointer-events-auto" : "pointer-events-none"
+          )}
+          data-testid="jump-to-latest"
+          data-visible={showJumpToLatest}
+          onClick={() => scrollToBottom("smooth")}
+          tabIndex={showJumpToLatest ? 0 : -1}
+          type="button"
+        >
+          <ArrowDownIcon className="size-4" />
+          {copy.jumpToLatest}
+        </button>
+      </div>
     </div>
   );
 }

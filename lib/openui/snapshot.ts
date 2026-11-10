@@ -3,6 +3,8 @@
  * tool result. The OpenUI Lang spec only names those ids.
  */
 
+import { extractFixture, fixtureFromStructured } from "./fixture";
+
 export const OPENUI_SCHEMA_VERSION = 1 as const;
 export const OPENUI_FORMAT = "openui-lang" as const;
 
@@ -107,51 +109,43 @@ export function readSeries(value: unknown): SeriesPoint[] {
   return points;
 }
 
-function readFixtures(value: unknown): string[][] {
-  if (!Array.isArray(value)) {
-    return [];
+function httpUrl(value: string): string {
+  if (!value.startsWith("http://") && !value.startsWith("https://")) {
+    return "";
   }
-  const rows: string[][] = [];
-  for (const item of value) {
-    const record = asRecord(item);
-    if (!record) {
-      continue;
+  try {
+    const url = new URL(value);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      return url.href;
     }
-    const when = plain(record.when, 80);
-    const competition = plain(record.competition, 80);
-    const opponent = plain(record.opponent, 80);
-    if (!when && !competition && !opponent) {
-      continue;
-    }
-    rows.push([when, competition, opponent]);
-    if (rows.length === 6) {
-      break;
-    }
+  } catch {
+    return "";
   }
-  return rows;
+  return "";
 }
 
-function readSources(value: unknown): string[][] {
-  const record = asRecord(value);
-  const results = record && Array.isArray(record.results) ? record.results : [];
-  const rows: string[][] = [];
-  for (const item of results) {
+function searchHits(record: Record<string, unknown>) {
+  if (!Array.isArray(record.results)) {
+    return [];
+  }
+  const hits: { title: string; url: string; snippet: string }[] = [];
+  for (const item of record.results) {
     const entry = asRecord(item);
     if (!entry) {
       continue;
     }
-    const title = plain(entry.title, 120) || plain(entry.site_name, 80);
-    const url = plain(entry.url, 200);
-    const quoteText = plain(entry.snippet ?? entry.content, 180);
-    if (!title) {
+    const title = plain(entry.title, 160);
+    const snippet = plain(entry.snippet ?? entry.content, 500);
+    const url = httpUrl(plain(entry.url, 300));
+    if (!title && !snippet) {
       continue;
     }
-    rows.push([title, url.startsWith("http") ? url : "", quoteText]);
-    if (rows.length === 5) {
+    hits.push({ title, url, snippet });
+    if (hits.length === 5) {
       break;
     }
   }
-  return rows;
+  return hits;
 }
 
 export function buildWeatherSnapshot(output: unknown): VisualSnapshot | null {
@@ -224,23 +218,50 @@ export function buildWeatherSnapshot(output: unknown): VisualSnapshot | null {
   return snapshot;
 }
 
-export function buildSearchSnapshot(output: unknown): VisualSnapshot | null {
+function firstFixture(
+  record: Record<string, unknown>,
+  hits: { title: string; url: string; snippet: string }[],
+  answer: string
+): string[][] | null {
+  if (Array.isArray(record.fixtures)) {
+    for (const item of record.fixtures) {
+      const row = asRecord(item);
+      if (!row) {
+        continue;
+      }
+      const structured = fixtureFromStructured({
+        team: plain(row.team ?? row.home, 80),
+        opponent: plain(row.opponent, 80),
+        when: [plain(row.date, 40), plain(row.when, 80)]
+          .filter(Boolean)
+          .join(" "),
+        time: plain(row.time, 20),
+        competition: plain(row.competition, 80),
+        venue: plain(row.venue, 80),
+        source: hits.find((hit) => hit.url)?.url ?? "",
+      });
+      if (structured) {
+        return structured;
+      }
+    }
+  }
+  return extractFixture(answer, hits);
+}
+
+export function buildSearchSnapshot(
+  output: unknown,
+  answer = ""
+): VisualSnapshot | null {
   const record = asRecord(output);
   if (!record) {
     return null;
   }
   const snapshot = emptySnapshot();
-  const sources = readSources(record);
-  if (sources.length > 0) {
-    snapshot.tables.sources = {
-      columns: ["Source", "URL", "Quoted"],
-      rows: sources,
-    };
-  }
-  const fixtures = readFixtures(record.fixtures);
-  if (fixtures.length > 0) {
+  const hits = searchHits(record);
+  const fixtures = firstFixture(record, hits, answer);
+  if (fixtures) {
     snapshot.tables.fixtures = {
-      columns: ["When", "Competition", "Opponent"],
+      columns: ["Field", "Value"],
       rows: fixtures,
     };
   }
@@ -262,13 +283,24 @@ export function buildSearchSnapshot(output: unknown): VisualSnapshot | null {
       };
     }
   }
-  if (
-    Object.keys(snapshot.tables).length === 0 &&
-    Object.keys(snapshot.series).length === 0
-  ) {
+  if (!fixtures && Object.keys(snapshot.series).length === 0) {
     return null;
   }
   return snapshot;
+}
+
+/** A links table is not a visual answer. Weather, series, and fixtures are. */
+export function hasStructuredVisual(data: VisualSnapshot): boolean {
+  if (
+    Object.keys(data.series).length > 0 ||
+    Object.keys(data.places).length > 0 ||
+    Object.keys(data.stats).length > 0
+  ) {
+    return true;
+  }
+  return Object.entries(data.tables).some(
+    ([id, table]) => id !== "sources" && table.rows.length > 0
+  );
 }
 
 export function specForSnapshot(
@@ -306,17 +338,9 @@ export function specForSnapshot(
     lines.push(`days = Table(${quote("Forecast")}, "daily")`);
     children.push("days");
   }
-  if (data.tables.sources) {
-    lines.push(`sources = Table(${quote("Sources")}, "sources")`);
-    children.push("sources");
-  }
   if (data.places.here) {
     lines.push(`place = Map(${quote(data.places.here.label)}, "here")`);
     children.push("place");
-  }
-  if (data.tables.daily && data.tables.sources) {
-    lines.push(`tabs = Tabs(["Forecast", "Sources"], ["daily", "sources"])`);
-    children.push("tabs");
   }
   lines[0] = `root = Card(${quote(title)}, ${quote(summary)}, [${children.join(", ")}])`;
   return lines.join("\n");

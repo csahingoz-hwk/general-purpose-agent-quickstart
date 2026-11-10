@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { OpenUiPayload } from "@/lib/openui/snapshot";
+import { hasStructuredVisual, type OpenUiPayload } from "@/lib/openui/snapshot";
 import { validateOpenUiSpec } from "@/lib/openui/validate";
 import { OpenUiRenderer } from "./openui-library";
 
@@ -21,6 +21,10 @@ export function OpenUiCard({ payload }: { payload: OpenUiPayload }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [details]);
 
+  if (!hasStructuredVisual(payload.data)) {
+    return null;
+  }
+
   if (!verdict.ok) {
     return (
       <section
@@ -37,7 +41,7 @@ export function OpenUiCard({ payload }: { payload: OpenUiPayload }) {
 
   return (
     <section
-      className="w-full max-w-[40rem] rounded-[22px] border border-[color:var(--hairline)] bg-card p-4 text-foreground shadow-[var(--shadow-card)]"
+      className="h-fit w-full max-w-[40rem] rounded-[22px] border border-[color:var(--hairline)] bg-card p-4 text-foreground shadow-[var(--shadow-card)]"
       data-testid="openui-card"
     >
       {!details && <OpenUiRenderer data={payload.data} spec={payload.spec} />}

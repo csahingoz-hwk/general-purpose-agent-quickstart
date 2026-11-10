@@ -4,6 +4,7 @@ import {
   buildWeatherSnapshot,
   DEFAULT_VISUAL_MODEL,
   fallbackTextFor,
+  hasStructuredVisual,
   type OpenUiPart,
   type OpenUiPayload,
   payloadFromSnapshot,
@@ -22,8 +23,23 @@ function partOutput(part: {
   return part.output;
 }
 
+function answerText(parts: readonly { type: string; text?: string }[]): string {
+  const blocks: string[] = [];
+  for (const part of parts) {
+    if (part.type === "text" && part.text) {
+      blocks.push(part.text.replace(/```[\s\S]*?```/g, " "));
+    }
+  }
+  return blocks.join("\n");
+}
+
 export function snapshotFromParts(
-  parts: readonly { type: string; output?: unknown; state?: string }[]
+  parts: readonly {
+    type: string;
+    output?: unknown;
+    state?: string;
+    text?: string;
+  }[]
 ): {
   title: string;
   summary: string;
@@ -39,10 +55,11 @@ export function snapshotFromParts(
       }
     }
   }
+  const answer = answerText(parts);
   for (const part of parts) {
     if (part.type === "tool-webSearch") {
-      const data = buildSearchSnapshot(partOutput(part));
-      if (!data) {
+      const data = buildSearchSnapshot(partOutput(part), answer);
+      if (!data || !hasStructuredVisual(data)) {
         continue;
       }
       if (data.series.rates) {
@@ -55,15 +72,10 @@ export function snapshotFromParts(
       if (data.tables.fixtures) {
         return {
           title: "Fixture",
-          summary: "Fixture rows and sources from the search tool",
+          summary: "Kickoff from the search tool",
           data,
         };
       }
-      return {
-        title: "Sources",
-        summary: "Pages returned by the search tool",
-        data,
-      };
     }
   }
   return null;
@@ -129,7 +141,7 @@ export function visualPayload(
 ): OpenUiPayload | null {
   const stored = parts.find((part) => part.type === "data-openui");
   if (stored?.type === "data-openui") {
-    return stored.data;
+    return hasStructuredVisual(stored.data.data) ? stored.data : null;
   }
   return buildOpenUiPayload(parts, sourceModel);
 }

@@ -151,23 +151,96 @@ function ChartGraphic({
   );
 }
 
-function TableView({ props }: { props: { title: string; dataset: string } }) {
-  const table = useSnapshot().tables[props.dataset];
-  if (!table) {
+function domainOf(value: string): string | null {
+  if (!value.startsWith("http://") && !value.startsWith("https://")) {
+    return null;
+  }
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    return url.hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
+
+function CellValue({ value }: { value: string }) {
+  const domain = domainOf(value);
+  if (!domain) {
+    return value;
+  }
+  return (
+    <a
+      className="text-[var(--bot-link)] underline"
+      href={value}
+      rel="noopener noreferrer"
+      target="_blank"
+    >
+      {domain}
+    </a>
+  );
+}
+
+function FixtureList({ rows }: { rows: string[][] }) {
+  const filled = rows.filter((row) => row[1]?.trim());
+  if (filled.length === 0) {
     return null;
   }
   return (
-    <div className="space-y-2">
-      <h3 className="font-medium text-[15px]">{props.title}</h3>
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
+    <div className="space-y-1" data-testid="openui-fixture">
+      {filled.map((row) => {
+        const label = row[0] ?? "";
+        const value = row[1] ?? "";
+        if (label === "Match") {
+          return (
+            <p className="font-semibold text-[15px] leading-snug" key={label}>
+              {value}
+            </p>
+          );
+        }
+        return (
+          <div
+            className="grid grid-cols-[6.75rem_minmax(0,1fr)] gap-x-2 text-[13px] leading-tight"
+            key={label}
+          >
+            <div className="text-muted-foreground">{label}</div>
+            <div className="min-w-0 truncate" title={value}>
+              <CellValue value={value} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function TableView({ props }: { props: { title: string; dataset: string } }) {
+  const table = useSnapshot().tables[props.dataset];
+  if (!table || props.dataset === "sources") {
+    return null;
+  }
+  if (props.dataset === "fixtures") {
+    return <FixtureList rows={table.rows} />;
+  }
+  const rows = table.rows.filter((row) => row.some((cell) => cell.trim()));
+  if (rows.length === 0) {
+    return null;
+  }
+  return (
+    <div className="space-y-1.5">
+      <h3 className="font-medium text-[15px] leading-tight">{props.title}</h3>
+      <div className="max-w-full overflow-x-auto overscroll-x-contain">
+        <table className="w-full table-fixed border-separate border-spacing-0 text-left text-[13px] leading-tight">
           <thead>
             <tr>
               {table.columns.map((column) => (
                 <th
-                  className="border-b border-border px-2 py-1 font-medium"
+                  className="truncate border-b border-border px-1.5 py-1 font-medium"
                   key={column}
                   scope="col"
+                  title={column}
                 >
                   {column}
                 </th>
@@ -175,27 +248,20 @@ function TableView({ props }: { props: { title: string; dataset: string } }) {
             </tr>
           </thead>
           <tbody>
-            {table.rows.map((row) => (
+            {rows.map((row) => (
               <tr key={row.join("|")}>
-                {row.map((cell, index) => (
-                  <td
-                    className="border-b border-border px-2 py-1 align-top whitespace-normal break-words [overflow-wrap:anywhere]"
-                    key={`${table.columns[index] ?? "col"}-${cell}`}
-                  >
-                    {cell.startsWith("http") ? (
-                      <a
-                        className="text-[var(--bot-accent)] underline"
-                        href={cell}
-                        rel="noopener noreferrer"
-                        target="_blank"
-                      >
-                        {cell.replace(/^https?:\/\//, "")}
-                      </a>
-                    ) : (
-                      cell
-                    )}
-                  </td>
-                ))}
+                {table.columns.map((column, index) => {
+                  const cell = row[index] ?? "";
+                  return (
+                    <td
+                      className="truncate border-b border-border px-1.5 py-1 align-middle"
+                      key={`${column}-${cell}`}
+                      title={cell}
+                    >
+                      <CellValue value={cell} />
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>

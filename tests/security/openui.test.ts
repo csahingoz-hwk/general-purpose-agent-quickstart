@@ -64,7 +64,127 @@ test("weather and search cards copy tool numbers and never invent them", () => {
   assert.equal(search.data.series.rates?.points[1]?.value, 34.4);
   assert.match(search.spec, /Slider\(/);
   assert.match(search.spec, /Chart\(/);
+  assert.equal(search.data.tables.sources, undefined);
+  assert.doesNotMatch(search.spec, /Sources/);
   assert.equal(/\d/.test(search.spec), false);
+});
+
+test("a search result that is only titles and snippets draws no card", () => {
+  const payload = buildOpenUiPayload(
+    [
+      {
+        type: "text",
+        text: "I looked that up.",
+      },
+      {
+        type: "tool-webSearch",
+        state: "output-available",
+        output: {
+          results: [
+            {
+              title: "Galatasaray news",
+              url: "https://example.com/galatasaray-news",
+              snippet: "Squad list and recent headlines.",
+            },
+          ],
+        },
+      },
+    ],
+    "gpt-6-luna",
+    "2026-11-10T00:00:00.000Z"
+  );
+  assert.equal(payload, null);
+});
+
+test("a fixture card is copied only when the answer and a snippet agree", () => {
+  const results = [
+    {
+      title: "Galatasaray fixture",
+      url: "https://www.mackolik.com/galatasaray",
+      snippet:
+        "Galatasaray - Trabzonspor | 22 Kasım 2026 20:00 | Süper Lig | RAMS Park",
+    },
+  ];
+  const agreed = buildOpenUiPayload(
+    [
+      {
+        type: "text",
+        text: "Galatasaray'ın sonraki maçı 22 Kasım 2026 Pazar günü saat 20.00'de Trabzonspor ile RAMS Park'ta Süper Lig'de.",
+      },
+      {
+        type: "tool-webSearch",
+        state: "output-available",
+        output: { results },
+      },
+    ],
+    "gpt-6-luna",
+    "2026-11-10T00:00:00.000Z"
+  );
+  assert.ok(agreed);
+  const rows = agreed.data.tables.fixtures?.rows ?? [];
+  const value = (label: string) => rows.find((row) => row[0] === label)?.[1];
+  assert.equal(value("Match"), "Galatasaray vs Trabzonspor");
+  assert.match(value("Date") ?? "", /22 Kasım 2026/);
+  assert.equal(value("Time"), "20:00");
+  assert.equal(value("Competition"), "Süper Lig");
+  assert.equal(value("Venue"), "RAMS Park");
+  assert.equal(value("Source"), "https://www.mackolik.com/galatasaray");
+  assert.equal(agreed.data.tables.sources, undefined);
+  assert.doesNotMatch(agreed.spec, /Sources/);
+  assert.equal(/\d/.test(agreed.spec), false);
+
+  const inventedTime = buildOpenUiPayload(
+    [
+      {
+        type: "text",
+        text: "Galatasaray vs Trabzonspor on 22 November 2026 at 21:30.",
+      },
+      {
+        type: "tool-webSearch",
+        state: "output-available",
+        output: {
+          results: [
+            {
+              title: "Fixture",
+              url: "https://example.com/fixture",
+              snippet: "Galatasaray vs Trabzonspor on 22 November 2026.",
+            },
+          ],
+        },
+      },
+    ],
+    "gpt-6-luna",
+    "2026-11-10T00:00:00.000Z"
+  );
+  assert.equal(
+    inventedTime?.data.tables.fixtures?.rows.find(
+      (row) => row[0] === "Time"
+    )?.[1],
+    "TBC"
+  );
+  assert.equal(
+    inventedTime?.data.tables.fixtures?.rows.find(
+      (row) => row[0] === "Venue"
+    )?.[1],
+    "TBC"
+  );
+
+  const uncited = buildOpenUiPayload(
+    [
+      {
+        type: "text",
+        text: "Galatasaray vs Fenerbahçe on 22 November 2026.",
+      },
+      {
+        type: "tool-webSearch",
+        state: "output-available",
+        output: { results },
+      },
+    ],
+    "gpt-6-luna",
+    "2026-11-10T00:00:00.000Z"
+  );
+  assert.equal(uncited, null);
 });
 
 test("a bad model spec falls back to readable tool text", () => {
@@ -148,7 +268,14 @@ test("the saved message part is versioned openui-lang and is not duplicated", ()
   assert.equal(part.data.format, "openui-lang");
   assert.equal(part.data.schemaVersion, 1);
   assert.equal(part.data.sourceModel, "gpt-6-luna");
-  assert.equal(part.data.data.tables.fixtures?.rows[0]?.[2], "Trabzonspor");
+  const fixtureRows = part.data.data.tables.fixtures?.rows ?? [];
+  assert.equal(
+    fixtureRows.find((row) => row[0] === "Match")?.[1],
+    "TBC vs Trabzonspor"
+  );
+  assert.equal(fixtureRows.find((row) => row[0] === "Time")?.[1], "20:00");
+  assert.equal(fixtureRows.find((row) => row[0] === "Venue")?.[1], "TBC");
+  assert.equal(part.data.data.tables.sources, undefined);
   assert.equal(
     attachOpenUiPart(saved, "gpt-6-luna").parts.length,
     saved.parts.length
