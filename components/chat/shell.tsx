@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useActiveChat } from "@/hooks/use-active-chat";
+import { useAgentActivity } from "@/hooks/use-agent-activity";
 import {
   initialArtifactData,
   useArtifact,
@@ -12,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { Artifact } from "./artifact";
 import { ChatHeader } from "./chat-header";
 import { DataStreamHandler } from "./data-stream-handler";
+import { MascotPreferenceProvider } from "./mascot-preference";
 import { submitEditedMessage } from "./message-editor";
 import { Messages } from "./messages";
 import { MultimodalInput } from "./multimodal-input";
@@ -35,6 +37,7 @@ export function ChatShell() {
     currentModelId,
     setCurrentModelId,
   } = useActiveChat();
+  const activity = useAgentActivity(status);
 
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(
     null
@@ -58,7 +61,7 @@ export function ChatShell() {
   }, [chatId, setArtifact]);
 
   return (
-    <>
+    <MascotPreferenceProvider>
       <div className="flex h-dvh w-full flex-row overflow-hidden">
         <div
           className={cn(
@@ -67,6 +70,7 @@ export function ChatShell() {
           )}
         >
           <ChatHeader
+            activity={activity}
             chatId={chatId}
             isReadonly={isReadonly}
             selectedVisibilityType={visibilityType}
@@ -74,6 +78,7 @@ export function ChatShell() {
 
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
             <Messages
+              activity={activity}
               addToolApprovalResponse={addToolApprovalResponse}
               chatId={chatId}
               isArtifactVisible={isArtifactVisible}
@@ -97,7 +102,7 @@ export function ChatShell() {
               votes={votes}
             />
 
-            <div className="relative z-10 mx-auto w-full max-w-[760px] px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-4 md:pb-[max(1rem,env(safe-area-inset-bottom))]">
+            <div className="relative z-10 mx-auto w-full max-w-[760px] pr-[max(0.75rem,env(safe-area-inset-right))] pb-[max(0.75rem,env(safe-area-inset-bottom))] pl-[max(0.75rem,env(safe-area-inset-left))] md:pr-[max(1rem,env(safe-area-inset-right))] md:pb-[max(1rem,env(safe-area-inset-bottom))] md:pl-[max(1rem,env(safe-area-inset-left))]">
               <div
                 aria-hidden="true"
                 className="pointer-events-none absolute inset-x-0 -top-8 bottom-0 bg-gradient-to-t from-background from-45% to-transparent"
@@ -166,6 +171,6 @@ export function ChatShell() {
       </div>
 
       <DataStreamHandler />
-    </>
+    </MascotPreferenceProvider>
   );
 }

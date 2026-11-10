@@ -1,9 +1,10 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
 import { ArrowDownIcon, RotateCcwIcon } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useMessages } from "@/hooks/use-messages";
 import { canRetryReply, interruptedReply } from "@/lib/ai/conversation-state";
 import type { Vote } from "@/lib/db/schema";
+import type { MascotState } from "@/lib/mascot";
 import type { ChatMessage } from "@/lib/types";
 import { getCopy } from "@/lib/ui-copy";
 import { cn } from "@/lib/utils";
@@ -16,6 +17,7 @@ import type { VisibilityType } from "./visibility-selector";
 const copy = getCopy();
 
 type MessagesProps = {
+  activity: MascotState;
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
   chatId: string;
   status: UseChatHelpers<ChatMessage>["status"];
@@ -33,6 +35,7 @@ type MessagesProps = {
 };
 
 function PureMessages({
+  activity,
   addToolApprovalResponse,
   chatId,
   status,
@@ -109,12 +112,40 @@ function PureMessages({
     }
   }, [chatId, reset]);
 
+  // When the transcript scroller starts underneath the fixed header, pad by
+  // that overlap so the first card is fully visible at the top of the scroll.
+  const [headerClearance, setHeaderClearance] = useState(0);
+  useLayoutEffect(() => {
+    const scroller = messagesContainerRef.current;
+    const header = document.querySelector("[data-chat-header]");
+    if (!scroller || !(header instanceof HTMLElement)) {
+      return;
+    }
+    const measure = () => {
+      const overlap = Math.ceil(
+        header.getBoundingClientRect().bottom -
+          scroller.getBoundingClientRect().top
+      );
+      const next = Math.max(0, overlap);
+      setHeaderClearance((current) => (current === next ? current : next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(header);
+    observer.observe(scroller);
+    return () => observer.disconnect();
+  }, [messagesContainerRef]);
+
+  const latestMessage = messages.at(-1);
+  const animatedMessageId =
+    latestMessage?.role === "assistant" ? latestMessage.id : null;
+
   return (
     <div className="relative flex-1 bg-background">
       {messages.length === 0 && !isLoading && (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-4">
           <div className="pointer-events-auto flex w-full max-w-md flex-col items-center gap-6">
-            <Greeting />
+            <Greeting activity={activity} />
             <SuggestedActions
               chatId={chatId}
               selectedVisibilityType={selectedVisibilityType}
@@ -129,18 +160,33 @@ function PureMessages({
           messages.length > 0 ? "bg-background" : "bg-transparent"
         )}
         ref={messagesContainerRef}
-        style={isArtifactVisible ? { scrollbarWidth: "none" } : undefined}
+        style={{
+          ...(isArtifactVisible ? { scrollbarWidth: "none" as const } : {}),
+          ...(headerClearance > 0 ? { scrollPaddingTop: headerClearance } : {}),
+        }}
       >
-        <div className="mx-auto flex min-h-full min-w-0 max-w-[760px] flex-col gap-4 px-4 py-4 md:px-6">
+        <div
+          className="mx-auto flex min-h-full min-w-0 max-w-[760px] flex-col gap-4 px-4 py-4 md:px-6"
+          style={
+            headerClearance > 0
+              ? {
+                  paddingTop: `calc(1rem + ${headerClearance}px)`,
+                  scrollMarginTop: headerClearance,
+                }
+              : undefined
+          }
+        >
           {messages.map((message, index) => (
             <PreviewMessage
               addToolApprovalResponse={addToolApprovalResponse}
+              animateMascot={message.id === animatedMessageId}
               chatId={chatId}
               isLoading={
                 status === "streaming" && messages.length - 1 === index
               }
               isReadonly={isReadonly}
               key={message.id}
+              mascotState={message.id === animatedMessageId ? activity : "idle"}
               message={message}
               onEdit={onEditMessage}
               regenerate={regenerate}
@@ -181,7 +227,7 @@ function PureMessages({
           )}
 
           {status === "submitted" && messages.at(-1)?.role !== "assistant" && (
-            <ThinkingMessage />
+            <ThinkingMessage state={activity} />
           )}
 
           <output

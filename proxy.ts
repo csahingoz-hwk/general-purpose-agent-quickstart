@@ -2,10 +2,22 @@ import { type NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 import { isOwnerIdentity } from "./lib/access-policy";
 
+function isInstallAsset(pathname: string) {
+  return (
+    pathname.endsWith("/manifest.webmanifest") ||
+    pathname.endsWith("/apple-touch-icon.png") ||
+    pathname.includes("/icons/")
+  );
+}
+
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
   if (pathname === "/ping") {
     return new Response("pong");
+  }
+  // Home-screen install fetches these without an app session.
+  if (isInstallAsset(pathname)) {
+    return NextResponse.next();
   }
   // These endpoints enforce their own policy, including disabled guest/cron routes.
   if (
@@ -39,6 +51,6 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt).*)",
+    "/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|manifest.webmanifest|apple-touch-icon.png|icons/).*)",
   ],
 };

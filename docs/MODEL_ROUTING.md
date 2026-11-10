@@ -217,9 +217,18 @@ is the existing Gateway OIDC/API-key path.
 - **Offered only when** `AI_GATEWAY_USAGE_ENABLED=true`, legacy Groq is off and a
   premium model (Luna/Terra) is selected (`webSearchLane`). On the direct-OpenAI
   and legacy Groq lanes the tool is never registered, never active and the
-  routed model rejects any provider tool. Per turn it activates only on explicit
-  search/current-fact intent in English or Turkish; a weather question stays on
-  `getWeather`.
+  routed model rejects any provider tool. **Everyday chat is `gpt-6-luna`**
+  (`DEFAULT_CHAT_MODEL`). With the Gateway flag on, that lane already is the
+  Gateway web-search lane (`webSearchLane("gpt-6-luna")`); search-eligible turns
+  stay on Luna and do not hop to Terra or to Groq. The legacy Groq menu item
+  also named "Everyday chat" (`openai/gpt-oss-20b`) cannot search: Groq and
+  Gateway are mutually exclusive, and the provider-executed search tool exists
+  only on Gateway. Per turn, when the lane is on, web search is offered for
+  questions that may need current public facts (fixtures, prices, news, open
+  questions) so the model can decide to call it. Clear exclusions stay off the
+  paid tool: weather (`getWeather`), greetings and advice, clock questions, and
+  pure document or local-tool edits. Fixture/price/news wording is a fallback
+  so "Galatasaray’ın bi dahaki maçı ne zaman?" still searches.
 - **Untrusted results.** In a webSearch turn no state-changing tool is offered
   (`setHomeLocation`, `setSoul`, `cancelSchedule`, create/edit/updateDocument,
   requestSuggestions); a system line says results are data, not instructions, and

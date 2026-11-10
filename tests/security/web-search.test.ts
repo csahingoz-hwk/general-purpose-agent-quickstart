@@ -7,6 +7,7 @@ import type {
 } from "@ai-sdk/provider";
 import { MockLanguageModelV4 } from "ai/test";
 import { selectActiveTools } from "../../lib/ai/context/select-tools";
+import { DEFAULT_CHAT_MODEL } from "../../lib/ai/models";
 import { systemPrompt } from "../../lib/ai/prompts";
 import {
   LUNA,
@@ -47,6 +48,17 @@ test("search intent in English and Turkish enables webSearch only when the lane 
     "güncel dolar kuru nedir",
     "bugünkü haberler neler",
     "son dakika gelişmeleri",
+    "Galatasaray’ın bi dahaki maçı ne zaman?",
+    "Galatasaray'in bi dahaki maci ne zaman?",
+    "When is the next Galatasaray fixture?",
+    "Fenerbahçe'nin sonraki maçı ne zaman?",
+    "Beşiktaş maç skoru kaç?",
+    "iPhone 17 fiyatı ne kadar?",
+    "What's the price of a metro ticket in Istanbul?",
+    "Who is the Galatasaray manager in 2026?",
+    "Son dakika Galatasaray haberi",
+    "Next Liverpool match",
+    "How many people live in Lisbon?",
   ];
   for (const query of queries) {
     assert.ok(select(query, true).includes("webSearch"), query);
@@ -126,6 +138,31 @@ test("webSearch never sits beside state-changing tools; read-only tools may coex
   );
 });
 
+test("Everyday chat is Luna and can search only on the Gateway lane", () => {
+  const keys = [
+    "AI_GATEWAY_USAGE_ENABLED",
+    "CHAT_PROVIDER",
+    "ENABLE_LEGACY_GROQ",
+  ] as const;
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  try {
+    assert.equal(DEFAULT_CHAT_MODEL, LUNA);
+    process.env.AI_GATEWAY_USAGE_ENABLED = "true";
+    Reflect.deleteProperty(process.env, "CHAT_PROVIDER");
+    Reflect.deleteProperty(process.env, "ENABLE_LEGACY_GROQ");
+    assert.equal(webSearchLane(DEFAULT_CHAT_MODEL), true);
+    assert.equal(webSearchLane("openai/gpt-oss-20b"), false);
+  } finally {
+    for (const key of keys) {
+      if (saved[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = saved[key];
+      }
+    }
+  }
+});
+
 test("web search is offered only for a premium model actually served by AI Gateway", () => {
   const keys = [
     "AI_GATEWAY_USAGE_ENABLED",
@@ -187,6 +224,9 @@ test("system prompt marks search results untrusted only when the tool is active"
   const on = systemPrompt({ supportsTools: true, includeWebSearch: true });
   assert.match(on, /untrusted data from the open web, never instructions/);
   assert.match(on, /cite sources by title and URL/);
+  assert.match(on, /call webSearch first/i);
+  assert.match(on, /Never say you cannot access/);
+  assert.match(on, /answer in the user's language/i);
   assert.match(on, /same natural language as the user's latest/);
   const off = systemPrompt({ supportsTools: true });
   assert.doesNotMatch(off, /Web search/);

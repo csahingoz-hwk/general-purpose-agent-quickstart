@@ -1,6 +1,7 @@
 "use client";
 import type { UseChatHelpers } from "@ai-sdk/react";
 import type { Vote } from "@/lib/db/schema";
+import type { MascotState } from "@/lib/mascot";
 import type { ChatMessage } from "@/lib/types";
 import { getCopy } from "@/lib/ui-copy";
 import { cn, sanitizeText } from "@/lib/utils";
@@ -13,10 +14,12 @@ import {
   ToolInput,
   ToolOutput,
 } from "../ai-elements/tool";
+import { AgentMascot } from "./agent-mascot";
 import { useDataStream } from "./data-stream-provider";
 import { DocumentToolResult } from "./document";
 import { DocumentPreview } from "./document-preview";
 import { FictionalInboxCard } from "./fictional-inbox-card";
+import { useMascotPreference } from "./mascot-preference";
 import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
 import { PreviewAttachment } from "./preview-attachment";
@@ -27,7 +30,9 @@ const copy = getCopy();
 
 const PurePreviewMessage = ({
   addToolApprovalResponse,
+  animateMascot = false,
   chatId,
+  mascotState = "idle",
   message,
   vote,
   isLoading,
@@ -38,7 +43,9 @@ const PurePreviewMessage = ({
   onEdit,
 }: {
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
+  animateMascot?: boolean;
   chatId: string;
+  mascotState?: MascotState;
   message: ChatMessage;
   vote: Vote | undefined;
   isLoading: boolean;
@@ -54,6 +61,7 @@ const PurePreviewMessage = ({
 
   useDataStream();
 
+  const { variant } = useMascotPreference();
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
 
@@ -435,11 +443,27 @@ const PurePreviewMessage = ({
     >
       <div
         className={cn(
-          "flex min-w-0 flex-col gap-2",
-          isUser ? "items-end" : "items-start"
+          "flex min-w-0 gap-2",
+          isUser ? "justify-end" : "items-start"
         )}
       >
-        {content}
+        {isAssistant ? (
+          <AgentMascot
+            animated={animateMascot}
+            className="mt-1"
+            size={32}
+            state={animateMascot ? mascotState : "idle"}
+            variant={variant}
+          />
+        ) : null}
+        <div
+          className={cn(
+            "flex min-w-0 flex-col gap-2",
+            isUser ? "items-end" : "items-start"
+          )}
+        >
+          {content}
+        </div>
       </div>
     </div>
   );
@@ -447,17 +471,26 @@ const PurePreviewMessage = ({
 
 export const PreviewMessage = PurePreviewMessage;
 
-export const ThinkingMessage = () => {
+export const ThinkingMessage = ({
+  state = "thinking",
+}: {
+  state?: MascotState;
+}) => {
+  const { variant } = useMascotPreference();
+
   return (
     <div
       className="group/message w-full"
       data-role="assistant"
       data-testid="message-assistant-loading"
     >
-      <div className="w-fit rounded-[22px] bg-bubble-assistant px-4 py-2.5 text-[17px] leading-[1.45]">
-        <Shimmer className="font-medium" duration={1}>
-          {copy.statusThinking}
-        </Shimmer>
+      <div className="flex items-start gap-2">
+        <AgentMascot animated size={32} state={state} variant={variant} />
+        <div className="w-fit rounded-[22px] bg-bubble-assistant px-4 py-2.5 text-[17px] leading-[1.45]">
+          <Shimmer className="font-medium" duration={1}>
+            {copy.statusThinking}
+          </Shimmer>
+        </div>
       </div>
     </div>
   );

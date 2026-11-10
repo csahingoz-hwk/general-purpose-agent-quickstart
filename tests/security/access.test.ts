@@ -94,6 +94,21 @@ test("cron requires a configured matching secret in every environment and never 
   }
 });
 
+test("home-screen install assets skip the auth redirect", async () => {
+  for (const path of [
+    "/manifest.webmanifest",
+    "/apple-touch-icon.png",
+    "/icons/icon-192.png",
+    "/icons/icon-512.png",
+    "/icons/icon-maskable-192.png",
+    "/icons/icon-maskable-512.png",
+  ]) {
+    const response = await proxy(new NextRequest(`http://localhost${path}`));
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("location"), null);
+  }
+});
+
 test("alternate execution and guest endpoints are disabled", () => {
   assert.equal(guest().status, 403);
   assert.equal(telegram().status, 503);

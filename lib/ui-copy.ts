@@ -50,6 +50,11 @@ const en = {
   statusInterrupted: "The reply was interrupted. What arrived is kept.",
   interruptedAfterTool:
     "This reply stopped after a tool ran. Send a follow-up to continue without repeating its action.",
+  mascot: "Mascot",
+  mascotStateIdle: "waiting",
+  mascotStateThinking: "thinking",
+  mascotStateWorking: "working",
+  mascotStateDone: "finished",
 } as const;
 
 type Widen<T> = T extends string
@@ -104,6 +109,11 @@ const tr: UiCopy = {
   statusInterrupted: "Yanıt yarıda kesildi. Gelen kısım korundu.",
   interruptedAfterTool:
     "Bu yanıt bir araç çalıştıktan sonra durdu. İşlemi tekrarlamadan devam etmek için bir mesaj gönder.",
+  mascot: "Maskot",
+  mascotStateIdle: "bekliyor",
+  mascotStateThinking: "düşünüyor",
+  mascotStateWorking: "çalışıyor",
+  mascotStateDone: "bitti",
 };
 
 export const uiCopy: { readonly en: UiCopy; readonly tr: UiCopy } = {
