@@ -44,48 +44,67 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  --color-bubble-user: var(--bubble-user);
+  --color-bubble-user-foreground: var(--bubble-user-foreground);
+  --color-bubble-assistant: var(--bubble-assistant);
+  --color-send: var(--send);
+  --color-send-foreground: var(--send-foreground);
+  --color-send-muted: var(--send-muted);
+  --color-send-muted-foreground: var(--send-muted-foreground);
+  --color-control: var(--control);
 }
 
 :root {
   --radius: 0.625rem;
-  --background: oklch(0.985 0 0);
-  --foreground: oklch(0.12 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.12 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.12 0 0);
-  --primary: oklch(0.12 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.965 0 0);
-  --secondary-foreground: oklch(0.38 0 0);
-  --muted: oklch(0.94 0 0);
-  --muted-foreground: oklch(0.5 0 0);
-  --accent: oklch(0.965 0 0);
-  --accent-foreground: oklch(0.12 0 0);
+  --background: #f6f5f3;
+  --foreground: #161513;
+  --card: #ffffff;
+  --card-foreground: #161513;
+  --popover: #ffffff;
+  --popover-foreground: #161513;
+  --primary: #7a5234;
+  --primary-foreground: #ffffff;
+  --secondary: #f1f0ee;
+  --secondary-foreground: #3d3a36;
+  --muted: #f1f0ee;
+  --muted-foreground: #5c5854;
+  --accent: #f1f0ee;
+  --accent-foreground: #161513;
   --destructive: oklch(0.55 0.15 25);
-  --border: oklch(0.9 0 0);
-  --input: oklch(0.9 0 0);
-  --ring: oklch(0.5 0 0);
+  --border: #e6e3df;
+  --input: #e6e3df;
+  --ring: #7a5234;
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
   --chart-4: oklch(0.828 0.189 84.429);
   --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.97 0 0);
-  --sidebar-foreground: oklch(0.38 0 0);
-  --sidebar-primary: oklch(0.12 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.12 0 0 / 0.06);
-  --sidebar-accent-foreground: oklch(0.12 0 0);
-  --sidebar-border: oklch(0.88 0 0);
-  --sidebar-ring: oklch(0.5 0 0);
+  --sidebar: #f6f5f3;
+  --sidebar-foreground: #161513;
+  --sidebar-primary: #7a5234;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #efeae4;
+  --sidebar-accent-foreground: #161513;
+  --sidebar-border: rgba(0, 0, 0, 0.07);
+  --sidebar-ring: #7a5234;
 
-  --shadow-card: 0 1px 3px oklch(0 0 0 / 0.05), 0 1px 1px oklch(0 0 0 / 0.03);
-  --shadow-float:
-    0 8px 24px -6px oklch(0 0 0 / 0.1), 0 2px 8px -2px oklch(0 0 0 / 0.04);
-  --shadow-composer: 0 1px 2px oklch(0 0 0 / 0.04);
+  --bubble-user: #7a5234;
+  --bubble-user-foreground: #ffffff;
+  --bubble-assistant: #efeeec;
+  --send: #7a5234;
+  --send-foreground: #ffffff;
+  --send-muted: #e7e5e2;
+  --send-muted-foreground: #5f5b56;
+  --control: #f1f0ee;
+  --hairline: rgba(0, 0, 0, 0.07);
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-float: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+  --shadow-composer:
+    0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
   --shadow-composer-focus:
-    0 0 0 1px oklch(0 0 0 / 0.06), 0 2px 8px -2px oklch(0 0 0 / 0.06);
+    0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06),
+    0 0 0 3px color-mix(in srgb, #7a5234 22%, transparent);
   --shadow-inset: inset 0 1px 1px oklch(0 0 0 / 0.03);
   --shadow-glow: 0 0 20px oklch(0 0 0 / 0.08);
 
@@ -95,49 +114,56 @@
 }
 
 .dark {
-  --background: oklch(0.195 0 0);
-  --foreground: oklch(0.94 0 0);
-  --card: oklch(0.225 0 0);
-  --card-foreground: oklch(0.94 0 0);
-  --popover: oklch(0.225 0 0);
-  --popover-foreground: oklch(0.94 0 0);
-  --primary: oklch(0.94 0 0);
-  --primary-foreground: oklch(0.195 0 0);
-  --secondary: oklch(0.26 0 0);
-  --secondary-foreground: oklch(0.75 0 0);
-  --muted: oklch(0.165 0 0);
-  --muted-foreground: oklch(0.7 0 0);
-  --accent: oklch(0.26 0 0);
-  --accent-foreground: oklch(0.94 0 0);
+  --background: #141311;
+  --foreground: #f4f1ec;
+  --card: #221f1c;
+  --card-foreground: #f4f1ec;
+  --popover: #2a2623;
+  --popover-foreground: #f4f1ec;
+  --primary: #7a5234;
+  --primary-foreground: #ffffff;
+  --secondary: #2c2926;
+  --secondary-foreground: #e7e1d8;
+  --muted: #2c2926;
+  --muted-foreground: #c8c2b8;
+  --accent: #2c2926;
+  --accent-foreground: #f4f1ec;
   --destructive: oklch(0.7 0.15 25);
-  --border: oklch(0.27 0 0);
-  --input: oklch(0.27 0 0);
-  --ring: oklch(0.45 0 0);
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.12);
+  --ring: #c4a484;
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
   --chart-4: oklch(0.627 0.265 303.9);
   --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.175 0 0);
-  --sidebar-foreground: oklch(0.78 0 0);
-  --sidebar-primary: oklch(0.94 0 0);
-  --sidebar-primary-foreground: oklch(0.195 0 0);
-  --sidebar-accent: oklch(0.94 0 0 / 0.06);
-  --sidebar-accent-foreground: oklch(0.94 0 0);
-  --sidebar-border: oklch(0.25 0 0);
-  --sidebar-ring: oklch(0.45 0 0);
+  --sidebar: #141311;
+  --sidebar-foreground: #f4f1ec;
+  --sidebar-primary: #c4a484;
+  --sidebar-primary-foreground: #1a120c;
+  --sidebar-accent: #2c2926;
+  --sidebar-accent-foreground: #f4f1ec;
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --sidebar-ring: #c4a484;
+
+  --bubble-user: #7a5234;
+  --bubble-user-foreground: #ffffff;
+  --bubble-assistant: #2c2926;
+  --send: #7a5234;
+  --send-foreground: #ffffff;
+  --send-muted: #2c2926;
+  --send-muted-foreground: #a8a29a;
+  --control: #2c2926;
+  --hairline: rgba(255, 255, 255, 0.1);
 
   --shadow-card:
-    inset 0 1px 0 oklch(1 0 0 / 0.04), 0 1px 2px oklch(0 0 0 / 0.2),
-    0 0.5px 1px oklch(0 0 0 / 0.15);
-  --shadow-float:
-    0 0 0 1px oklch(1 0 0 / 0.06), 0 16px 48px -6px oklch(0 0 0 / 0.35),
-    0 6px 12px -2px oklch(0 0 0 / 0.2);
+    inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-float: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.45);
   --shadow-composer:
-    0 1px 3px oklch(0 0 0 / 0.2), inset 0 1px 0 oklch(1 0 0 / 0.03);
+    0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.45);
   --shadow-composer-focus:
-    0 0 0 1px oklch(1 0 0 / 0.1), 0 4px 16px -4px oklch(0 0 0 / 0.3),
-    inset 0 1px 0 oklch(1 0 0 / 0.04);
+    0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.45),
+    0 0 0 3px color-mix(in srgb, #c4a484 35%, transparent);
 }
 
 @layer base {
@@ -146,10 +172,23 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family:
+      -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui,
+      sans-serif;
     font-feature-settings: "ss01", "ss02", "cv01";
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--send) 28%, transparent);
+    color: var(--foreground);
+  }
+
+  textarea,
+  input {
+    caret-color: var(--send);
   }
 }
 
@@ -497,4 +536,32 @@ textarea:focus-visible {
 
 [data-testid="artifact"] {
   isolation: isolate;
+}
+
+/* Preview toolbar (injected on Vercel previews) sits in the header band
+   instead of covering the transcript. The header also parks the host
+   into [data-slot="preview-toolbar"] when it can. */
+vercel-live-feedback,
+vercel-toolbar,
+#__vercel_toolbar,
+#vercel-toolbar,
+#vercel-live-feedback {
+  top: max(8px, env(safe-area-inset-top)) !important;
+  right: 68px !important;
+  bottom: auto !important;
+  left: auto !important;
+  transform: none !important;
+}
+
+[data-slot="preview-toolbar"]
+  :is(
+    vercel-live-feedback,
+    vercel-toolbar,
+    #__vercel_toolbar,
+    #vercel-toolbar,
+    #vercel-live-feedback
+  ) {
+  position: static !important;
+  inset: auto !important;
+  transform: none !important;
 }

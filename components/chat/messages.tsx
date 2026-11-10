@@ -10,6 +10,8 @@ import { cn } from "@/lib/utils";
 import { useDataStream } from "./data-stream-provider";
 import { Greeting } from "./greeting";
 import { PreviewMessage, ThinkingMessage } from "./message";
+import { SuggestedActions } from "./suggested-actions";
+import type { VisibilityType } from "./visibility-selector";
 
 const copy = getCopy();
 
@@ -25,6 +27,8 @@ type MessagesProps = {
   isArtifactVisible: boolean;
   isLoading?: boolean;
   selectedModelId: string;
+  selectedVisibilityType: VisibilityType;
+  sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
   onEditMessage?: (message: ChatMessage) => void;
 };
 
@@ -40,6 +44,8 @@ function PureMessages({
   isArtifactVisible,
   isLoading,
   selectedModelId: _selectedModelId,
+  selectedVisibilityType,
+  sendMessage,
   onEditMessage,
 }: MessagesProps) {
   const {
@@ -106,8 +112,15 @@ function PureMessages({
   return (
     <div className="relative flex-1 bg-background">
       {messages.length === 0 && !isLoading && (
-        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-          <Greeting />
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-4">
+          <div className="pointer-events-auto flex w-full max-w-md flex-col items-center gap-6">
+            <Greeting />
+            <SuggestedActions
+              chatId={chatId}
+              selectedVisibilityType={selectedVisibilityType}
+              sendMessage={sendMessage}
+            />
+          </div>
         </div>
       )}
       <div
@@ -118,7 +131,7 @@ function PureMessages({
         ref={messagesContainerRef}
         style={isArtifactVisible ? { scrollbarWidth: "none" } : undefined}
       >
-        <div className="mx-auto flex min-h-full min-w-0 max-w-4xl flex-col gap-5 px-2 py-6 md:gap-7 md:px-4">
+        <div className="mx-auto flex min-h-full min-w-0 max-w-[760px] flex-col gap-4 px-4 py-4 md:px-6">
           {messages.map((message, index) => (
             <PreviewMessage
               addToolApprovalResponse={addToolApprovalResponse}

@@ -29,7 +29,7 @@ const en = {
   searchFailed: "The web search could not be completed.",
   searchNoResults: "No results were found.",
   searchSources: "Sources",
-  composerPlaceholder: "Ask anything…",
+  composerPlaceholder: "Ask …",
   editPlaceholder: "Edit your message…",
   editingMessage: "Editing message",
   cancel: "Cancel",

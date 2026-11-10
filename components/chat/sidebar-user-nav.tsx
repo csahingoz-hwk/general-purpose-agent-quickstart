@@ -51,7 +51,7 @@ export function SidebarUserNav({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             {status === "loading" ? (
-              <SidebarMenuButton className="h-10 justify-between rounded-lg bg-transparent text-sidebar-foreground transition-colors duration-150 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground">
+              <SidebarMenuButton className="h-auto min-h-[60px] justify-between rounded-[20px] bg-card px-4 text-foreground data-[state=open]:bg-card">
                 <div className="flex flex-row items-center gap-2">
                   <div className="size-6 animate-pulse rounded-full bg-sidebar-foreground/10" />
                   <span className="animate-pulse rounded-md bg-sidebar-foreground/10 text-transparent text-[13px]">
@@ -64,7 +64,7 @@ export function SidebarUserNav({
               </SidebarMenuButton>
             ) : (
               <SidebarMenuButton
-                className="h-11 px-2 rounded-lg bg-transparent text-sidebar-foreground transition-colors duration-150 md:h-8 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+                className="h-auto min-h-[60px] rounded-[20px] bg-card px-4 text-[17px] text-foreground hover:bg-card data-[state=open]:bg-card group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:min-h-8! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-full group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:px-0!"
                 data-testid="user-nav-button"
               >
                 <div
@@ -73,15 +73,18 @@ export function SidebarUserNav({
                     background: `linear-gradient(135deg, oklch(0.35 0.08 ${emailToHue(user.email ?? "")}), oklch(0.25 0.05 ${emailToHue(user.email ?? "") + 40}))`,
                   }}
                 />
-                <span className="truncate text-[13px]" data-testid="user-email">
+                <span
+                  className="truncate text-[17px] group-data-[collapsible=icon]:hidden"
+                  data-testid="user-email"
+                >
                   {isGuest ? "Guest" : user?.email}
                 </span>
-                <ChevronUp className="ml-auto size-3.5 text-sidebar-foreground" />
+                <ChevronUp className="ml-auto size-3.5 text-sidebar-foreground group-data-[collapsible=icon]:hidden" />
               </SidebarMenuButton>
             )}
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            className="w-(--radix-popper-anchor-width) rounded-lg border border-border/60 bg-card/95 backdrop-blur-xl shadow-[var(--shadow-float)]"
+            className="w-(--radix-popper-anchor-width) rounded-[20px] border border-[color:var(--hairline)] bg-card shadow-[var(--shadow-float)]"
             data-testid="user-nav-menu"
             side="top"
           >
