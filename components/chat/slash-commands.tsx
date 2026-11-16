@@ -2,6 +2,8 @@
 
 import {
   BombIcon,
+  BookOpenIcon,
+  ClockIcon,
   ListIcon,
   PaletteIcon,
   PenLineIcon,
@@ -50,6 +52,18 @@ export const slashCommands: SlashCommand[] = [
     description: "Toggle dark/light mode",
     icon: <PaletteIcon className="size-3.5" />,
     action: "theme",
+  },
+  {
+    name: "routines",
+    description: "Open routines, background tasks & vault",
+    icon: <ClockIcon className="size-3.5" />,
+    action: "routines",
+  },
+  {
+    name: "memory",
+    description: "Open profile & journal memory",
+    icon: <BookOpenIcon className="size-3.5" />,
+    action: "memory",
   },
   {
     name: "delete",

@@ -41,20 +41,25 @@ import {
 } from "@/lib/ai/routing/catalog";
 import { createUsageLedger } from "@/lib/ai/routing/ledger";
 import { inferenceSession } from "@/lib/ai/routing/session";
+import { askUserQuestion } from "@/lib/ai/tools/ask-question";
 import { cancelSchedule } from "@/lib/ai/tools/cancel-schedule";
 import { createDocument } from "@/lib/ai/tools/create-document";
 import { demoInbox } from "@/lib/ai/tools/demo-inbox";
+import { draftOutboundMessage } from "@/lib/ai/tools/draft-outbound";
 import { editDocument } from "@/lib/ai/tools/edit-document";
 import { getCurrentTime } from "@/lib/ai/tools/get-current-time";
 import { getFixtures } from "@/lib/ai/tools/get-fixtures";
 import { getWeather } from "@/lib/ai/tools/get-weather";
 import { listMySchedules } from "@/lib/ai/tools/list-my-schedules";
+import { createMemoryTools } from "@/lib/ai/tools/memory-tools";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
+import { scheduleTask } from "@/lib/ai/tools/schedule-task";
 import { setHomeLocation } from "@/lib/ai/tools/set-home-location";
 import { setSoul } from "@/lib/ai/tools/set-soul";
 import { updateDocument } from "@/lib/ai/tools/update-document";
 import { webSearch } from "@/lib/ai/tools/web-search";
 import { isProductionEnvironment } from "@/lib/constants";
+import { isRoutinesEnabled } from "@/lib/cron/routine-presets";
 import { acquireChatLock } from "@/lib/db/chat-lock";
 import {
   createStreamId,
@@ -70,6 +75,10 @@ import {
 } from "@/lib/db/queries";
 import type { DBMessage } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
+import {
+  createPostgresMemoryStore,
+  isMemoryToolsEnabled,
+} from "@/lib/memory/store";
 import { attachOpenUiPart } from "@/lib/openui/attach";
 import { checkIpRateLimit } from "@/lib/ratelimit";
 import { contextBlock, validTimeZone } from "@/lib/temporal";
@@ -348,12 +357,25 @@ export async function POST(request: Request) {
               modelId: chatModel,
             }),
             ...(searchLane ? { webSearch: webSearch() } : {}),
+            askUserQuestion,
             listMySchedules: listMySchedules({ session }),
             cancelSchedule: cancelSchedule({ session }),
             ...(session.user.type !== "guest"
               ? {
                   setSoul: setSoul({ userId: session.user.id }),
                   setHomeLocation: setHomeLocation({ userId: session.user.id }),
+                  draftOutboundMessage: draftOutboundMessage({
+                    hasUntrustedContext: requestedTools.includes("webSearch"),
+                  }),
+                  ...(isRoutinesEnabled()
+                    ? { scheduleTask: scheduleTask({ session }) }
+                    : {}),
+                  ...(isMemoryToolsEnabled()
+                    ? createMemoryTools({
+                        userId: session.user.id,
+                        store: createPostgresMemoryStore(),
+                      })
+                    : {}),
                 }
               : {}),
           };

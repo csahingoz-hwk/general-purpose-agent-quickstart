@@ -99,6 +99,18 @@ export function SidebarUserNav({
             </DropdownMenuItem>
             <DropdownMenuItem
               className="min-h-11 cursor-pointer text-[13px] md:min-h-8"
+              onSelect={() => router.push("/routines")}
+            >
+              {copy.routinesAndTasks}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 cursor-pointer text-[13px] md:min-h-8"
+              onSelect={() => router.push("/memory")}
+            >
+              {copy.memory}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 cursor-pointer text-[13px] md:min-h-8"
               onSelect={() => router.push("/usage")}
             >
               {copy.usageAndSettings}

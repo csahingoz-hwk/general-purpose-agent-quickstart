@@ -17,6 +17,7 @@ import {
   ToolOutput,
 } from "../ai-elements/tool";
 import { AgentMascot } from "./agent-mascot";
+import { ApprovalCard } from "./approval-card";
 import { useDataStream } from "./data-stream-provider";
 import { DocumentToolResult } from "./document";
 import { DocumentPreview } from "./document-preview";
@@ -26,7 +27,9 @@ import { useMascotPreference } from "./mascot-preference";
 import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
 import { OpenUiCard } from "./openui-card";
+import { OutboundDraftCard } from "./outbound-draft-card";
 import { PreviewAttachment } from "./preview-attachment";
+import { QuestionCard } from "./question-card";
 import { Weather } from "./weather";
 import { WebSearchCard } from "./web-search-card";
 
@@ -45,6 +48,7 @@ const PurePreviewMessage = ({
   isReadonly,
   requiresScrollPadding: _requiresScrollPadding,
   onEdit,
+  onSelectQuestionOption,
   locale = "en",
 }: {
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
@@ -59,6 +63,7 @@ const PurePreviewMessage = ({
   isReadonly: boolean;
   requiresScrollPadding: boolean;
   onEdit?: (message: ChatMessage) => void;
+  onSelectQuestionOption?: (answer: string) => void;
   locale?: "en" | "tr";
 }) => {
   const attachmentsFromMessage = message.parts.filter(
@@ -392,11 +397,57 @@ const PurePreviewMessage = ({
       );
     }
 
+    if (type === "tool-draftOutboundMessage") {
+      const approval = (
+        part as { approval?: { id?: string; approved?: boolean } }
+      ).approval;
+      return (
+        <OutboundDraftCard
+          addToolApprovalResponse={addToolApprovalResponse}
+          approvalId={approval?.id}
+          approved={approval?.approved}
+          input={"input" in part ? part.input : undefined}
+          isReadonly={isReadonly}
+          key={part.toolCallId}
+          locale={locale}
+          output={
+            part.state === "output-available" && "output" in part
+              ? part.output
+              : undefined
+          }
+          state={part.state}
+        />
+      );
+    }
+
+    if (type === "tool-askUserQuestion") {
+      if (
+        part.state === "output-available" &&
+        "output" in part &&
+        part.output
+      ) {
+        return (
+          <QuestionCard
+            isReadonly={isReadonly}
+            key={part.toolCallId}
+            locale={locale}
+            onSelectOption={onSelectQuestionOption}
+            payload={part.output}
+          />
+        );
+      }
+      return null;
+    }
+
     if (type.startsWith("tool-")) {
       const { toolCallId, state } = part as {
         toolCallId: string;
         state: string;
       };
+      const toolName = type.slice(5);
+      const approval = (
+        part as { approval?: { id?: string; approved?: boolean } }
+      ).approval;
       const input =
         "input" in part ? (part.input as Record<string, unknown>) : undefined;
       const output = "output" in part ? part.output : undefined;
@@ -404,6 +455,27 @@ const PurePreviewMessage = ({
         "errorText" in part
           ? "This tool could not finish. Please try again later."
           : undefined;
+
+      if (
+        state === "approval-requested" ||
+        state === "approval-responded" ||
+        state === "output-denied"
+      ) {
+        return (
+          <ApprovalCard
+            addToolApprovalResponse={addToolApprovalResponse}
+            approvalId={approval?.id}
+            approved={approval?.approved}
+            input={input}
+            isReadonly={isReadonly}
+            key={toolCallId}
+            locale={locale}
+            state={state}
+            title={toolName}
+            toolName={toolName}
+          />
+        );
+      }
 
       return (
         <Tool

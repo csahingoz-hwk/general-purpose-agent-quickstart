@@ -198,6 +198,12 @@ function PureMultimodalInput({
       case "theme":
         setTheme(resolvedTheme === "dark" ? "light" : "dark");
         break;
+      case "routines":
+        router.push("/routines");
+        break;
+      case "memory":
+        router.push("/memory");
+        break;
       case "delete":
         toast("Delete this chat?", {
           action: {

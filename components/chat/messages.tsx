@@ -199,6 +199,12 @@ function PureMessages({
               mascotState={message.id === animatedMessageId ? activity : "idle"}
               message={message}
               onEdit={onEditMessage}
+              onSelectQuestionOption={(answer) => {
+                sendMessage({
+                  role: "user",
+                  parts: [{ type: "text", text: answer }],
+                });
+              }}
               regenerate={regenerate}
               requiresScrollPadding={
                 hasSentMessage && index === messages.length - 1

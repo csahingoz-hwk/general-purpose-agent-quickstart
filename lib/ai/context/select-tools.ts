@@ -1,3 +1,5 @@
+import { isRoutinesEnabled } from "@/lib/cron/routine-presets";
+import { isMemoryToolsEnabled } from "@/lib/memory/store";
 import type { ChatMessage } from "@/lib/types";
 
 export const AVAILABLE_CHAT_TOOLS = [
@@ -9,11 +11,17 @@ export const AVAILABLE_CHAT_TOOLS = [
   "editDocument",
   "updateDocument",
   "requestSuggestions",
+  "scheduleTask",
   "listMySchedules",
   "cancelSchedule",
   "setSoul",
   "webSearch",
   "getFixtures",
+  "draftOutboundMessage",
+  "askUserQuestion",
+  "saveProfileFact",
+  "addJournalEntry",
+  "recallMemories",
 ] as const;
 
 export type ChatToolName = (typeof AVAILABLE_CHAT_TOOLS)[number];
@@ -55,17 +63,21 @@ const FIXTURE_PATTERN_TR =
   /(?<![\p{L}])(?:sıradaki|siradaki|bir sonraki|bi(?:r)? dahaki|sonraki ma\p{L}*|gelecek ma\p{L}*|fikst[uü]r\p{L}*|maç sonucu|mac sonucu|son ma\p{L}*|sonuç|sonuc|skor\p{L}*|ne zaman.{0,40}ma[cç]|ma[cç]\p{L}*.{0,24}ne zaman)(?![\p{L}])/iu;
 
 const LOCAL_COMMAND_PATTERN =
-  /\b(demo|mock|fictional|sample|test inbox|my home city|set my city|my city is|i live in|i'?m based in|home is in|my schedules|scheduled tasks|recurring tasks|cancel schedule|customize your personality|change your personality|remember my preferred style|set your personality)\b|hayal[iî]|örnek gelen kutusu|sahte e.?posta|ev şehrim|şehrim|yaşıyorum|zamanlanmış görev|planlanmış görev|görevlerimi listele|görevi iptal|kişiliğini değiştir|tarzını kaydet|kişiselleştir/;
+  /\b(demo|mock|fictional|sample|test inbox|my home city|set my city|my city is|i live in|i'?m based in|home is in|my schedules|scheduled tasks|recurring tasks|cancel schedule|schedule a task|schedule a routine|create a routine|customize your personality|change your personality|remember my preferred style|set your personality|draft an? email|draft a message|draft a slack|draft a telegram|prepare an? outbound draft|ask me a clarifying question|give me clickable options|save to my profile|log in my journal|search my memory|recall from memory)\b|hayal[iî]|örnek gelen kutusu|sahte e.?posta|ev şehrim|şehrim|yaşıyorum|zamanlanmış görev|planlanmış görev|görevlerimi listele|görevi iptal|rutin oluştur|kişiliğini değiştir|tarzını kaydet|kişiselleştir|taslak e-?posta hazırla|gönderim taslağı|bana seçenek kartı göster|belleğime kaydet|günlüğüme ekle/;
 
 /** Tools that change stored state; never offered in a turn that reads web content. */
 const STATE_CHANGING_TOOLS: readonly ChatToolName[] = [
   "setHomeLocation",
   "setSoul",
+  "scheduleTask",
   "cancelSchedule",
   "createDocument",
   "editDocument",
   "updateDocument",
   "requestSuggestions",
+  "draftOutboundMessage",
+  "saveProfileFact",
+  "addJournalEntry",
 ];
 
 function userText(message: ChatMessage): string {
@@ -242,6 +254,74 @@ export function selectActiveTools(
     )
   ) {
     enabled.push("setSoul");
+  }
+
+  if (
+    canPersonalize &&
+    /\b(draft (?:an? )?(?:email|message|slack|telegram|webhook)|prepare (?:an? )?(?:outbound|email|slack|telegram) draft)\b|taslak (?:e-?posta|mesaj) hazırla|gönderim taslağı/.test(
+      phrase
+    )
+  ) {
+    enabled.push("draftOutboundMessage");
+  }
+
+  if (
+    /\b(ask me (?:a )?clarifying question|give me clickable options|show (?:me )?choice card)\b|bana seçenek kartı göster|netleştirici soru sor/.test(
+      phrase
+    )
+  ) {
+    enabled.push("askUserQuestion");
+  }
+
+  if (
+    canPersonalize &&
+    isRoutinesEnabled() &&
+    /\b(schedule a (?:task|routine)|create a routine|every weekday at)\b|rutin oluştur|her hafta içi saat/.test(
+      phrase
+    )
+  ) {
+    enabled.push("scheduleTask");
+  }
+
+  if (canPersonalize && isMemoryToolsEnabled()) {
+    if (
+      /\b(save to my profile|remember this fact|store in my profile)\b|profilime kaydet|belleğime kaydet/.test(
+        phrase
+      )
+    ) {
+      enabled.push("saveProfileFact");
+    }
+    if (
+      /\b(log in my journal|add to my journal|journal entry)\b|günlüğüme ekle|günlük kaydı/.test(
+        phrase
+      )
+    ) {
+      enabled.push("addJournalEntry");
+    }
+    if (
+      /\b(search my memory|recall from memory|what do you remember about|check my journal)\b|belleğimi ara|hakkımda ne hatırlıyorsun|günlüğümü kontrol et/.test(
+        phrase
+      )
+    ) {
+      enabled.push("recallMemories");
+    }
+  }
+
+  // Ensure any tool whose persisted approval just completed remains active for continuation.
+  const trailing = messages.at(-1);
+  if (trailing?.role === "assistant") {
+    for (const part of trailing.parts) {
+      if (
+        part.type.startsWith("tool-") &&
+        "state" in part &&
+        part.state === "approval-responded"
+      ) {
+        const toolName = part.type.slice(5) as ChatToolName;
+        if ((AVAILABLE_CHAT_TOOLS as readonly string[]).includes(toolName)) {
+          enabled.push(toolName);
+        }
+      }
+    }
   }
 
   // Weather, clock, greetings, and pure edits never pay for a search. Anything
