@@ -9,7 +9,16 @@ import {
 
 const enqueueSchema = z.object({
   kind: z
-    .enum(["routine", "research", "executor", "draft_review"])
+    .enum([
+      "routine",
+      "research",
+      "executor",
+      "draft_review",
+      "browser_agent",
+      "coding_worktree",
+      "media_gen",
+      "meeting_copilot",
+    ])
     .default("executor"),
   title: z.string().trim().min(2).max(200),
   prompt: z.string().trim().min(2).max(4000),
@@ -18,7 +27,7 @@ const enqueueSchema = z.object({
 
 const patchSchema = z.object({
   id: z.string().uuid(),
-  action: z.enum(["cancel"]),
+  action: z.enum(["cancel", "approve"]),
 });
 
 export async function GET() {
@@ -96,6 +105,29 @@ export async function PATCH(request: Request) {
 
   try {
     const store = createPostgresTaskStore();
+    if (body.action === "approve") {
+      const existing = await store.getTask({
+        userId: session.user.id,
+        id: body.id,
+      });
+      if (!existing) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      if (existing.status !== "awaiting_approval") {
+        return Response.json(
+          { error: "Task is not awaiting approval" },
+          { status: 400 }
+        );
+      }
+      const resumed = await store.transitionTask({
+        userId: session.user.id,
+        id: body.id,
+        status: "queued",
+        stepMessage: "Approved by owner in Routines & Tasks hub",
+      });
+      return Response.json({ task: resumed });
+    }
+
     const updated = await store.cancelTask({
       userId: session.user.id,
       id: body.id,

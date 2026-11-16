@@ -191,6 +191,21 @@ export default function RoutinesPage() {
     }
   }
 
+  async function handleApproveTask(id: string) {
+    const response = await fetch(`${basePath}/api/tasks`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, action: "approve" }),
+    });
+    if (response.ok) {
+      await mutateTasks();
+      toast({
+        type: "success",
+        description: "Task approved and re-queued for execution.",
+      });
+    }
+  }
+
   async function handleSaveSecret(event: React.FormEvent) {
     event.preventDefault();
     if (!secretName.trim() || !secretPlaintext.trim()) {
@@ -474,26 +489,41 @@ export default function RoutinesPage() {
                   key={task.id}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <h3 className="font-semibold text-[15px]">
                         {task.title}
                       </h3>
+                      <span className="rounded-full bg-muted px-2 py-0.5 font-mono text-[11px]">
+                        {task.kind}
+                      </span>
                       <span className="rounded-full bg-muted px-2.5 py-0.5 font-medium text-xs">
                         {task.status}
                       </span>
                     </div>
-                    {(task.status === "queued" ||
-                      task.status === "running" ||
-                      task.status === "awaiting_approval") && (
-                      <button
-                        className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] px-3.5 text-xs hover:bg-muted"
-                        onClick={() => handleCancelTask(task.id)}
-                        type="button"
-                      >
-                        <XCircleIcon className="size-3.5" />
-                        Cancel
-                      </button>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {task.status === "awaiting_approval" && (
+                        <button
+                          className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-foreground px-3.5 font-medium text-background text-xs"
+                          onClick={() => handleApproveTask(task.id)}
+                          type="button"
+                        >
+                          <PlayIcon className="size-3.5" />
+                          Approve
+                        </button>
+                      )}
+                      {(task.status === "queued" ||
+                        task.status === "running" ||
+                        task.status === "awaiting_approval") && (
+                        <button
+                          className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] px-3.5 text-xs hover:bg-muted"
+                          onClick={() => handleCancelTask(task.id)}
+                          type="button"
+                        >
+                          <XCircleIcon className="size-3.5" />
+                          Cancel
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {task.output && (
                     <p className="rounded-xl bg-muted/40 p-3 text-[13px] text-muted-foreground">

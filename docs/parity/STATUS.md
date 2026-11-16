@@ -92,6 +92,9 @@
 ### Slice 8 (`P2.3` — Read-Only Published Page Snapshots `/share/[token]`): DONE
 - **What changed (in plain English):** Added 1-click **"Publish read-only snapshot"** and **"Revoke"** controls inside the **Results in this chat** drawer (`components/chat/results-sheet.tsx`), backed by `PublishedPage` (`app/api/share/route.ts` + `app/share/[token]/page.tsx`). Published links store only the SHA-256 hash of a 192-bit random token, scrub your email address and scripts, block Korn Ferry/employer terms, never expose chat messages or other documents, allow unauthenticated `GET /share/[token]` only, and return `404` the instant you click Revoke.
 
+### Slice 9 (`P3.1` — Visual Computer-Use Browser Subagent Safety & Trace Engine): DONE
+- **What changed (in plain English):** Added the `browser_agent` task runner (`lib/subagents/browser-agent.ts` + `POST /api/subagents/browser`) plus an **Approve** button on `awaiting_approval` tasks in `/routines`. Every browser step checks a domain allowlist, blocks private-network SSRF URLs, routes multi-step sessions to scale-to-zero Cloud Run (protecting the 8 GB RAM Mac mini), and immediately hard-pauses in `awaiting_approval` if it encounters a non-allowlisted domain, login/password field, checkout/payment/submit button, or anti-bot/CAPTCHA screen (handing back to you rather than ever attempting a bypass), saving the full step trace in `BackgroundTask`.
+
 ### Remaining / Next Up (Wait for Owner Go-Ahead)
 1. **Provision isolated local/preview Postgres** and apply `lib/db/usage-schema.sql` + `lib/db/parity-schema.sql`.
 2. **P1.3 Voice Memos + Gemini Live Sheet:** Push-to-talk memo transcription (`gemini-4-hydrogen` / OpenAI STT) in `MultimodalInput` + ephemeral-token **Gemini Live API (current model)** voice session billed against the confirmed US$40/mo GCP credit (personal/non-KF use only).

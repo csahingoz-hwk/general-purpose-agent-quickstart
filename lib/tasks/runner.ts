@@ -13,7 +13,11 @@ export type BackgroundTaskKind =
   | "routine"
   | "research"
   | "executor"
-  | "draft_review";
+  | "draft_review"
+  | "browser_agent"
+  | "coding_worktree"
+  | "media_gen"
+  | "meeting_copilot";
 
 export type TaskStepLog = {
   step: number;
