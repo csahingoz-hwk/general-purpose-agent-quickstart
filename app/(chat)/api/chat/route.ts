@@ -75,6 +75,7 @@ import {
 } from "@/lib/db/queries";
 import type { DBMessage } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
+import { prepareMessagesWithAttachments } from "@/lib/files/parse-attachment";
 import {
   createPostgresMemoryStore,
   isMemoryToolsEnabled,
@@ -345,6 +346,11 @@ export async function POST(request: Request) {
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
       execute: ({ writer: dataStream }) =>
         inferenceSession.run(execution, async () => {
+          const attachmentPrep = await prepareMessagesWithAttachments({
+            messages: sanitizeToolCallIds(dropWebSearchHistory(uiMessages)),
+            userId: session.user.id,
+            visionEnabled: capabilities?.vision === true,
+          });
           const localTools = {
             demoInbox,
             getWeather: getWeather({ home: homeLocation }),
@@ -381,7 +387,9 @@ export async function POST(request: Request) {
                   setSoul: setSoul({ userId: session.user.id }),
                   setHomeLocation: setHomeLocation({ userId: session.user.id }),
                   draftOutboundMessage: draftOutboundMessage({
-                    hasUntrustedContext: requestedTools.includes("webSearch"),
+                    hasUntrustedContext:
+                      requestedTools.includes("webSearch") ||
+                      attachmentPrep.hasUntrustedAttachment,
                   }),
                   ...(isRoutinesEnabled()
                     ? { scheduleTask: scheduleTask({ session }) }
@@ -406,7 +414,7 @@ export async function POST(request: Request) {
             activeTools
           );
           const convertedMessages = await convertToModelMessages(
-            sanitizeToolCallIds(dropWebSearchHistory(uiMessages)),
+            attachmentPrep.messages,
             { tools, ignoreIncompleteToolCalls: true }
           );
           const prepared = budgetModelMessages({

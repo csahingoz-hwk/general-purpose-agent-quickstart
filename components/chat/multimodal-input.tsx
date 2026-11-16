@@ -29,7 +29,7 @@ import {
   ModelSelectorName,
   ModelSelectorTrigger,
 } from "@/components/ai-elements/model-selector";
-import type { ChatModel, ModelCapabilities } from "@/lib/ai/models";
+import type { ChatModel } from "@/lib/ai/models";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { getCopy } from "@/lib/ui-copy";
 import { cn } from "@/lib/utils";
@@ -271,10 +271,14 @@ function PureMultimodalInput({
           name: attachment.name,
           mediaType: attachment.contentType,
         })),
-        {
-          type: "text",
-          text: input,
-        },
+        ...(input.trim().length > 0
+          ? [
+              {
+                type: "text" as const,
+                text: input,
+              },
+            ]
+          : []),
       ],
     });
 
@@ -428,6 +432,7 @@ function PureMultimodalInput({
       )}
 
       <input
+        accept=".pdf,.csv,application/pdf,text/csv,image/jpeg,image/png"
         className="pointer-events-none fixed -top-4 -left-4 size-0.5 opacity-0"
         multiple
         onChange={handleFileChange}
@@ -575,12 +580,18 @@ function PureMultimodalInput({
               aria-label={copy.send}
               className={cn(
                 "size-11! rounded-full border-transparent p-0 shadow-none transition-colors duration-150 motion-reduce:transition-none disabled:opacity-100",
-                modelReady && input.trim() && uploadQueue.length === 0
+                modelReady &&
+                  (Boolean(input.trim()) || attachments.length > 0) &&
+                  uploadQueue.length === 0
                   ? "bg-send text-send-foreground hover:bg-send/90"
                   : "cursor-not-allowed bg-send-muted text-send-muted-foreground"
               )}
               data-testid="send-button"
-              disabled={!modelReady || !input.trim() || uploadQueue.length > 0}
+              disabled={
+                !modelReady ||
+                (!input.trim() && attachments.length === 0) ||
+                uploadQueue.length > 0
+              }
               status={status}
               variant="secondary"
             >
@@ -628,33 +639,22 @@ export const MultimodalInput = memo(
 function PureAttachmentsButton({
   fileInputRef,
   status,
-  selectedModelId,
 }: {
   fileInputRef: React.MutableRefObject<HTMLInputElement | null>;
   status: UseChatHelpers<ChatMessage>["status"];
   selectedModelId: string;
 }) {
-  const { data: modelsResponse } = useSWR(
-    `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/models`,
-    (url: string) => fetch(url).then((r) => r.json()),
-    { revalidateOnFocus: false, dedupingInterval: 3_600_000 }
-  );
-
-  const caps: Record<string, ModelCapabilities> | undefined =
-    modelsResponse?.capabilities ?? modelsResponse;
-  const hasVision = caps?.[selectedModelId]?.vision ?? false;
+  const isReady = status === "ready";
 
   return (
     <Button
       aria-label={copy.attachFile}
       className={cn(
         "size-11! rounded-full border-transparent bg-control p-0 text-foreground shadow-none transition-colors motion-reduce:transition-none hover:bg-control",
-        hasVision
-          ? "text-foreground"
-          : "cursor-not-allowed text-muted-foreground"
+        isReady ? "text-foreground" : "cursor-not-allowed text-muted-foreground"
       )}
       data-testid="attachments-button"
-      disabled={status !== "ready" || !hasVision}
+      disabled={!isReady}
       onClick={(event) => {
         event.preventDefault();
         fileInputRef.current?.click();

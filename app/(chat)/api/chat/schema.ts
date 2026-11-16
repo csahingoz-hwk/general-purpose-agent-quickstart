@@ -7,9 +7,9 @@ const textPartSchema = z.object({
 
 const filePartSchema = z.object({
   type: z.enum(["file"]),
-  mediaType: z.enum(["image/jpeg", "image/png"]),
-  name: z.string().min(1).max(100),
-  url: z.string().url(),
+  mediaType: z.enum(["image/jpeg", "image/png", "application/pdf", "text/csv"]),
+  name: z.string().min(1).max(200),
+  url: z.string().url().max(2048),
 });
 
 const partSchema = z.union([textPartSchema, filePartSchema]);
