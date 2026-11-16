@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.assistant.queue-worker</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE_BIN__</string>
+    <string>--jitless</string>
+    <string>--max-old-space-size=24</string>
+    <string>--max-semi-space-size=1</string>
+    <string>__WORKER_BUNDLE__</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__REPO_ROOT__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>NODE_ENV</key>
+    <string>production</string>
+    <key>WORKER_MAX_RSS_MB</key>
+    <string>40</string>
+    <key>WORKER_MAX_HEAP_MB</key>
+    <string>24</string>
+    <key>WORKER_HEALTH_PORT</key>
+    <string>4319</string>
+    <key>WORKER_POLL_INTERVAL_MS</key>
+    <string>15000</string>
+    <key>WORKER_LOG_DIR</key>
+    <string>__LOG_DIR__</string>
+    <key>WORKER_HEARTBEAT_FILE</key>
+    <string>__LOG_DIR__/worker-health.json</string>
+  </dict>
+
+  <!-- Auto-restart on crash AND after graceful ~40 MB memory-cap self-recycle -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- Low priority background scheduling to protect the 8 GB RAM Mac mini -->
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LowPriorityIO</key>
+  <true/>
+  <key>Nice</key>
+  <integer>10</integer>
+
+  <key>SoftResourceLimits</key>
+  <dict>
+    <key>NumberOfFiles</key>
+    <integer>256</integer>
+  </dict>
+
+  <!-- Application logs rotate internally via RotatingFileLogger (2 MB x 3);
+       stdout/stderr capture startup panics only and rotate via newsyslog. -->
+  <key>StandardOutPath</key>
+  <string>__LOG_DIR__/launchd-stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_DIR__/launchd-stderr.log</string>
+</dict>
+</plist>

@@ -18,7 +18,10 @@
     "test": "export PLAYWRIGHT=True && pnpm exec playwright test",
     "test:security": "node --import tsx --test tests/security/*.test.ts",
     "test:readiness-ui": "node --import tsx scripts/test-model-readiness-ui.ts",
-    "test:sdk7-integration": "bash scripts/test-sdk7-integration.sh"
+    "test:sdk7-integration": "bash scripts/test-sdk7-integration.sh",
+    "worker:build": "tsx scripts/build-worker.ts",
+    "worker:once": "tsx scripts/build-worker.ts && node --jitless --max-old-space-size=24 --max-semi-space-size=1 .next/worker/scripts/mac-worker.js --once",
+    "worker:start": "tsx scripts/build-worker.ts && node --jitless --max-old-space-size=24 --max-semi-space-size=1 .next/worker/scripts/mac-worker.js"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.0",
