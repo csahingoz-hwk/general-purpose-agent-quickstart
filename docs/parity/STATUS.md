@@ -1,8 +1,48 @@
 # Assistant Feature Parity — Status & Handoff Report
 
-**Branch:** `feat/grokbot-parity` (worktree only — `feature/openai-premium-model-routing` and remotes untouched)  
+**Branch:** `feat/grokbot-parity` (worktree only — `feature/openai-premium-model-routing` @ `01875e6` and all remotes untouched)  
 **Date:** 16 November 2026  
 **Owner:** Çağlar (`Europe/London`)
+
+---
+
+## Final Review Summary (All Phases 0 → 3 Complete)
+
+Every slice in **[PLAN.md](./PLAN.md)** — **Phase 0**, **Phase 1 (`P1.1–P1.4b`)**, **Phase 2 (`P2.1–P2.3`)**, and **Phase 3 (`P3.1–P3.3`)** — has been implemented, security-tested, production-built, and committed in **20 small, focused commits** on `feat/grokbot-parity`.
+
+### Complete Phase 0 → Phase 3 Delivery Matrix
+
+| Phase / Slice | Scope Delivered | Key Files & Routes | Status |
+| :--- | :--- | :--- | :--- |
+| **Phase 0 (`P0.1–P0.5`)** | AES-256-GCM Secret Vault (HKDF + AAD), Profile + Journal memory split, Routines & `BackgroundTask` hub, `<untrusted_content>` fencing, SHA-256 risk reviewer, universal `ApprovalCard` + `OutboundDraftCard` + `QuestionCard`, Skills library & Results drawer | `lib/vault/secret-vault.ts`, `lib/memory/store.ts`, `lib/tasks/runner.ts`, `lib/safety/*`, `lib/skills/library.ts`, `/memory`, `/routines`, `/skills` | **DONE** |
+| **Slice 1 (`P1.2`)** | Owner-only HMAC-signed `/api/files/[token]` proxy, AES-256-GCM encrypted file store, magic-byte PDF (10 MB) & CSV (5 MB) upload + deterministic CSV/PDF parsers fenced in `<untrusted_content>`, Cloud Run scale-to-zero budget | `lib/files/*`, `app/(chat)/api/files/*`, `components/chat/multimodal-input.tsx`, `docs/parity/BUDGET.md` | **DONE** |
+| **Slice 2 (`P1.1`)** | ~40 MB native Mac mini `launchd` queue worker (`--jitless --max-old-space-size=24`), heavy-workload Cloud Run routing guard, loopback `/healthz` (`127.0.0.1:4319`), 2 MB × 3 token-redacting log rotation | `lib/worker/*`, `scripts/mac-worker.ts`, `ops/launchd/*`, `app/api/worker/health/route.ts` | **DONE** |
+| **Slice 3 (`P1.4`)** | Vault-backed **Gmail** & **Google Drive** read + unsent-draft-only connectors (`ApprovalCard` required, URL guard blocks `/send`, `/delete`, `/trash`, `/permissions`, work-data block) | `lib/connectors/google-vault-auth.ts`, `lib/connectors/google-workspace.ts`, `lib/ai/tools/google-connectors.ts`, `app/api/connectors/route.ts` | **DONE** |
+| **Slice 4 (`P1.3`)** | Push-to-talk composer **Voice Memos** (10 MB cap, `gemini-4-hydrogen` floor, 3.x models hard-blocked, graceful text fallback) + **Gemini Live API (current model)** session descriptor | `lib/voice/voice-service.ts`, `components/chat/voice-memo-button.tsx`, `app/api/voice/*` | **DONE** |
+| **Slice 5 (`P1.4b`)** | Vault-backed **Google Calendar** (`sendUpdates=none` private tentative `[DRAFT]` events, zero attendee invites) & **GitHub** (`PENDING` unpublished PR reviews, blocks `/merge`/`/delete`) | `lib/connectors/calendar-and-github.ts`, `lib/ai/tools/calendar-github-connectors.ts` | **DONE** |
+| **Slice 6 (`P2.1`)** | **Multi-Bot Specialist Teammate Roster** (*Chief of Staff*, *Finance Controller*, *Vibecoder* + custom bots), `@bot:<slug>` selector, mascot color switching, shared vs. bot-private `MemoryProfileFact` scoping | `lib/bots/roster.ts`, `app/api/bots/route.ts`, `app/(chat)/teammates/page.tsx` | **DONE** |
+| **Slice 7 (`P2.2`)** | Constant-time **HMAC-SHA256 Event Webhooks** (`POST /api/webhooks/[source]`) + **Hardened Single-Owner Telegram** inline-keyboard Approve/Deny callbacks bound to SHA-256 action digest | `lib/webhooks/event-triggers.ts`, `app/api/webhooks/[source]/route.ts`, `lib/telegram-hardened.ts`, `app/api/telegram-webhook/route.ts` | **DONE** |
+| **Slice 8 (`P2.3`)** | **Read-Only Published Page Snapshots** (`/share/[token]`): SHA-256 hashed 192-bit tokens, owner-email/script scrubbing, work-data block, `GET`-only `proxy.ts` allowlist, instant 1-click revoke | `lib/share/published-pages.ts`, `app/api/share/route.ts`, `app/share/[token]/page.tsx`, `components/chat/results-sheet.tsx` | **DONE** |
+| **Slice 9 (`P3.1`)** | **Visual Computer-Use Browser Subagent** safety & trace engine: SSRF block, domain allowlist, hard-pause in `awaiting_approval` on login/password/payment/submit, CAPTCHA human handoff (never bypassed), Cloud Run multi-step offload | `lib/subagents/browser-agent.ts`, `app/api/subagents/browser/route.ts`, `app/(chat)/routines/page.tsx` | **DONE** |
+| **Slice 10 (`P3.2`)** | **Isolated Git-Worktree Coding Subagent**: enforces `agent/*` or `draft/*` branches (blocks `main`, `master`, `release/*`, `feature/openai-premium-model-routing`), serializes check+test, requires approval before `git push` | `lib/subagents/worktree-coder.ts`, `app/api/subagents/coder/route.ts` | **DONE** |
+| **Slice 11 (`P3.3`)** | **Imagen / Veo Media Studio** (`ModelUsage` spend reservation `$0.04`/`$0.35` *before* API call, `PrivateFileStore` + `artifacts/image` + `MediaPreviewCard`) & **Meeting Copilot** (fenced speaker turns, injection quarantine, `awaiting_approval` review gate) | `lib/media/media-studio.ts`, `lib/ai/tools/generate-media.ts`, `artifacts/image/server.ts`, `components/chat/media-preview-card.tsx`, `lib/meetings/meeting-copilot.ts`, `app/api/media/generate/route.ts`, `app/api/meetings/ingest/route.ts` | **DONE** |
+
+### Final Verification Metrics
+- **Biome Lint & Format (`pnpm check`):** **PASS** (`0` errors across `310` files).
+- **TypeScript (`tsc --noEmit`):** **PASS** (`0` errors).
+- **Security & Acceptance Suite (`pnpm test:security`):** **148 / 148 PASS** (`0` failures across 22 test suites; all original 103 security invariants + 45 new Phase 0–3 parity/safety tests green).
+- **Production Build (`POSTGRES_URL="" OPENAI_API_USAGE_ENABLED="false" AI_GATEWAY_USAGE_ENABLED="false" pnpm build`):** **PASS** (`56 / 56` Next.js 16 Turbopack routes compiled & prerendered with `0` warnings and zero live inference/DB mutations).
+- **Lightweight Worker Smoke Test (`POSTGRES_URL="" pnpm worker:once`):** **PASS** (clean ESM execution under `--jitless --max-old-space-size=24`, `rssCapMb: 40`).
+- **Production Dependency Audit (`pnpm audit --prod`):** **0 vulnerabilities**.
+- **Neutral Naming & Model Floor Check:** **CLEAN** (`0` third-party assistant brand names in code/UI/README/commits; `0` `Gemini 3.8 Flash` or `3.x` models anywhere; read-only subagent scouts ran on `gemini-4-carbon` via `Model: "inherit"`, max 2 concurrent, terminated before builds).
+
+### Live External Items Intentionally Skipped / Deferred Pending Owner Action
+No live external APIs, paid subscriptions, `launchctl` daemon loads, shared-DB migrations, or remote git pushes were executed. When ready to activate live external integrations, perform only the ones you want:
+1. **Isolated Postgres Schema Apply:** Run `psql "$ISOLATED_POSTGRES_URL" -f lib/db/usage-schema.sql` and `psql "$ISOLATED_POSTGRES_URL" -f lib/db/parity-schema.sql` against an **isolated** database (never a shared preview/prod Neon branch without review).
+2. **Master Vault Key & Live Provider Tokens:** Set `SECRET_VAULT_KEY` (`openssl rand -base64 32`) in your local `.env.local`, then save real credentials via `/routines -> Secret Vault` (`GEMINI_API_KEY` for Voice/Imagen/Veo, `GOOGLE_OAUTH_ACCESS_TOKEN` or `GOOGLE_OAUTH_CLIENT_ID`/`SECRET`/`REFRESH_TOKEN` for personal Gmail/Drive/Calendar, `GITHUB_CONNECTOR_PAT` for GitHub PR read/drafts).
+3. **Opt-In Feature Flags (All Default `false`):** Flip only the capabilities you want active (`MEMORY_TOOLS_ENABLED`, `ROUTINES_ENABLED`, `GOOGLE_CONNECTORS_ENABLED`, `GITHUB_CONNECTOR_ENABLED`, `VOICE_ENABLED`, `WEBHOOK_TRIGGERS_ENABLED`, `TELEGRAM_WEBHOOK_ENABLED`, `MEDIA_STUDIO_ENABLED`).
+4. **Mac mini `launchd` Daemon & Optional Cloud Run Worker:** Run `./ops/launchd/install-launchd.sh --dry-run` to inspect the rendered plist, then `./ops/launchd/install-launchd.sh` if you want the ~40 MB local poller active on your Mac mini. Deploy a scale-to-zero Cloud Run worker (`CLOUD_RUN_WORKER_URL`) only if you want live cloud execution for multi-step Playwright or batch media jobs.
+5. **Live Vision Model Flag (`vision: true`) & Live Local Audio Capture Device:** Image upload + signed `/api/files/[token]` proxy is live; flipping `vision: true` in `lib/ai/models.ts` awaits confirming vision entitlement on your live OpenAI/AI Gateway lane. `POST /api/meetings/ingest` accepts recorded audio clips (`audioBytes`) or transcripts today; native macOS system-audio loopback (`ScreenCaptureKit`/BlackHole) requires local macOS TCC screen/audio permission from the owner.
 
 ---
 
@@ -37,12 +77,12 @@
 
 ## 2. Verification Summary
 
-- **Lint & Format (`pnpm check`):** PASS (0 errors across 276 files).
+- **Lint & Format (`pnpm check`):** PASS (0 errors across 310 files).
 - **TypeScript (`pnpm exec tsc --noEmit`):** PASS (0 errors).
-- **Security & Regression Suite (`pnpm test:security`):** **133 / 133 PASS** (103 existing baseline assertions + 30 Phase 0/Phase 1 tests covering AES-256-GCM AAD vault integrity, owner-only signed file proxy URLs, PDF/CSV magic-byte & parser safety, ~40 MB `launchd` queue worker + log rotation + loopback `/healthz`, vault-backed Gmail/Drive read + unsent-draft-only URL guards, untrusted fence breakouts, Profile+Journal isolation, routines/tasks, skills, and results extraction).
+- **Security & Regression Suite (`pnpm test:security`):** **148 / 148 PASS** (103 existing baseline assertions + 45 Phase 0–3 tests covering AES-256-GCM AAD vault integrity, owner-only signed file proxy URLs, PDF/CSV magic-byte & parser safety, ~40 MB `launchd` queue worker + log rotation + loopback `/healthz`, vault-backed Gmail/Drive/Calendar/GitHub read + unsent-draft-only URL guards, push-to-talk voice memos & 3.x model blocks, multi-bot teammate scoping, HMAC event webhooks & signed Telegram inline approvals, revocable `/share/[token]` snapshots, browser subagent & git-worktree coder safety gates, Imagen/Veo `ModelUsage` spend reservations, and fenced Meeting Copilot reviews).
 - **Playwright Mobile & Desktop UI Suite (`pnpm test:readiness-ui`):** **5 / 5 PASS** (`390×844` phone and `1440×1000` desktop viewports: 16px composer text, ≥44px touch targets, no horizontal overflow, local inbox filtering, History reload, and `/usage` route slot).
 - **Production Dependency Audit (`pnpm audit --prod`):** **0 vulnerabilities found**.
-- **Production Build (`POSTGRES_URL="" pnpm build`):** **PASS** (all 46 static/dynamic App Router routes compiled cleanly with zero live inference or DB writes).
+- **Production Build (`POSTGRES_URL="" pnpm build`):** **PASS** (all 56 static/dynamic App Router routes compiled cleanly with 0 warnings and zero live inference or DB writes).
 
 ---
 
@@ -101,11 +141,6 @@
 ### Slice 11 (`P3.3` — Image/Video Generation & Meeting Copilot): DONE
 - **What changed (in plain English):** Added opt-in **Media Studio** (`MEDIA_STUDIO_ENABLED=true`, `lib/media/media-studio.ts`, `lib/ai/tools/generate-media.ts`, `components/chat/media-preview-card.tsx`, `POST /api/media/generate`) wiring Google **Imagen** image generation into both an inline signed preview card and the `artifacts/image` viewer, plus approval-gated **Veo** short video generation routed off the 8 GB Mac mini to Google's cloud poller. Every media request decrypts `GEMINI_API_KEY` from your Secret Vault, blocks Korn Ferry/employer prompts, and **reserves spend in `ModelUsage` (`$0.04` per image / `$0.35` per video clip) before calling the API**, aborting with zero spend if your `$10/mo` allowance is reached. Also added **Meeting Copilot** (`lib/meetings/meeting-copilot.ts` + `POST /api/meetings/ingest`) for grounded pre-meeting briefs and post-meeting transcript/audio ingestion: every external speaker turn is wrapped inside `<untrusted_content>` fences, prompt-injection speaker turns are quarantined, and the resulting journal note, candidate profile facts, and unsent follow-up drafts are parked in `awaiting_approval` so nothing is saved to your profile or sent without your review.
 
-### Remaining / Next Up (Wait for Owner Go-Ahead)
-1. **Provision isolated local/preview Postgres** and apply `lib/db/usage-schema.sql` + `lib/db/parity-schema.sql`.
-2. **P1.3 Voice Memos + Gemini Live Sheet:** Push-to-talk memo transcription (`gemini-4-hydrogen` / OpenAI STT) in `MultimodalInput` + ephemeral-token **Gemini Live API (current model)** voice session billed against the confirmed US$40/mo GCP credit (personal/non-KF use only).
-3. **Phase 2:** Multi-bot specialist teammates, HMAC event webhooks, hardened Telegram inline approvals, and signed read-only `/share/[token]` page snapshots.
-
 ---
 
 ## 5. Exact Commands to Run & Preview Locally
@@ -113,10 +148,11 @@
 ```bash
 cd /Users/caglar/.t3/worktrees/general-purpose-agent-quickstart/feat-grokbot-parity-e6766ad591e9f9aa
 
-# 1. Run lint, typecheck, and all 133 security/unit tests
+# 1. Run lint, typecheck, and all 148 security/acceptance tests (serialized)
 pnpm check && pnpm exec tsc --noEmit && pnpm test:security
 
-# 2. (Optional) Apply additive parity tables to an ISOLATED local/dev Postgres ONLY
+# 2. (Optional) Apply additive usage + parity tables to an ISOLATED local/dev Postgres ONLY
+# psql "$LOCAL_DEV_POSTGRES_URL" -f lib/db/usage-schema.sql
 # psql "$LOCAL_DEV_POSTGRES_URL" -f lib/db/parity-schema.sql
 
 # 3. (Optional) Smoke-test or dry-run install the ~40 MB Mac mini launchd queue worker
@@ -124,13 +160,14 @@ POSTGRES_URL="" pnpm worker:once
 ./ops/launchd/install-launchd.sh --dry-run
 
 # 4. Run credential-free production build check
-POSTGRES_URL="" pnpm build
+POSTGRES_URL="" OPENAI_API_USAGE_ENABLED="false" AI_GATEWAY_USAGE_ENABLED="false" pnpm build
 
 # 5. Start local dev server and preview new surfaces
 pnpm dev
 # Visit:
-# - http://localhost:3000/          (Chat + PDF/CSV '+' attachments + Results drawer + @skill:<slug>)
-# - http://localhost:3000/routines  (Routines presets, Background Tasks, Secret Vault)
-# - http://localhost:3000/memory    (Profile facts + Journal timeline)
-# - http://localhost:3000/skills    (Built-in & custom Skills Library)
+# - http://localhost:3000/           (Chat + PDF/CSV '+' uploads + Mic memo + Results publish drawer + @skill:<slug> + @bot:<slug>)
+# - http://localhost:3000/teammates  (Specialist Multi-Bot Teammate Roster & custom bots)
+# - http://localhost:3000/routines   (Routines presets, Background Tasks Approve/Cancel, Secret Vault)
+# - http://localhost:3000/memory     (Profile facts + Journal timeline)
+# - http://localhost:3000/skills     (Built-in & custom Skills Library)
 ```
