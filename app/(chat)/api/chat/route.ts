@@ -48,6 +48,7 @@ import { createDocument } from "@/lib/ai/tools/create-document";
 import { demoInbox } from "@/lib/ai/tools/demo-inbox";
 import { draftOutboundMessage } from "@/lib/ai/tools/draft-outbound";
 import { editDocument } from "@/lib/ai/tools/edit-document";
+import { createMediaTools } from "@/lib/ai/tools/generate-media";
 import { getCurrentTime } from "@/lib/ai/tools/get-current-time";
 import { getFixtures } from "@/lib/ai/tools/get-fixtures";
 import { getWeather } from "@/lib/ai/tools/get-weather";
@@ -85,6 +86,7 @@ import {
 import type { DBMessage } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
 import { prepareMessagesWithAttachments } from "@/lib/files/parse-attachment";
+import { isMediaStudioEnabled } from "@/lib/media/media-studio";
 import {
   createPostgresMemoryStore,
   isMemoryToolsEnabled,
@@ -463,6 +465,14 @@ export async function POST(request: Request) {
                           githubCreateDraftReview:
                             calGithub.githubCreateDraftReview,
                         }
+                      : {}),
+                    ...(isMediaStudioEnabled()
+                      ? createMediaTools({
+                          userId: session.user.id,
+                          ledger: execution.ledger,
+                          dataStream,
+                          hasUntrustedContext: hasUntrusted,
+                        })
                       : {}),
                   };
                 })()

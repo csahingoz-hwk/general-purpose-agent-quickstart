@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
 import { isOwnerIdentity } from "@/lib/access-policy";
+import { commitApprovedMeetingReview } from "@/lib/meetings/meeting-copilot";
 import {
   createPostgresTaskStore,
   executeDryRunTask,
@@ -118,6 +119,14 @@ export async function PATCH(request: Request) {
           { error: "Task is not awaiting approval" },
           { status: 400 }
         );
+      }
+      if (existing.kind === "meeting_copilot") {
+        const committed = await commitApprovedMeetingReview({
+          userId: session.user.id,
+          taskId: body.id,
+          taskStore: store,
+        });
+        return Response.json({ task: committed.task, committed });
       }
       const resumed = await store.transitionTask({
         userId: session.user.id,

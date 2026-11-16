@@ -24,6 +24,7 @@ import { DocumentPreview } from "./document-preview";
 import { FictionalInboxCard } from "./fictional-inbox-card";
 import { FixtureCard } from "./fixture-card";
 import { useMascotPreference } from "./mascot-preference";
+import { isMediaPreviewPayload, MediaPreviewCard } from "./media-preview-card";
 import { MessageActions } from "./message-actions";
 import { MessageReasoning } from "./message-reasoning";
 import { OpenUiCard } from "./openui-card";
@@ -478,6 +479,10 @@ const PurePreviewMessage = ({
             locale === "tr"
               ? "Yayınlanmamış GitHub PR taslak incelemesi kaydet"
               : "Save unpublished GitHub PR draft review",
+          generateVideoClip:
+            locale === "tr"
+              ? "Google Veo video klibi üret ($0.35 kota rezervasyonu)"
+              : "Queue Google Veo video clip ($0.35 spend reservation)",
           scheduleTask:
             locale === "tr" ? "Zamanlanmış rutin oluştur" : "Create routine",
         };
@@ -494,6 +499,17 @@ const PurePreviewMessage = ({
             title={friendlyTitles[toolName] ?? toolName}
             toolName={toolName}
           />
+        );
+      }
+
+      if (
+        (toolName === "generateImageAsset" ||
+          toolName === "generateVideoClip") &&
+        state === "output-available" &&
+        isMediaPreviewPayload(output)
+      ) {
+        return (
+          <MediaPreviewCard key={toolCallId} locale={locale} payload={output} />
         );
       }
 
