@@ -1,37 +1,48 @@
 # Assistant Feature Parity — Infrastructure & Cost Budget (`£/month`)
 
 **Owner:** Çağlar (`Europe/London`)  
-**Rule:** Cheapest-first, leveraging subscriptions and hardware **already paid for**, with hard spending caps and zero surprise usage bills.  
-*(FX conversion used below: `$1.00 ≈ £0.79`, rounded conservatively.)*
+**Baseline Date:** November 2026 *(budgeted against December 2026 steady-state: **Google AI Ultra 5x**)*  
+**Rule:** Cheapest-first, grounded in verified billing mechanics, hard spending caps, and strict work/personal data boundaries.  
+*(FX conversion used below: `US$1.00 ≈ £0.79`, rounded conservatively.)*
 
 ---
 
-## 1. Sunk Assets Already Owned (Marginal Cost = £0/mo)
+## 0. Mandatory Governance, Model & Hardware Constraints
 
-Before buying any new SaaS infrastructure, inventory what Çağlar already pays for and owns:
+1. **Korn Ferry / Work Data Boundary (Hard Rule):** Korn Ferry or any employer/client material **must NEVER be sent** to:
+   - The **personal Google project** (Colab, AI Studio, Gemini Developer API, Antigravity / `agy`, personal Cloud Run, or personal Drive),
+   - **DeepSeek** (including AI Gateway search/routing paths backed by DeepSeek),
+   - **Free OpenRouter or `opencode` models** (prompt logging / model-training exposure).
+   Keep work material strictly local/deterministic or on employer-approved enterprise tenants.
+2. **Model Floor (Hard Rule):** **Never use or recommend `Gemini 3.8 Flash` (or any `3.x Flash` / `3.8` model)** for chat, voice, or subagents. Minimum light/subagent model is **`gemini-4-hydrogen`**, with **`GPT-6.1 Terra`** or **`Claude Haiku 5.5`** as acceptable alternatives (`gemini-4-carbon` for synthesis/coding).
+3. **8 GB RAM Mac mini Ceiling:** The always-on Mac mini has **8 GB RAM** and is already loaded — **no rendering, no Docker Desktop, and no heavy containers** on it. Heavy batch/GPU/container jobs go to **Google Colab** (personal data only) or **RunPod**.
+4. **GitHub Copilot Excluded from Agent Stack:** Avoid GitHub Copilot for autonomous/subagent work due to rapid premium-request credit burn; keep it out of the Default Stack.
 
-| Existing Asset | Relevant Included Entitlements | Best Role in Assistant Architecture |
+---
+
+## 1. Existing Baseline & Sunk Subscriptions
+
+| Asset / Subscription | Verified Entitlements (Dec 2026 Steady-State) | Role & Constraints |
 |---|---|---|
-| **Always-On Mac mini (8 GB RAM, already loaded)** *(owned)* | Apple Silicon CPU, macOS Keychain, local SSD, residential UK IP, 24/7 uptime (~10–15W idle ≈ **£3–£4/mo** UK electricity) | **Lightweight native `launchd` worker (~40 MB RSS)**: sub-minute cron/task poller, local file/iMessage bridge, and single-tab ephemeral Playwright only — **never Docker Desktop** (~2–4 GB RAM overhead would cause swap thrashing on an 8 GB loaded Mac) |
-| **Google AI Ultra** *(already paid)* | **1,000–2,000 Colab compute units/mo** + background GPU execution; **$40–$100/mo (~£31–£79/mo) Google Cloud / Developer API credits**; Gemini 3.8 Live voice/multimodal API; 20–30 TB Drive | **Primary heavy "Box" offload**: zero-extra-cost **GCP Linux VM (`e2-standard-2`, 8 GB RAM)** for Docker/headless browser/sandbox workloads + **Colab** for GPU/OCR/Python batch jobs + **Gemini Live** voice |
-| **Vercel** *(already configured)* | Next.js hosting, Vercel Blob, AI Gateway OIDC routing ($5/mo free Gateway credits) | **Web/Mobile PWA Chat Shell** + webhook/API edge ingress |
-| **Claude Pro / ChatGPT Plus / Copilot Pro / Gemini Pro / Lovable Pro** | Interactive coding & research seats | Development & vibecoding acceleration *(note: consumer web seats do not grant programmatic API keys, so runtime bot calls use AI Gateway / OpenAI `$10` cap + Google AI Ultra API credits)* |
+| **Google AI Ultra 5x** *(£79.99/mo sunk from Dec; currently on 20x for Nov)* | **US$40/mo (~£31.60/mo) Google Cloud / Developer Program credit** *(must be manually claimed in AI Studio, requires a **US$5 ≈ £4 one-off prepay**, rolls over 12 months)*; **1,000 Colab compute units/mo**; **10,000 Flow credits/mo**; **5x Antigravity quota**. **No included Gemini Live/voice API allowance.** | Offsets per-use **Gemini API** calls (`gemini-4-hydrogen`, **Gemini Live API (current model)**) and **Colab** personal GPU bursts. **Never use for Korn Ferry/work data.** |
+| **Existing Personal Google Cloud Project** *(active)* | Runs **Cloud Run + Firebase Hosting** under a **~£5/mo budget alert**. | Baseline personal cloud footprint (**~£0–£5/mo**, depending on how much of Cloud Run/Firebase the claimed US$40 credit offsets). Keep the £5/mo alert in place. |
+| **Always-On Mac mini (8 GB RAM, loaded)** *(owned)* | Apple Silicon, residential UK IP, 24/7 uptime (~10–15W idle ≈ **~£3.50/mo** UK electricity). | **Lightweight native `launchd` worker (~40 MB RSS)** for cron/task polling and single-tab ephemeral Playwright reads only — **zero rendering or Docker/containers**. |
+| **Vercel** *(configured)* | Next.js hosting, Vercel Blob, AI Gateway OIDC routing. | **Web/Mobile PWA Chat Shell** + authenticated API ingress. |
+| **Claude Pro / ChatGPT Plus / Lovable Pro** *(sunk)* | Interactive web seats *(GitHub Copilot intentionally excluded from agent stack due to high credit burn)*. | Human-driven research & UI prototyping *(consumer seats do not grant runtime bot API keys)*. |
 
 ---
 
-## 2. Category-by-Category Comparison (`£/month` & Trade-Offs)
+## 2. Category-by-Category Comparison (`£/month` & Verified Trade-Offs)
 
-### A. Always-On "Box" / Code & Agent Execution Environment
+### A. Execution "Box", Containers & Heavy Offload
 
-| Option | Est. Extra Cost (`£/mo`) | Persistence & OS | Pros | Cons / Trade-Offs |
+| Option | Est. Cost (`£/mo`) | Persistence & OS | Pros | Cons / Verified Caveats |
 |---|---|---|---|---|
-| **1. Hybrid: Native `launchd` on 8 GB Mac mini + GCP VM via Ultra Credits** *(Recommended Default)* | **£0 SaaS** *(~£3.50/mo Mac electricity + £0 net GCP on Ultra credit)* | Native macOS (`launchd`, no Docker) + Ubuntu Linux VM (`e2-medium` 4 GB / `e2-standard-2` 8 GB) | Respects the **8 GB RAM loaded Mac mini** constraint: tiny ~40 MB Node worker on Mac handles residential-IP/local tasks without Docker bloat, while memory-heavy Linux containers and concurrent Playwright tabs run on the Ultra-funded GCP VM. | Two worker targets (`mac-local` vs `gcp-box`), unified cleanly through the same Postgres `BackgroundTask` queue. |
-| **2. Google Cloud VM (`e2-medium` / `e2-standard-2`) Alone via Ultra Credits** | **£0 net** *(~£19–£38/mo covered by $40–$100 Ultra credit)* | Persistent Debian/Ubuntu Linux VM | Zero RAM impact on the 8 GB Mac mini; public static IP; 99.9% cloud uptime; runs Docker + Steel browser cleanly. | Datacenter IP gets more CAPTCHAs than residential Mac IP; no local macOS/iMessage access. |
-| **3. Fly Machines (Firecracker micro-VMs)** | **£2–£6/mo** *(1 GB RAM ~$6.70/mo always-on, or ~$0.15/GB-mo stopped)* | Fast-boot Linux micro-VM + persistent volume | Sub-second wake-on-request; true hardware-level micro-VM isolation for untrusted code; pay-per-second. | Extra vendor to manage when Mac mini + GCP Ultra credits already cover 100% of need. |
-| **4. Vercel Sandbox** | **£0** *(Hobby: 5 CPU-hr/mo)* or **£0–£16+** *(Pro credit + $0.128/CPU-hr)* | Ephemeral container (45m Hobby / 24h Pro cap) | Native TypeScript SDK inside Vercel routes; zero infra ops. | Ephemeral (not a true persistent "box"); Hobby non-commercial limits & 45-min cap. |
-| **5. Daytona** | **£0 start** *($200 credit)*, then **~£4–£12/mo** usage ($0.05/vCPU-hr) | Persistent isolated dev workspaces | Fast workspace snapshots; tailored for coding subagents; cheap per-second billing. | Overkill for personal finance/assistant tasks unless running parallel cloud repo bots. |
-| **6. E2B** | **£0 Hobby** *(100h/mo, 1h max session)* · **£118/mo ($150)** Pro | Ephemeral micro-VM sandboxes | Purpose-built AI code/desktop sandbox SDK. | 1-hour session cap on Free tier; **£118/mo** jump to Pro breaks budget immediately. |
-| **7. Google Colab (Ultra Background GPUs)** | **£0 extra** *(included in Google AI Ultra)* | Batch GPU notebooks (up to 24h background) | Free A100/L4/T4 GPU bursts via Ultra for heavy PDF OCR, Whisper batch transcription, Python data science, or video processing. | Not a 24/7 low-latency daemon; use strictly as an **on-demand heavy batch offload**, not the primary box. |
+| **1. Hybrid: Native `launchd` on 8 GB Mac mini + Colab / RunPod Bursts** *(Recommended Default)* | **~£3.50/mo** Mac electricity + **£0** Colab *(1,000 units/mo)* + **£0–£4/mo** RunPod bursts | Native macOS (`launchd`, no Docker) + ephemeral GPU/container workers | Zero swap pressure on the **8 GB RAM Mac mini**; Colab covers personal Python/OCR/media bursts at £0 marginal cost; **RunPod** (~$0.0002–$0.0004/s serverless or ~$0.20–$0.40/hr pod) handles heavy container/rendering jobs on demand without a fixed monthly VM bill. | Colab is strictly **non-KF / personal only**; RunPod requires explicit container image hygiene. |
+| **2. Google Cloud Compute Engine VM (`e2-medium` / `e2-standard-2`)** | **Possibly covered by US$40 credit (*unverified*); otherwise ~£19–£38/mo** | Persistent Ubuntu Linux VM (4–8 GB RAM) | Clean 24/7 Linux Docker host off the Mac mini if credits apply. | **Credit eligibility for Compute Engine VMs is UNVERIFIED**, and **GPU quota on new GCP projects is often `0`**. Do not rely on this being £0 until verified on a billing invoice; personal GCP is also off-limits for KF data. |
+| **3. RunPod (Serverless / On-Demand Pods)** *(Recommended Heavy Container/Render Fallback)* | **£0 idle** · **~£1–£6/mo** light burst usage | Per-second Linux containers + optional network volume | Instant GPU/CPU container offload (rendering, OCR, Playwright/ffmpeg batches) keeping the 8 GB Mac mini cool; true pay-per-second billing with zero monthly floor. | Cold-start of a few seconds on serverless endpoints; network volume costs ~$0.07/GB-mo if persisted. |
+| **4. Fly Machines (Firecracker micro-VMs)** | **£2–£6/mo** *(~$0.15/GB-mo stopped + per-second CPU)* | Fast-boot Linux micro-VM + volume | Cheap non-Google Linux container host if an always-on/wake-on-demand box is needed without paying £19–£38/mo for GCE. | Separate vendor billing to manage. |
+| **5. Vercel Sandbox / Daytona / E2B** | **Vercel/Daytona: £0–£12/mo** · **E2B Pro: £118/mo ($150)** | Ephemeral / dev sandboxes | Good SDK ergonomics for short code runs. | Vercel Hobby has 45m/non-commercial limits; E2B jumps from 1h Hobby cap straight to £118/mo. |
 
 ---
 
@@ -39,73 +50,63 @@ Before buying any new SaaS infrastructure, inventory what Çağlar already pays 
 
 | Option | Est. Extra Cost (`£/mo`) | Anti-Bot / Auth Profile | Trade-Offs |
 |---|---|---|---|
-| **1. Ephemeral Single-Tab Playwright on 8 GB Mac mini** *(Recommended for Residential UK Reads)* | **£0** | Uses residential UK IP + local Chromium profile (max 1 tab, closed immediately after run) | £0, avoids datacenter IP blocks, keeps RAM footprint minimal on the loaded 8 GB Mac mini. Must pause on `ApprovalCard` before any submit/purchase. |
-| **2. Self-Hosted Steel.dev (Docker on GCP Ultra VM)** *(Recommended for Heavy/Multi-Tab)* | **£0 net** | Open-source browser API + live session viewer on Linux VM | Keeps Docker + multi-tab Chromium RAM completely off the 8 GB Mac mini while providing a clean REST/CDP session viewer URL at £0 net SaaS cost. |
-| **3. Steel.dev Cloud (Launch Plan)** | **£0 start** *($30 free credit)*, then **~£0.07/hr** ($0.08–$0.10/hr) | Cloud Chromium + optional proxies (~£5–£8/GB) | Great serverless burst fallback when Mac mini is asleep; usage-based without a $20/mo floor. |
-| **4. Browserbase** | **£0 Free** *(1 hr/mo)* · **£16/mo ($20)** Developer (100 hrs + 1 GB proxy) | Managed cloud stealth + session replay | Best turnkey cloud DX & Stagehand integration, but £16/mo fixed cost is unnecessary until cloud-only operation is required. |
+| **1. Ephemeral Single-Tab Playwright on 8 GB Mac mini** *(Recommended for Light Residential Reads)* | **£0** | Residential UK IP + local Chromium profile (max 1 tab, closed immediately after run) | £0 SaaS, avoids datacenter IP blocks, protects the 8 GB Mac mini's memory. Must pause on `ApprovalCard` before any submit/purchase. |
+| **2. Containerized Steel.dev / Playwright on RunPod or Fly Machine** *(Recommended for Multi-Tab)* | **~£1–£4/mo** *(pay-per-use)* | Isolated Linux container browser + live session viewer | Keeps Docker and multi-tab Chromium completely off the 8 GB Mac mini without assuming unverified GCP VM credit coverage. |
+| **3. Steel.dev Cloud ($0 start, ~£0.07/hr) / Browserbase (£16/mo Dev)** | **£0–£16/mo** | Managed cloud Chromium + session replay | Zero ops, best for the Cloud Upgrade Stack when travelling with the Mac mini off. |
 
-*(Note: Never automate CAPTCHA solving or bypass access controls; if a target site gates access with an anti-bot challenge, pause the task and surface a local handoff link for the owner.)*
+*(Never automate CAPTCHA solving or bypass access controls; pause and hand back to the owner if challenged.)*
 
 ---
 
 ### C. Voice (Voice Memos & Live Speech-to-Speech)
 
-| Option | Unit Cost | Est. Monthly (`£/mo` for ~60 mins/mo) | Trade-Offs |
+| Option | Billing & Unit Cost | Est. Monthly (`£/mo` for ~60 mins/mo) | Trade-Offs |
 |---|---|---|---|
-| **1. Gemini 3.8 Live API** *(Recommended Default)* | $3/1M audio in · $12/1M audio out (~£0.03/min; ~£0.15 per 5-min multi-turn call) | **£0 net** *(~£1.80/mo raw, offset 100% by Google AI Ultra API credits)* | Native low-latency bilingual EN/TR audio streaming, interruption support, tool calling, and ~5–8× cheaper than flagship OpenAI Realtime. |
-| **2. Async Voice Memos (Gemini Flash / Whisper STT)** | <$0.006/min | **<£0.30/mo** *(£0 net on Ultra credits)* | Highest accuracy for dictating finance notes or Turkish/English prompts in noisy environments; creates editable text before sending. |
-| **3. OpenAI Realtime (`gpt-realtime-2.1-mini` / `2.1`)** | Mini: $10/$20 per 1M audio (~£0.03–£0.06/min) · Flagship: $32/$64 per 1M (~£0.15–£0.18/min) | **£2–£11/mo** *(draws against OpenAI API balance)* | Excellent natural prosody, but flagship uncached multi-turn sessions burn through the `$10/mo` OpenAI allowance rapidly (~45–55 mins max). Reserve for Upgrade stack. |
+| **1. Gemini Live API (current model)** *(Recommended Personal Voice)* | **Paid per-use Gemini API** via Cloud Billing *(no Live allowance included in Ultra)*; ~£1.50–£3.00/mo raw for ~60 mins | **£0 net while within claimed US$40/mo credit** *(otherwise **~£1.50–£3.00/mo**)* | Low-latency bilingual EN/TR streaming & tool calling. Draws down the US$40/mo AI Studio credit; **personal/non-KF use only**. |
+| **2. Async Voice Memos (`gemini-4-hydrogen` audio or OpenAI STT)** | Paid per-use API (<£0.01/min) | **<£0.50/mo** *(offset by US$40 credit on `gemini-4-hydrogen`, or pennies on OpenAI)* | Dictate EN/TR notes into editable composer text before sending; respects the **`gemini-4-hydrogen` minimum model floor** (never `3.x Flash`). |
+| **3. OpenAI Realtime (`gpt-realtime-2.1-mini` / `2.1`)** | Mini: $10/$20 per 1M audio · Flagship: $32/$64 per 1M | **£2–£11/mo** *(draws against OpenAI `$10/mo` ledger cap)* | Strong natural prosody, but flagship voice rapidly consumes the `$10/mo` OpenAI chat allowance. |
 
 ---
 
-### D. Long-Term Memory & Vector Store
+### D. Long-Term Memory, Subagent Models & Queues
 
-| Option | Est. Extra Cost (`£/mo`) | Architecture Fit & Trade-Offs |
-|---|---|---|
-| **1. Existing Neon Postgres + `pgvector` + FTS** *(Recommended Default)* | **£0** *(Neon Free: 100 CU-hrs, 1 GB)* to **~£4–£10/mo** *(Neon Launch pay-as-you-go, no minimum)* | **Zero extra vendor.** Stores `MemoryProfileFact` + `MemoryJournalEntry` + optional `vector(1536)` embeddings (via Gemini `text-embedding-004` free/Ultra credits) in the exact same ACID database as `Chat` and `User`, with strict owner row isolation and zero third-party data sharing. |
-| **2. Supermemory** | **£0 Free** *($5/mo credit)* · **£15/mo ($19)** Pro | Fast turnkey `getProfile` + `searchMemories` tools, **but** sends personal/finance facts to an external SaaS memory vendor and jumps to £15/mo past free credits. |
-| **3. Upstash Vector** | **£0 Free** / pay-as-you-go (~£1/mo) | Good serverless vector index, but splits relational metadata (Postgres) from vectors (Upstash) unnecessarily at single-user scale. |
-
----
-
-### E. Queues, Cron & Durable Background Workflows
-
-| Option | Est. Extra Cost (`£/mo`) | Precision & Timeout Limits | Trade-Offs |
+| Layer | Recommended Choice | Est. Cost (`£/mo`) | Why |
 |---|---|---|---|
-| **1. Postgres Queue (`BackgroundTask` + `CronJob`) + Mac mini Worker** *(Recommended Default)* | **£0** | **1-second precision**, unlimited task duration | Uses `SELECT ... FOR UPDATE SKIP LOCKED` on existing Neon Postgres. Bypasses Vercel Hobby's once-per-day cron restriction and 60s function timeout with zero new SaaS services. |
-| **2. Upstash QStash + Existing Upstash Redis** | **£0 Free tier** *(~£1/mo PAYG)* | Per-minute cron + HTTP retries | Great lightweight HTTP wakeup trigger for serverless endpoints if Mac mini is off, though target Vercel route still faces the 60s/300s function ceiling. |
-| **3. Trigger.dev** | **£0 Free** *($5 credit)* · **£8/mo ($10)** Hobby | Long-running cloud TypeScript containers | Best cloud upgrade if retiring the Mac mini worker: runs multi-minute Playwright/agent tasks in managed cloud containers for £8/mo. |
-| **4. Inngest** | **£0 Free** *(50k step runs/mo)* · **£78/mo ($99)** Pro | Durable step functions (`step.run`) | Generous free tier for webhook→step orchestration, but steep £78/mo cliff past free tier and still executes inside Vercel's HTTP runtime unless paired with a worker. |
+| **Chat & Subagent Models** | App chat: **`gpt-6-luna`** + selective **`gpt-6.1-terra`** (`$10/mo` hard ledger cap). Light subagents: **`gemini-4-hydrogen`** minimum (drawn from US$40 credit) or **`GPT-6.1 Terra` / `Claude Haiku 5.5`**. | **£3.00 – £7.90/mo** *(OpenAI cap)* + **£0 net** Gemini API within US$40 credit | Obeys the strict model floor (**zero `Gemini 3.8 Flash` / `3.x Flash`**) and avoids GitHub Copilot credit burn and free OpenRouter/DeepSeek data leaks. |
+| **Memory & Vector Store** | **Existing Neon Postgres** (`MemoryProfileFact`, `MemoryJournalEntry` + `pgvector`/FTS) | **£0** *(Free tier)* to **~£4–£8/mo** *(Launch PAYG)* | Keeps all personal profile/journal data in one owner-isolated ACID DB rather than shipping facts to Supermemory (£15/mo Pro). |
+| **Queues & Cron** | **Postgres Queue** (`BackgroundTask` + `CronJob` `FOR UPDATE SKIP LOCKED`) polled by the **8 GB Mac mini `launchd` worker** | **£0** | 1-second precision and multi-minute task tracking with zero extra SaaS vendor (Trigger.dev £8/mo reserved for Cloud Upgrade). |
 
 ---
 
 ## 3. Recommended Stacks
 
-### Stack 1: Recommended Default Stack — **~£6 to £11/month extra** *(Well under £30/month cap)*
+### Stack 1: Recommended Default Stack — **~£8.50 to £22.40/month total** *(Well under £30/month target)*
 
-Maximizes Çağlar's **Mac mini** + **Google AI Ultra** benefits while keeping all sensitive data inside his own Neon DB and hardware:
+Assumes **Google AI Ultra 5x** (£79.99/mo sunk from Dec: **US$40/mo claimed AI Studio credit** after **one-off US$5 ≈ £4 prepay**, 1,000 Colab units), existing personal GCP baseline, and strict **no-KF-data on personal Google / DeepSeek / free OpenRouter**:
 
-| Layer | Choice | Monthly Extra Out-of-Pocket (`£/mo`) |
+| Layer | Default Choice | Monthly Out-of-Pocket (`£/mo`) |
 |---|---|---|
-| **Web / Mobile PWA Shell** | Existing Vercel Hobby/current plan (`Next.js 16` + `OpenUI`) | **£0** |
-| **Chat LLM Routing** | Existing OpenAI `gpt-6-luna` + selective `gpt-6.1-terra` + AI Gateway `webSearch` (`AI_MONTHLY_ALLOWANCE_USD=10` hard ledger cap) | **£3 – £8/mo** *(hard-capped at ~$10 ≈ £7.90)* |
-| **Local Companion & Residential Tasks** | **8 GB Mac mini** running a lightweight native `launchd` Node poller (~40 MB RAM, **no Docker**, max 1 ephemeral browser tab closed after each run) + **Tailscale** Free | **~£3.50/mo** *(electricity only; £0 SaaS)* |
-| **Heavy Linux "Box", Containers & Live Voice** | **GCP `e2-medium`/`e2-standard-2` VM** (Docker + Steel/Playwright) + **Gemini 3.8 Live** + **Colab GPU bursts** | **£0 net** *(covered by Google AI Ultra $40–$100/mo credits & Colab units)* |
-| **Database, Memory & Queue** | **Neon Postgres** (`CronJob`, `BackgroundTask`, `VaultSecret`, `MemoryProfileFact`, `MemoryJournalEntry` + `pgvector`) + **Upstash Redis Free** | **£0 – £2/mo** *(Free tier covers single-owner light usage)* |
-| **Secrets Encryption** | In-app AES-256-GCM `SecretVault` (`node:crypto` + server `SECRET_VAULT_KEY`) | **£0** |
-| **Total Incremental Spend** | | **~£6.50 – £11.50 / month** |
+| **Existing Personal GCP Baseline** | **Cloud Run + Firebase Hosting** on personal project (existing **~£5/mo budget alert**) | **~£2.00 – £5.00/mo** *(£0 if offset by US$40 credit; budgeted conservatively up to alert)* |
+| **Web / Mobile PWA Shell** | Existing **Vercel** plan (`Next.js 16` + `OpenUI` + AES-256-GCM `SecretVault`) | **£0** |
+| **Chat, Subagents & Voice APIs** | OpenAI **`gpt-6-luna` / `gpt-6.1-terra`** (`AI_MONTHLY_ALLOWANCE_USD=10` cap) + **`gemini-4-hydrogen`** & **Gemini Live API (current model)** billed per-use against claimed **US$40/mo (~£31.60) credit** *(no Copilot; no 3.x Flash)* | **£3.00 – £7.90/mo** *(OpenAI)* + **£0 net** *(Gemini API within $40 credit)* |
+| **Always-On Local Poller** | **8 GB RAM Mac mini** native `launchd` worker (~40 MB RSS, single-tab ephemeral Playwright; **no rendering / no Docker**) + Tailscale Free | **~£3.50/mo** *(UK electricity)* |
+| **Heavy / Container / Render Offload** | **Google Colab** (1,000 Ultra 5x units/mo = **£0**, personal data only) + **RunPod** pay-per-second bursts for containers/rendering | **£0 – £4.00/mo** |
+| **Database, Memory & Queue** | **Neon Postgres** (`CronJob`, `BackgroundTask`, `VaultSecret`, `Memory*` + `pgvector`) + **Upstash Redis Free** | **£0 – £2.00/mo** |
+| **Total Monthly Out-of-Pocket** | *(Incremental assistant add-on is **~£6.50–£17.40/mo**; plus **~£2–£5/mo** existing GCP baseline; plus **one-off ~£4 / US$5** AI Studio credit prepay)* | **~£8.50 – £22.40 / month** |
+
+*(Note: If you later add an always-on GCP Compute Engine VM and the US$40 Developer Program credit does **not** cover GCE [currently unverified], that VM would add **~£19/mo** for `e2-medium` or **~£38/mo** for `e2-standard-2` — hence keeping heavy bursts on Colab + RunPod by default.)*
 
 ---
 
-### Stack 2: Zero-Home-Hardware "Cloud Upgrade" Stack — **~£46 to £64/month extra**
+### Stack 2: Zero-Home-Hardware "Cloud Upgrade" Stack — **~£48 to £68/month**
 
-Choose this stack **only if** you want 100% cloud execution when travelling with the Mac mini powered off, sub-minute cloud crons on Vercel, managed stealth cloud browsers, and higher LLM/voice ceilings:
+Use only when travelling long-term with the Mac mini powered off and needing 100% cloud crons, durable cloud workers, and managed cloud browsers:
 
-| Layer | Upgrade Choice | Monthly Extra (`£/mo`) | What It Buys Over Default |
+| Layer | Upgrade Choice | Monthly (`£/mo`) | What It Adds |
 |---|---|---|---|
-| **App Platform & Minute Crons** | **Vercel Pro** ($20/mo incl. $20 usage credit + Vercel Sandbox access) | **~£16/mo** | Native `* * * * *` per-minute Vercel Crons, 800s Fluid Compute timeouts, commercial Sandbox sessions |
-| **Durable Cloud Workers** | **Trigger.dev Hobby** ($10/mo incl. $10 compute credits) | **~£8/mo** | Managed long-running TypeScript subagents in the cloud with zero home hardware dependency |
-| **Managed Cloud Browser** | **Browserbase Developer** ($20/mo, 100 hrs + 1 GB residential proxy) *or* **Fly Machines** (~£5/mo) | **~£5 – £16/mo** | Cloud Chromium sessions with session-replay inspector when off the Mac mini |
-| **Database & Vector Scale** | **Neon Launch** (pay-as-you-go, larger warm CU window + point-in-time branch restore) | **~£5 – £8/mo** | Faster cold-starts and longer history retention |
-| **LLM + Realtime Voice Allowance** | Raise `AI_MONTHLY_ALLOWANCE_USD` to **$25/mo** + Gemini Live / OpenAI Realtime Mini | **~£12 – £16/mo** | Heavy daily Terra deep-reasoning + multi-step subagent & voice runs |
-| **Total Upgrade Spend** | | **~£46 – £64 / month** | Fully cloud-autonomous reference assistant equivalent |
+| **Baseline GCP + App Hosting** | Personal GCP (~£2–£5/mo) + **Vercel Pro** ($20/mo) | **~£18 – £21/mo** | Native per-minute Vercel Crons & 800s Fluid Compute |
+| **Durable Cloud Workers & Heavy Bursts** | **Trigger.dev Hobby** ($10/mo) + **RunPod** bursts | **~£8 – £12/mo** | Managed cloud subagent containers without the Mac mini |
+| **Managed Cloud Browser** | **Fly Machines** Steel container (~£5/mo) or **Browserbase Dev** ($20/mo) | **~£5 – £16/mo** | Remote multi-tab Chromium + live session replay |
+| **Database Scale** | **Neon Launch** PAYG | **~£5 – £7/mo** | Always-warm Postgres compute + point-in-time branch restore |
+| **LLM + Voice Allowance** | Raise OpenAI cap to **$20/mo** (`gpt-6-luna` / `gpt-6.1-terra` / `Claude Haiku 5.5`) + Gemini API within US$40 Ultra 5x credit | **~£12 – £16/mo** | Higher daily reasoning & voice volume |
+| **Total Cloud Upgrade Spend** | | **~£48 – £68 / month** | Full 24/7 cloud operation with Mac mini switched off |

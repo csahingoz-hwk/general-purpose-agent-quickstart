@@ -10,8 +10,8 @@
 
 ### Deliverables 1–3: Parity Architecture & Budget Docs
 1. **[GAP_ANALYSIS.md](./GAP_ANALYSIS.md)**: Audited all 8 reference assistant capability domains via dedicated lightweight read-only per-area subagents (max 3 concurrent to respect the loaded **8 GB RAM Mac mini**) against the actual security-hardened AI SDK 7 codebase (citing exact `file:line` references, distinguishing tutorial stubs from active features, and scoring Effort `S/M/L`, Value `1–5`, and Priority `P0–P3`).
-2. **[PLAN.md](./PLAN.md)**: Sequenced roadmap from **Phase 0** (in-repo safety, approvals, memory split, routines/tasks, vault) → **Phase 1** (resource-aware ~40 MB native `launchd` worker on the 8 GB Mac mini + GCP Linux VM offload, PDF/CSV finance attachments, Gemini Live voice, read/draft connectors) → **Phase 2** (multi-bot teammates, signed event webhooks, Telegram inline approvals, shareable page snapshots) → **Phase 3** (computer-use browser subagent, git-worktree coder, Imagen/Veo media, meeting copilot), with acceptance criteria and tests per slice.
-3. **[BUDGET.md](./BUDGET.md)**: Cheapest-first `£/month` comparison leveraging Çağlar's **always-on 8 GB RAM Mac mini** (native `launchd` only — zero Docker Desktop to avoid swap pressure) and **Google AI Ultra** subscription (Colab GPU units + monthly Google Cloud/API credits funding a GCP Linux VM + Gemini 3.8 Live API). Recommended Default Stack comes in at **~£6.50–£11.50/month extra** (well below the £30/mo target), alongside a zero-home-hardware Cloud Upgrade Stack (~£46–£64/mo).
+2. **[PLAN.md](./PLAN.md)**: Sequenced roadmap from **Phase 0** (in-repo safety, approvals, memory split, routines/tasks, vault) → **Phase 1** (resource-aware ~40 MB native `launchd` worker on the 8 GB Mac mini + Colab/RunPod heavy offload, PDF/CSV finance attachments, Gemini Live API voice, read/draft connectors) → **Phase 2** (multi-bot teammates, signed event webhooks, Telegram inline approvals, shareable page snapshots) → **Phase 3** (computer-use browser subagent, git-worktree coder, Imagen/Veo media, meeting copilot), with acceptance criteria and tests per slice.
+3. **[BUDGET.md](./BUDGET.md)**: Cheapest-first `£/month` comparison grounded in December 2026 **Google AI Ultra 5x** entitlements (US$40/mo claimed AI Studio credit after US$5 prepay, 1,000 Colab units, 10,000 Flow credits, 5x Antigravity quota; **no included Live voice allowance**; GCE VM credit coverage marked **unverified**), existing personal GCP Cloud Run + Firebase Hosting (~£5/mo budget alert), and the **8 GB RAM Mac mini** (native `launchd` poller only — **no rendering or heavy containers**, offloading heavy bursts to Colab/RunPod). Recommended Default Stack totals **~£8.50–£22.40/month** all-in (**~£6.50–£17.40/mo** incremental above existing GCP baseline), alongside a Cloud Upgrade Stack (~£48–£68/mo).
 
 ### Deliverable 4: Phase 0 + Phase 1 Bonus Slices Implemented
 
@@ -56,9 +56,12 @@
    - `ROUTINES_ENABLED=true`: Opt-in to expose approval-gated `scheduleTask` in chat turns.
 3. **Unattended Cloud Cron & Live Outbound Send:** Intentionally kept in **dry-run / paused mode** until the Phase 1 Mac mini worker daemon and scoped OAuth connectors are reviewed by the owner.
 
-### Key Risks & Mitigations
+### Key Risks, Governance Constraints & Mitigations
+- **Korn Ferry / employer data confidentiality (HARD CONSTRAINT):** Work/Korn Ferry material must **never** be sent to the personal Google project (Colab, AI Studio, Gemini API, Antigravity/`agy`, personal Cloud Run/Drive), **DeepSeek** (including AI Gateway search routes backed by DeepSeek), or **free OpenRouter / `opencode` models**. Keep work data strictly local/deterministic or inside employer-approved enterprise tenants.
+- **Model floor & Copilot burn:** Never use `Gemini 3.8 Flash` or any `3.x Flash` model (minimum light/subagent model is **`gemini-4-hydrogen`**, or `GPT-6.1 Terra` / `Claude Haiku 5.5`), and avoid GitHub Copilot for agentic loops due to rapid credit burn.
+- **8 GB RAM Mac mini memory pressure:** Never run rendering, Docker Desktop, or heavy containers on the 8 GB Mac mini; keep it strictly as a ~40 MB native `launchd` poller and route heavy/rendering jobs to **Colab** (personal data only) or **RunPod**.
 - **Prompt injection via future email/webhook/PDF connectors:** Mitigated in advance by `fenceUntrustedContent`, `STATE_CHANGING_TOOLS` mutual exclusion on `webSearch` turns, tamper-proof `applyApprovalResponses`, and mandatory `OutboundDraftCard` human approval.
-- **Surprise API bills:** All chat calls remain gated by `OPENAI_API_USAGE_ENABLED` / `AI_GATEWAY_USAGE_ENABLED` and the transactional `$10/mo` `ModelUsage` reservation cap; `BUDGET.md` routes voice/heavy compute onto already-paid Google AI Ultra credits + the Mac mini.
+- **Surprise API & Cloud bills:** Chat calls remain gated by `OPENAI_API_USAGE_ENABLED` / `AI_GATEWAY_USAGE_ENABLED` and the `$10/mo` `ModelUsage` reservation cap; personal GCP retains its ~£5/mo budget alert; Gemini API + **Gemini Live API (current model)** are billed per-use against the claimed US$40/mo Ultra 5x credit (after US$5 prepay), and Compute Engine VMs are excluded from the Default Stack because credit coverage for GCE is **unverified** (~£19–£38/mo exposure if uncovered, and new-project GPU quota is often `0`).
 - **Mobile viewport regressions:** All new controls use `min-h-11` (≥44px) touch targets and `text-[16px]` inputs (preventing iOS Safari auto-zoom) inside the existing `RouteSlot` layout.
 
 ---
@@ -66,9 +69,9 @@
 ## 4. What's Next (Phase 1 Execution Order)
 
 1. **Provision isolated local/preview Postgres** and apply `lib/db/usage-schema.sql` + `lib/db/parity-schema.sql`.
-2. **Mac mini Companion Worker (`packages/box-daemon`):** Outbound `launchd` worker over Tailscale polling `BackgroundTask` and `CronJob` (`FOR UPDATE SKIP LOCKED`) + local Playwright runner with `ApprovalCard` gates.
-3. **Finance Attachments & Vision:** Private authenticated file proxy + deterministic `pdf-parse` / `papaparse` CSV/PDF table extraction into OpenUI + `vision: true` on `gpt-6-luna` / `gpt-6.1-terra`.
-4. **Voice Memos + Gemini 3.8 Live Sheet:** Push-to-talk memo transcription in `MultimodalInput` + ephemeral-token Gemini Live voice session funded by Google AI Ultra credits.
+2. **Mac mini Companion Worker (`packages/box-daemon`):** Outbound ~40 MB native `launchd` worker over Tailscale polling `BackgroundTask` and `CronJob` (`FOR UPDATE SKIP LOCKED`) + single-tab ephemeral Playwright reads with `ApprovalCard` gates (routing heavy/container jobs to Colab or RunPod).
+3. **Finance Attachments & Vision:** Private authenticated file proxy + deterministic `pdf-parse` / `papaparse` CSV/PDF table extraction into OpenUI + `vision: true` on `gpt-6-luna` / `gpt-6.1-terra` (enforcing the work-data boundary).
+4. **Voice Memos + Gemini Live Sheet:** Push-to-talk memo transcription (`gemini-4-hydrogen` / OpenAI STT) in `MultimodalInput` + ephemeral-token **Gemini Live API (current model)** voice session billed against the claimed US$40/mo Ultra 5x credit (personal/non-KF use only).
 
 ---
 
