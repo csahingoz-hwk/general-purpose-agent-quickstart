@@ -1,3 +1,4 @@
+import { isGithubConnectorEnabled } from "@/lib/connectors/calendar-and-github";
 import { isGoogleConnectorsEnabled } from "@/lib/connectors/google-vault-auth";
 import { isRoutinesEnabled } from "@/lib/cron/routine-presets";
 import { isMemoryToolsEnabled } from "@/lib/memory/store";
@@ -27,6 +28,10 @@ export const AVAILABLE_CHAT_TOOLS = [
   "driveReadFiles",
   "gmailCreateDraft",
   "driveCreateDraftDoc",
+  "calendarReadEvents",
+  "calendarCreateDraftEvent",
+  "githubReadPullRequests",
+  "githubCreateDraftReview",
 ] as const;
 
 export type ChatToolName = (typeof AVAILABLE_CHAT_TOOLS)[number];
@@ -68,7 +73,7 @@ const FIXTURE_PATTERN_TR =
   /(?<![\p{L}])(?:sıradaki|siradaki|bir sonraki|bi(?:r)? dahaki|sonraki ma\p{L}*|gelecek ma\p{L}*|fikst[uü]r\p{L}*|maç sonucu|mac sonucu|son ma\p{L}*|sonuç|sonuc|skor\p{L}*|ne zaman.{0,40}ma[cç]|ma[cç]\p{L}*.{0,24}ne zaman)(?![\p{L}])/iu;
 
 const LOCAL_COMMAND_PATTERN =
-  /\b(demo|mock|fictional|sample|test inbox|my home city|set my city|my city is|i live in|i'?m based in|home is in|my schedules|scheduled tasks|recurring tasks|cancel schedule|schedule a task|schedule a routine|create a routine|customize your personality|change your personality|remember my preferred style|set your personality|draft an? email|draft a message|draft a slack|draft a telegram|prepare an? outbound draft|ask me a clarifying question|give me clickable options|save to my profile|log in my journal|search my memory|recall from memory|check (?:my )?gmail|read (?:my )?gmail|search (?:my )?gmail|create (?:a )?gmail draft|save (?:a )?draft in gmail|search (?:my )?(?:google )?drive|read (?:from )?(?:my )?(?:google )?drive|list (?:my )?(?:google )?drive files|create (?:a )?(?:google )?drive draft|save (?:a )?draft (?:doc|document) in (?:google )?drive)\b|hayal[iî]|örnek gelen kutusu|sahte e.?posta|ev şehrim|şehrim|yaşıyorum|zamanlanmış görev|planlanmış görev|görevlerimi listele|görevi iptal|rutin oluştur|kişiliğini değiştir|tarzını kaydet|kişiselleştir|taslak e-?posta hazırla|gönderim taslağı|bana seçenek kartı göster|belleğime kaydet|günlüğüme ekle|gmail(?:imi|'imi)? (?:kontrol et|oku|ara)|gmail taslağı oluştur|gmail'e taslak kaydet|(?:google )?drive(?:'da|da| dosyalarımı) (?:ara|listele|oku)|(?:google )?drive taslağı oluştur|drive'a taslak kaydet/;
+  /\b(demo|mock|fictional|sample|test inbox|my home city|set my city|my city is|i live in|i'?m based in|home is in|my schedules|scheduled tasks|recurring tasks|cancel schedule|schedule a task|schedule a routine|create a routine|customize your personality|change your personality|remember my preferred style|set your personality|draft an? email|draft a message|draft a slack|draft a telegram|prepare an? outbound draft|ask me a clarifying question|give me clickable options|save to my profile|log in my journal|search my memory|recall from memory|check (?:my )?gmail|read (?:my )?gmail|search (?:my )?gmail|create (?:a )?gmail draft|save (?:a )?draft in gmail|search (?:my )?(?:google )?drive|read (?:from )?(?:my )?(?:google )?drive|list (?:my )?(?:google )?drive files|create (?:a )?(?:google )?drive draft|save (?:a )?draft (?:doc|document) in (?:google )?drive|check (?:my )?(?:google )?calendar|upcoming calendar events|read (?:my )?calendar|create (?:a )?(?:google )?calendar draft|draft (?:a )?calendar event|list (?:open )?(?:github )?(?:prs|pull requests)|read (?:github )?(?:prs|pull requests)|check github prs|draft (?:a )?(?:github )?(?:pr|pull request) review|create (?:a )?github draft review)\b|hayal[iî]|örnek gelen kutusu|sahte e.?posta|ev şehrim|şehrim|yaşıyorum|zamanlanmış görev|planlanmış görev|görevlerimi listele|görevi iptal|rutin oluştur|kişiliğini değiştir|tarzını kaydet|kişiselleştir|taslak e-?posta hazırla|gönderim taslağı|bana seçenek kartı göster|belleğime kaydet|günlüğüme ekle|gmail(?:imi|'imi)? (?:kontrol et|oku|ara)|gmail taslağı oluştur|gmail'e taslak kaydet|(?:google )?drive(?:'da|da| dosyalarımı) (?:ara|listele|oku)|(?:google )?drive taslağı oluştur|drive'a taslak kaydet|takvimimi (?:kontrol et|oku)|yaklaşan etkinliklerim|takvim taslağı oluştur|github açık pr|github pr taslak inceleme/;
 
 /** Tools that change stored state; never offered in a turn that reads web content. */
 const STATE_CHANGING_TOOLS: readonly ChatToolName[] = [
@@ -85,6 +90,8 @@ const STATE_CHANGING_TOOLS: readonly ChatToolName[] = [
   "addJournalEntry",
   "gmailCreateDraft",
   "driveCreateDraftDoc",
+  "calendarCreateDraftEvent",
+  "githubCreateDraftReview",
 ];
 
 function userText(message: ChatMessage): string {
@@ -350,6 +357,38 @@ export function selectActiveTools(
       ) {
         enabled.push("driveReadFiles");
       }
+
+      if (
+        /\b(create (?:a )?(?:google )?calendar draft|draft (?:a )?calendar event)\b|takvim taslağı oluştur/.test(
+          phrase
+        )
+      ) {
+        enabled.push("calendarCreateDraftEvent");
+      }
+      if (
+        /\b(check (?:my )?(?:google )?calendar|upcoming calendar events|read (?:my )?calendar)\b|takvimimi (?:kontrol et|oku)|yaklaşan etkinliklerim/.test(
+          phrase
+        )
+      ) {
+        enabled.push("calendarReadEvents");
+      }
+    }
+  }
+
+  if (canPersonalize && isGithubConnectorEnabled()) {
+    if (
+      /\b(draft (?:a )?(?:github )?(?:pr|pull request) review|create (?:a )?github draft review)\b|github pr taslak inceleme/.test(
+        phrase
+      )
+    ) {
+      enabled.push("githubCreateDraftReview");
+    }
+    if (
+      /\b(list (?:open )?(?:github )?(?:prs|pull requests)|read (?:github )?(?:prs|pull requests)|check github prs)\b|github açık pr/.test(
+        phrase
+      )
+    ) {
+      enabled.push("githubReadPullRequests");
     }
   }
 
@@ -389,10 +428,12 @@ export function selectActiveTools(
     ];
   }
 
-  // Untrusted connector reads (Gmail/Drive) never sit alongside state-changing tools in the same turn.
+  // Untrusted connector reads (Gmail/Drive/Calendar/GitHub) never sit alongside state-changing tools in the same turn.
   if (
     enabled.includes("gmailReadMessages") ||
-    enabled.includes("driveReadFiles")
+    enabled.includes("driveReadFiles") ||
+    enabled.includes("calendarReadEvents") ||
+    enabled.includes("githubReadPullRequests")
   ) {
     return [
       ...new Set(

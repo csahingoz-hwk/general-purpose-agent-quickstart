@@ -470,6 +470,14 @@ const PurePreviewMessage = ({
             locale === "tr"
               ? "Google Drive özel [DRAFT] belgesi oluştur"
               : "Save private Google Drive [DRAFT] doc",
+          calendarCreateDraftEvent:
+            locale === "tr"
+              ? "Özel [DRAFT] takvim etkinliği kaydet (davet göndermez)"
+              : "Save private [DRAFT] Calendar event (no invites)",
+          githubCreateDraftReview:
+            locale === "tr"
+              ? "Yayınlanmamış GitHub PR taslak incelemesi kaydet"
+              : "Save unpublished GitHub PR draft review",
           scheduleTask:
             locale === "tr" ? "Zamanlanmış rutin oluştur" : "Create routine",
         };

@@ -42,6 +42,7 @@ import {
 import { createUsageLedger } from "@/lib/ai/routing/ledger";
 import { inferenceSession } from "@/lib/ai/routing/session";
 import { askUserQuestion } from "@/lib/ai/tools/ask-question";
+import { createCalendarAndGithubTools } from "@/lib/ai/tools/calendar-github-connectors";
 import { cancelSchedule } from "@/lib/ai/tools/cancel-schedule";
 import { createDocument } from "@/lib/ai/tools/create-document";
 import { demoInbox } from "@/lib/ai/tools/demo-inbox";
@@ -59,6 +60,7 @@ import { setHomeLocation } from "@/lib/ai/tools/set-home-location";
 import { setSoul } from "@/lib/ai/tools/set-soul";
 import { updateDocument } from "@/lib/ai/tools/update-document";
 import { webSearch } from "@/lib/ai/tools/web-search";
+import { isGithubConnectorEnabled } from "@/lib/connectors/calendar-and-github";
 import { isGoogleConnectorsEnabled } from "@/lib/connectors/google-vault-auth";
 import { isProductionEnvironment } from "@/lib/constants";
 import { isRoutinesEnabled } from "@/lib/cron/routine-presets";
@@ -390,15 +392,24 @@ export async function POST(request: Request) {
                     m.parts.some(
                       (p) =>
                         (p.type as string) === "tool-gmailReadMessages" ||
-                        (p.type as string) === "tool-driveReadFiles"
+                        (p.type as string) === "tool-driveReadFiles" ||
+                        (p.type as string) === "tool-calendarReadEvents" ||
+                        (p.type as string) === "tool-githubReadPullRequests"
                     )
                   );
                   const hasUntrusted =
                     requestedTools.includes("webSearch") ||
                     requestedTools.includes("gmailReadMessages") ||
                     requestedTools.includes("driveReadFiles") ||
+                    requestedTools.includes("calendarReadEvents") ||
+                    requestedTools.includes("githubReadPullRequests") ||
                     attachmentPrep.hasUntrustedAttachment ||
                     hasPriorConnectorReads;
+
+                  const calGithub = createCalendarAndGithubTools({
+                    userId: session.user.id,
+                    hasUntrustedContext: hasUntrusted,
+                  });
 
                   return {
                     setSoul: setSoul({ userId: session.user.id }),
@@ -418,10 +429,23 @@ export async function POST(request: Request) {
                         })
                       : {}),
                     ...(isGoogleConnectorsEnabled()
-                      ? createGoogleConnectorTools({
-                          userId: session.user.id,
-                          hasUntrustedContext: hasUntrusted,
-                        })
+                      ? {
+                          ...createGoogleConnectorTools({
+                            userId: session.user.id,
+                            hasUntrustedContext: hasUntrusted,
+                          }),
+                          calendarReadEvents: calGithub.calendarReadEvents,
+                          calendarCreateDraftEvent:
+                            calGithub.calendarCreateDraftEvent,
+                        }
+                      : {}),
+                    ...(isGithubConnectorEnabled()
+                      ? {
+                          githubReadPullRequests:
+                            calGithub.githubReadPullRequests,
+                          githubCreateDraftReview:
+                            calGithub.githubCreateDraftReview,
+                        }
                       : {}),
                   };
                 })()

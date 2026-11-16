@@ -22,6 +22,8 @@ const READ_ONLY_TOOLS = new Set([
   "webSearch",
   "gmailReadMessages",
   "driveReadFiles",
+  "calendarReadEvents",
+  "githubReadPullRequests",
 ]);
 
 const INTERNAL_WRITE_TOOLS = new Set([
