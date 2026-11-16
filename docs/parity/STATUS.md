@@ -86,6 +86,9 @@
 ### Slice 6 (`P2.1` — Multi-Bot Teammate Roster & Scoped Shared Memory): DONE
 - **What changed (in plain English):** Added a `/teammates` roster page (reachable from the user menu and `/teammates` slash command, or inline in chat via `@bot:<slug>`) pre-seeded with three specialist teammates: **Chief of Staff** (`blue`), **Finance Controller** (`green`), and **Vibecoder** (`purple`), plus custom teammate creation (`BotProfile` table). Activating a teammate switches the mascot color theme, applies that teammate's domain persona and default skills in chat, shares core profile facts marked `sharedAcrossBots: true`, and keeps private `sharedAcrossBots: false` facts isolated to the teammate that saved them.
 
+### Slice 7 (`P2.2` — HMAC Event Webhooks & Hardened Telegram Inline Approvals): DONE
+- **What changed (in plain English):** Added an opt-in signed event webhook endpoint (`POST /api/webhooks/[source]`, gated behind `WEBHOOK_TRIGGERS_ENABLED=true`) that verifies GitHub/custom **HMAC-SHA256** signatures in constant time, wraps payloads in `<untrusted_content>` fences, and queues matching background tasks (auto-escalating suspicious payloads to require approval). Also built the hardened single-owner Telegram handler (`TELEGRAM_WEBHOOK_ENABLED=true` — staying locked at `503` by default) that drops unlinked `chat.id` messages with zero spend and verifies compact **HMAC-signed inline-keyboard Approve/Deny buttons** bound to the exact SHA-256 action digest.
+
 ### Remaining / Next Up (Wait for Owner Go-Ahead)
 1. **Provision isolated local/preview Postgres** and apply `lib/db/usage-schema.sql` + `lib/db/parity-schema.sql`.
 2. **P1.3 Voice Memos + Gemini Live Sheet:** Push-to-talk memo transcription (`gemini-4-hydrogen` / OpenAI STT) in `MultimodalInput` + ephemeral-token **Gemini Live API (current model)** voice session billed against the confirmed US$40/mo GCP credit (personal/non-KF use only).

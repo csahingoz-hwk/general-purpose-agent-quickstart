@@ -107,3 +107,17 @@ CREATE TABLE IF NOT EXISTS "ChatBotBinding" (
   "updatedAt" timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS "RoutineTrigger" (
+  "id" uuid PRIMARY KEY,
+  "userId" uuid NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+  "source" varchar(64) NOT NULL,
+  "eventFilter" varchar(120) NOT NULL DEFAULT '*',
+  "title" varchar(180) NOT NULL,
+  "promptTemplate" text NOT NULL,
+  "enabled" boolean NOT NULL DEFAULT true,
+  "createdAt" timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS "RoutineTrigger_user_source"
+  ON "RoutineTrigger" ("userId", "source");
+
