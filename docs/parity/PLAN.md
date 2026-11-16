@@ -1,8 +1,8 @@
-# Grok Bot Parity — Phased Implementation Plan
+# Assistant Feature Parity — Phased Implementation Plan
 
 **Principles:**
 1. **Preserve every security invariant:** Owner-only `APP_OWNER_EMAIL` access (`proxy.ts`), fail-closed spend ledger (`ModelUsage`), untrusted web-search isolation (`STATE_CHANGING_TOOLS`), bilingual EN/TR truthfulness (`tests/security/*.test.ts`), and zero automatic migrations against shared/production Neon (`lib/db/parity-schema.sql` stays additive, mirroring `lib/db/usage-schema.sql`).
-2. **Keep the Grok Bot iOS shell:** Reuse existing semantic CSS tokens (`--hairline`, `--shadow-card`, `bg-card`, `rounded-[22px]`), ≥44px touch targets, 16px inputs, AA contrast, and `RouteSlot` navigation.
+2. **Keep the existing personal-assistant iOS shell:** Reuse existing semantic CSS tokens (`--hairline`, `--shadow-card`, `bg-card`, `rounded-[22px]`), ≥44px touch targets, 16px inputs, AA contrast, and `RouteSlot` navigation.
 3. **Small, verifiable vertical slices:** Every phase item defines explicit acceptance criteria and automated tests.
 
 ---
@@ -14,7 +14,7 @@
 ### P0.1 — Action Risk Reviewer, Universal Approval Cards & Draft-Before-Send
 - **Scope:**
   - `lib/safety/action-review.ts`: Deterministic risk policy engine classifying actions into `low | medium | high | critical`, computing SHA-256 payload digests, flagging untrusted-content taint, and requiring human approval for all external/outbound or destructive actions.
-  - `components/chat/approval-card.tsx` + `components/chat/outbound-draft-card.tsx`: Grok Bot–style approval cards (44px Allow/Approve & Deny buttons, risk pill, collapsible exact parameters, EN/TR labels) wired into `components/chat/message.tsx` for both `tool-draftOutboundMessage` and any generic `tool-*` part in `approval-requested` / `approval-responded` / `output-denied` states.
+  - `components/chat/approval-card.tsx` + `components/chat/outbound-draft-card.tsx`: Reference-assistant-style approval cards (44px Allow/Approve & Deny buttons, risk pill, collapsible exact parameters, EN/TR labels) wired into `components/chat/message.tsx` for both `tool-draftOutboundMessage` and any generic `tool-*` part in `approval-requested` / `approval-responded` / `output-denied` states.
   - `lib/ai/tools/draft-outbound.ts`: `draftOutboundMessage` tool (`needsApproval: true`) that prepares an outbound email/Telegram/Slack/webhook message, runs `reviewActionRisk`, and upon owner approval records an immutable approved outbox receipt (truthfully marked `queued_dry_run` until live connectors are enabled).
   - Register in `selectActiveTools` (`STATE_CHANGING_TOOLS`) so it never coexists with untrusted `webSearch`.
 - **Acceptance Criteria:**
@@ -37,7 +37,7 @@
   - `lib/db/parity-schema.sql`: Additive SQL tables `MemoryProfileFact` (`id`, `userId`, `category`, `key`, `value`, `sharedAcrossBots`, `updatedAt`) and `MemoryJournalEntry` (`id`, `userId`, `title`, `body`, `tags`, `source`, `createdAt`).
   - `lib/memory/store.ts`: Clean repository interface (`MemoryStore`) with Postgres implementation + deterministic in-memory store for unit tests and graceful `setup_required` status when tables are not yet provisioned.
   - `lib/ai/tools/memory-tools.ts`: `saveProfileFact`, `addJournalEntry`, and `recallMemories` tools, gated strictly behind `MEMORY_TOOLS_ENABLED=true` so default prompts/tests remain 100% truthful when unconfigured.
-  - `app/api/memory/route.ts` + `app/(chat)/memory/page.tsx`: Owner-authenticated API & Grok Bot–styled UI with **Profile** (durable facts + "Shared across bots" badge) and **Journal** (chronological episodic timeline + search/filter + add/delete).
+  - `app/api/memory/route.ts` + `app/(chat)/memory/page.tsx`: Owner-authenticated API & iOS-shell-styled UI with **Profile** (durable facts + "Shared across bots" badge) and **Journal** (chronological episodic timeline + search/filter + add/delete).
 - **Acceptance Criteria:**
   - Profile facts upsert cleanly by `(userId, key)` and distinguish personal vs. `sharedAcrossBots` facts; Journal entries append chronologically and support tag/keyword search.
   - When `MEMORY_TOOLS_ENABLED` is unset/false, `regularPrompt` and `ONBOARDING_PROMPT` advertise zero memory tools; when `true`, memory tools are selectively exposed on recall/remember intent (never alongside `webSearch`).
@@ -58,7 +58,7 @@
 
 ### P0.5 — Routines Hub (`/routines`) & Durable Background Task Runner (`/api/tasks`)
 - **Scope:**
-  - **Routines API & UI:** Upgrade schedules with `POST /api/schedules` (validated cron + timezone + prompt), `PATCH /api/schedules/[id]` (enable/pause toggle), and `POST /api/schedules/[id]/run` (enqueues an owner-initiated Background Task run). Build `app/(chat)/routines/page.tsx` in the Grok Bot shell style (tabs for **Routines**, **Background Tasks**, and **Secret Vault** quick status, plus preset templates like *Weekday 08:30 Morning Brief* and *Month-End Close Checklist*). Keep `/api/cron/tick` locked at `401`/`503` per `access.test.ts` until unattended execution is separately approved.
+  - **Routines API & UI:** Upgrade schedules with `POST /api/schedules` (validated cron + timezone + prompt), `PATCH /api/schedules/[id]` (enable/pause toggle), and `POST /api/schedules/[id]/run` (enqueues an owner-initiated Background Task run). Build `app/(chat)/routines/page.tsx` in the existing personal-assistant shell style (tabs for **Routines**, **Background Tasks**, and **Secret Vault** quick status, plus preset templates like *Weekday 08:30 Morning Brief* and *Month-End Close Checklist*). Keep `/api/cron/tick` locked at `401`/`503` per `access.test.ts` until unattended execution is separately approved.
   - **Approval-gated `scheduleTask` tool:** Re-enable `lib/ai/tools/schedule-task.ts` behind `needsApproval: true` (when `ROUTINES_ENABLED=true`) so the agent can propose a cron routine in chat and the owner approves it via `ApprovalCard`!
   - **Background Task Runner (`lib/tasks/runner.ts` + `app/api/tasks/route.ts`):** `BackgroundTask` state machine (`queued → running → awaiting_approval → succeeded | failed | cancelled`) with step logs, owner isolation, cancellation, and dry-run/safe local execution hook ready for the Phase 1 Mac mini daemon.
   - **Navigation:** Add `Routines & tasks` and `Memory` items to `SidebarUserNav` (`components/chat/sidebar-user-nav.tsx`) and `lib/ui-copy.ts` (EN/TR), plus `/routines` and `/memory` slash commands in `components/chat/slash-commands.tsx`.
@@ -82,10 +82,10 @@
 
 *Target effort: 1–2 weeks · Extra recurring cost: £0–£5/mo (uses Mac mini + Google AI Ultra credits).*
 
-### P1.1 — Mac Mini Companion Worker ("The Box")
-- **Build:** Lightweight TypeScript daemon (`packages/box-daemon`) running on Çağlar's always-on Mac mini under `launchd`, connected outbound to Neon Postgres / app API over HTTPS + Tailscale:
-  - Polls `BackgroundTask` (`FOR UPDATE SKIP LOCKED`) and due `CronJob` rows with sub-second accuracy (eliminating Vercel Hobby daily cron limits and 60s serverless timeouts).
-  - Executes sandboxed local workspace shell commands and **Playwright** browser sessions, pausing at `awaiting_approval` whenever `ActionRiskReviewer` marks an operation `high`/`critical`.
+### P1.1 — Resource-Aware Companion Worker (8 GB Mac mini + Ultra GCP VM)
+- **Build:** Lightweight native TypeScript worker (`packages/box-daemon`, ~40 MB RSS, **zero Docker Desktop** so the already-loaded **8 GB RAM Mac mini** never swap-thrashes) running under `launchd` over HTTPS + Tailscale, paired with a container-capable **Google Cloud `e2-standard-2` Linux VM** (funded by Google AI Ultra monthly credits) for heavier Playwright/sandbox jobs:
+  - Polls `BackgroundTask` (`FOR UPDATE SKIP LOCKED`, max concurrency `1` on Mac mini) and due `CronJob` rows with sub-second accuracy.
+  - Executes approved local tasks on Mac mini (closing any ephemeral browser context immediately after each run) and routes container/multi-tab browser jobs to the GCP Linux box, pausing at `awaiting_approval` whenever `ActionRiskReviewer` marks an operation `high`/`critical`.
 - **Acceptance Criteria & Tests:** Daemon claims a queued task within 2s, streams step logs + browser screenshots to `BackgroundTask`, halts on unapproved shell writes, and survives network reconnects; tested with mock task queue + Playwright smoke spec.
 
 ### P1.2 — Finance-Grade Attachments (PDF, CSV, XLSX) & Vision Unlock

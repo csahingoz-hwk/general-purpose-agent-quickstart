@@ -1,4 +1,4 @@
-# Grok Bot Parity — Infrastructure & Cost Budget (`£/month`)
+# Assistant Feature Parity — Infrastructure & Cost Budget (`£/month`)
 
 **Owner:** Çağlar (`Europe/London`)  
 **Rule:** Cheapest-first, leveraging subscriptions and hardware **already paid for**, with hard spending caps and zero surprise usage bills.  
@@ -10,10 +10,10 @@
 
 Before buying any new SaaS infrastructure, inventory what Çağlar already pays for and owns:
 
-| Existing Asset | Relevant Included Entitlements | Best Role in Grok Bot Architecture |
+| Existing Asset | Relevant Included Entitlements | Best Role in Assistant Architecture |
 |---|---|---|
-| **Always-On Mac mini** *(owned)* | Apple Silicon CPU/Neural Engine, macOS Keychain, local SSD, residential UK IP, 24/7 uptime (~10–15W idle ≈ **£3–£4/mo** UK electricity) | **Primary "Box"**: persistent shell, local Playwright browser, background task worker, sub-minute cron runner, optional iMessage/local file bridge |
-| **Google AI Ultra** *(already paid)* | **1,000–2,000 Colab compute units/mo** + background GPU execution; **$40–$100/mo (~£31–£79/mo) Google Cloud / Developer API credits**; Gemini 3.8 Live voice/multimodal API; 20–30 TB Drive | **Zero-extra-cost Cloud VM failover, Gemini Live voice, Imagen/Veo media, and heavy GPU/OCR/Python batch jobs on Colab** |
+| **Always-On Mac mini (8 GB RAM, already loaded)** *(owned)* | Apple Silicon CPU, macOS Keychain, local SSD, residential UK IP, 24/7 uptime (~10–15W idle ≈ **£3–£4/mo** UK electricity) | **Lightweight native `launchd` worker (~40 MB RSS)**: sub-minute cron/task poller, local file/iMessage bridge, and single-tab ephemeral Playwright only — **never Docker Desktop** (~2–4 GB RAM overhead would cause swap thrashing on an 8 GB loaded Mac) |
+| **Google AI Ultra** *(already paid)* | **1,000–2,000 Colab compute units/mo** + background GPU execution; **$40–$100/mo (~£31–£79/mo) Google Cloud / Developer API credits**; Gemini 3.8 Live voice/multimodal API; 20–30 TB Drive | **Primary heavy "Box" offload**: zero-extra-cost **GCP Linux VM (`e2-standard-2`, 8 GB RAM)** for Docker/headless browser/sandbox workloads + **Colab** for GPU/OCR/Python batch jobs + **Gemini Live** voice |
 | **Vercel** *(already configured)* | Next.js hosting, Vercel Blob, AI Gateway OIDC routing ($5/mo free Gateway credits) | **Web/Mobile PWA Chat Shell** + webhook/API edge ingress |
 | **Claude Pro / ChatGPT Plus / Copilot Pro / Gemini Pro / Lovable Pro** | Interactive coding & research seats | Development & vibecoding acceleration *(note: consumer web seats do not grant programmatic API keys, so runtime bot calls use AI Gateway / OpenAI `$10` cap + Google AI Ultra API credits)* |
 
@@ -25,8 +25,8 @@ Before buying any new SaaS infrastructure, inventory what Çağlar already pays 
 
 | Option | Est. Extra Cost (`£/mo`) | Persistence & OS | Pros | Cons / Trade-Offs |
 |---|---|---|---|---|
-| **1. Always-On Mac mini + Tailscale + Docker** *(Recommended Default)* | **£0 SaaS** *(~£3.50/mo electricity)* | Full persistent macOS + Linux containers | Zero SaaS fee; residential IP (rarely blocked); native access to local folders/iMessage; unlimited runtime (no 60s timeout); outbound-only WSS/Tailscale needs zero open router ports. | Depends on home broadband & power (mitigated by Postgres queue retry when offline). |
-| **2. Google Cloud VM (`e2-small` / `e2-medium`) via Ultra Credits** | **£0 net** *(~£11–£22/mo covered by $40–$100 Ultra credit)* | Persistent Debian/Ubuntu Linux VM | Public static IP; 99.9% cloud uptime; great secondary webhook relay or remote Linux box without touching home network. | Datacenter IP gets more CAPTCHAs than home Mac; requires basic Linux patching. |
+| **1. Hybrid: Native `launchd` on 8 GB Mac mini + GCP VM via Ultra Credits** *(Recommended Default)* | **£0 SaaS** *(~£3.50/mo Mac electricity + £0 net GCP on Ultra credit)* | Native macOS (`launchd`, no Docker) + Ubuntu Linux VM (`e2-medium` 4 GB / `e2-standard-2` 8 GB) | Respects the **8 GB RAM loaded Mac mini** constraint: tiny ~40 MB Node worker on Mac handles residential-IP/local tasks without Docker bloat, while memory-heavy Linux containers and concurrent Playwright tabs run on the Ultra-funded GCP VM. | Two worker targets (`mac-local` vs `gcp-box`), unified cleanly through the same Postgres `BackgroundTask` queue. |
+| **2. Google Cloud VM (`e2-medium` / `e2-standard-2`) Alone via Ultra Credits** | **£0 net** *(~£19–£38/mo covered by $40–$100 Ultra credit)* | Persistent Debian/Ubuntu Linux VM | Zero RAM impact on the 8 GB Mac mini; public static IP; 99.9% cloud uptime; runs Docker + Steel browser cleanly. | Datacenter IP gets more CAPTCHAs than residential Mac IP; no local macOS/iMessage access. |
 | **3. Fly Machines (Firecracker micro-VMs)** | **£2–£6/mo** *(1 GB RAM ~$6.70/mo always-on, or ~$0.15/GB-mo stopped)* | Fast-boot Linux micro-VM + persistent volume | Sub-second wake-on-request; true hardware-level micro-VM isolation for untrusted code; pay-per-second. | Extra vendor to manage when Mac mini + GCP Ultra credits already cover 100% of need. |
 | **4. Vercel Sandbox** | **£0** *(Hobby: 5 CPU-hr/mo)* or **£0–£16+** *(Pro credit + $0.128/CPU-hr)* | Ephemeral container (45m Hobby / 24h Pro cap) | Native TypeScript SDK inside Vercel routes; zero infra ops. | Ephemeral (not a true persistent "box"); Hobby non-commercial limits & 45-min cap. |
 | **5. Daytona** | **£0 start** *($200 credit)*, then **~£4–£12/mo** usage ($0.05/vCPU-hr) | Persistent isolated dev workspaces | Fast workspace snapshots; tailored for coding subagents; cheap per-second billing. | Overkill for personal finance/assistant tasks unless running parallel cloud repo bots. |
@@ -39,8 +39,8 @@ Before buying any new SaaS infrastructure, inventory what Çağlar already pays 
 
 | Option | Est. Extra Cost (`£/mo`) | Anti-Bot / Auth Profile | Trade-Offs |
 |---|---|---|---|
-| **1. Playwright on Mac mini** *(Recommended Default)* | **£0** | Uses residential UK IP + persistent local Chromium profile | Fastest, £0, keeps logged-in read sessions locally on Çağlar's hardware, supports headed visual inspection via screen share. Must still pause on `ApprovalCard` before any submit/purchase. |
-| **2. Self-Hosted Steel.dev (Docker on Mac mini / GCP VM)** | **£0** | Open-source browser API + session viewer | Gives a clean REST/CDP browser session API + live debug viewer URL for OpenUI cards at £0 SaaS cost. |
+| **1. Ephemeral Single-Tab Playwright on 8 GB Mac mini** *(Recommended for Residential UK Reads)* | **£0** | Uses residential UK IP + local Chromium profile (max 1 tab, closed immediately after run) | £0, avoids datacenter IP blocks, keeps RAM footprint minimal on the loaded 8 GB Mac mini. Must pause on `ApprovalCard` before any submit/purchase. |
+| **2. Self-Hosted Steel.dev (Docker on GCP Ultra VM)** *(Recommended for Heavy/Multi-Tab)* | **£0 net** | Open-source browser API + live session viewer on Linux VM | Keeps Docker + multi-tab Chromium RAM completely off the 8 GB Mac mini while providing a clean REST/CDP session viewer URL at £0 net SaaS cost. |
 | **3. Steel.dev Cloud (Launch Plan)** | **£0 start** *($30 free credit)*, then **~£0.07/hr** ($0.08–$0.10/hr) | Cloud Chromium + optional proxies (~£5–£8/GB) | Great serverless burst fallback when Mac mini is asleep; usage-based without a $20/mo floor. |
 | **4. Browserbase** | **£0 Free** *(1 hr/mo)* · **£16/mo ($20)** Developer (100 hrs + 1 GB proxy) | Managed cloud stealth + session replay | Best turnkey cloud DX & Stagehand integration, but £16/mo fixed cost is unnecessary until cloud-only operation is required. |
 
@@ -89,8 +89,8 @@ Maximizes Çağlar's **Mac mini** + **Google AI Ultra** benefits while keeping a
 |---|---|---|
 | **Web / Mobile PWA Shell** | Existing Vercel Hobby/current plan (`Next.js 16` + `OpenUI`) | **£0** |
 | **Chat LLM Routing** | Existing OpenAI `gpt-6-luna` + selective `gpt-6.1-terra` + AI Gateway `webSearch` (`AI_MONTHLY_ALLOWANCE_USD=10` hard ledger cap) | **£3 – £8/mo** *(hard-capped at ~$10 ≈ £7.90)* |
-| **Always-On "Box" & Browser** | **Mac mini** running local worker daemon + **Playwright** + **Tailscale** (Free personal plan) | **~£3.50/mo** *(electricity only; £0 SaaS)* |
-| **Cloud Backup VM & Live Voice** | **GCP `e2-small` relay + Gemini 3.8 Live + Embeddings + Colab GPU bursts** | **£0 net** *(covered by Google AI Ultra $40–$100/mo credits & Colab units)* |
+| **Local Companion & Residential Tasks** | **8 GB Mac mini** running a lightweight native `launchd` Node poller (~40 MB RAM, **no Docker**, max 1 ephemeral browser tab closed after each run) + **Tailscale** Free | **~£3.50/mo** *(electricity only; £0 SaaS)* |
+| **Heavy Linux "Box", Containers & Live Voice** | **GCP `e2-medium`/`e2-standard-2` VM** (Docker + Steel/Playwright) + **Gemini 3.8 Live** + **Colab GPU bursts** | **£0 net** *(covered by Google AI Ultra $40–$100/mo credits & Colab units)* |
 | **Database, Memory & Queue** | **Neon Postgres** (`CronJob`, `BackgroundTask`, `VaultSecret`, `MemoryProfileFact`, `MemoryJournalEntry` + `pgvector`) + **Upstash Redis Free** | **£0 – £2/mo** *(Free tier covers single-owner light usage)* |
 | **Secrets Encryption** | In-app AES-256-GCM `SecretVault` (`node:crypto` + server `SECRET_VAULT_KEY`) | **£0** |
 | **Total Incremental Spend** | | **~£6.50 – £11.50 / month** |
@@ -108,4 +108,4 @@ Choose this stack **only if** you want 100% cloud execution when travelling with
 | **Managed Cloud Browser** | **Browserbase Developer** ($20/mo, 100 hrs + 1 GB residential proxy) *or* **Fly Machines** (~£5/mo) | **~£5 – £16/mo** | Cloud Chromium sessions with session-replay inspector when off the Mac mini |
 | **Database & Vector Scale** | **Neon Launch** (pay-as-you-go, larger warm CU window + point-in-time branch restore) | **~£5 – £8/mo** | Faster cold-starts and longer history retention |
 | **LLM + Realtime Voice Allowance** | Raise `AI_MONTHLY_ALLOWANCE_USD` to **$25/mo** + Gemini Live / OpenAI Realtime Mini | **~£12 – £16/mo** | Heavy daily Terra deep-reasoning + multi-step subagent & voice runs |
-| **Total Upgrade Spend** | | **~£46 – £64 / month** | Fully cloud-autonomous Grok Bot equivalent |
+| **Total Upgrade Spend** | | **~£46 – £64 / month** | Fully cloud-autonomous reference assistant equivalent |

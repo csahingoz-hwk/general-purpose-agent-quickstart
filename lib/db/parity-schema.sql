@@ -1,4 +1,4 @@
--- Additive Grok Bot parity schema (Memory Profile + Journal, Secret Vault, Background Tasks).
+-- Additive assistant parity schema (Memory Profile + Journal, Secret Vault, Background Tasks, Skills).
 -- Follow the same rule as lib/db/usage-schema.sql: apply explicitly to an approved
 -- isolated database, never automatically from preview builds (which may share Neon).
 

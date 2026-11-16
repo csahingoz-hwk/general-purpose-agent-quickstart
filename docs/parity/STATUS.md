@@ -1,4 +1,4 @@
-# Grok Bot Parity — Status & Handoff Report
+# Assistant Feature Parity — Status & Handoff Report
 
 **Branch:** `feat/grokbot-parity` (worktree only — `feature/openai-premium-model-routing` and remotes untouched)  
 **Date:** 16 November 2026  
@@ -9,9 +9,9 @@
 ## 1. What Was Completed
 
 ### Deliverables 1–3: Parity Architecture & Budget Docs
-1. **[GAP_ANALYSIS.md](./GAP_ANALYSIS.md)**: Audited all 8 Grok Bot capability domains against the actual security-hardened AI SDK 7 codebase (citing exact file/line references, distinguishing tutorial stubs from active features, and scoring Effort `S/M/L`, Value `1–5`, and Priority `P0–P3`).
-2. **[PLAN.md](./PLAN.md)**: Sequenced roadmap from **Phase 0** (in-repo safety, approvals, memory split, routines/tasks, vault) → **Phase 1** (Mac mini "box" daemon, PDF/CSV finance attachments, Gemini Live voice, read/draft connectors) → **Phase 2** (multi-bot teammates, signed event webhooks, Telegram inline approvals, shareable page snapshots) → **Phase 3** (computer-use browser subagent, git-worktree coder, Imagen/Veo media, meeting copilot), with acceptance criteria and tests per slice.
-3. **[BUDGET.md](./BUDGET.md)**: Cheapest-first `£/month` comparison leveraging Çağlar's **always-on Mac mini** and **Google AI Ultra** subscription (Colab GPU units + monthly Google Cloud/API credits + Gemini 3.8 Live API). Recommended Default Stack comes in at **~£6.50–£11.50/month extra** (well below the £30/mo target), alongside a zero-home-hardware Cloud Upgrade Stack (~£46–£64/mo).
+1. **[GAP_ANALYSIS.md](./GAP_ANALYSIS.md)**: Audited all 8 reference assistant capability domains via dedicated lightweight read-only per-area subagents (max 3 concurrent to respect the loaded **8 GB RAM Mac mini**) against the actual security-hardened AI SDK 7 codebase (citing exact `file:line` references, distinguishing tutorial stubs from active features, and scoring Effort `S/M/L`, Value `1–5`, and Priority `P0–P3`).
+2. **[PLAN.md](./PLAN.md)**: Sequenced roadmap from **Phase 0** (in-repo safety, approvals, memory split, routines/tasks, vault) → **Phase 1** (resource-aware ~40 MB native `launchd` worker on the 8 GB Mac mini + GCP Linux VM offload, PDF/CSV finance attachments, Gemini Live voice, read/draft connectors) → **Phase 2** (multi-bot teammates, signed event webhooks, Telegram inline approvals, shareable page snapshots) → **Phase 3** (computer-use browser subagent, git-worktree coder, Imagen/Veo media, meeting copilot), with acceptance criteria and tests per slice.
+3. **[BUDGET.md](./BUDGET.md)**: Cheapest-first `£/month` comparison leveraging Çağlar's **always-on 8 GB RAM Mac mini** (native `launchd` only — zero Docker Desktop to avoid swap pressure) and **Google AI Ultra** subscription (Colab GPU units + monthly Google Cloud/API credits funding a GCP Linux VM + Gemini 3.8 Live API). Recommended Default Stack comes in at **~£6.50–£11.50/month extra** (well below the £30/mo target), alongside a zero-home-hardware Cloud Upgrade Stack (~£46–£64/mo).
 
 ### Deliverable 4: Phase 0 + Phase 1 Bonus Slices Implemented
 
@@ -20,7 +20,7 @@
   - Owner-only REST API returning masked key hints (`••••abcd`) only; plaintext never leaves server memory or enters LLM context.
 - **Long-Term Memory: Profile + Journal Split (`lib/memory/store.ts`, `lib/ai/tools/memory-tools.ts`, `app/api/memory/route.ts`, `app/(chat)/memory/page.tsx`):**
   - Clean separation between keyed **Profile facts** (with `sharedAcrossBots: boolean` for future specialist bots) and chronological **Journal entries** (with tag and keyword filtering).
-  - Grok Bot–styled `/memory` inspector & editor, plus opt-in chat tools (`saveProfileFact`, `addJournalEntry`, `recallMemories`) gated behind `MEMORY_TOOLS_ENABLED=true`.
+  - Mobile-first `/memory` inspector & editor, plus opt-in chat tools (`saveProfileFact`, `addJournalEntry`, `recallMemories`) gated behind `MEMORY_TOOLS_ENABLED=true`.
 - **Routines Hub & Background Task Runner (`lib/cron/routine-presets.ts`, `lib/tasks/runner.ts`, `app/api/schedules/*`, `app/api/tasks/route.ts`, `app/(chat)/routines/page.tsx`):**
   - Upgraded routines management with 4 UK/finance presets (*Weekday 08:00 Brief*, *Month-End Close WD 1–5*, *Weekday 07:30 FX Pulse*, *Friday 17:00 Wrap-Up*), strict 5-field cron & IANA timezone validation, pause/resume toggles, approval-gated `scheduleTask` tool (`ROUTINES_ENABLED=true`), and a `BackgroundTask` state machine (`queued → running → awaiting_approval → succeeded/failed/cancelled`) with safe dry-run previews.
   - Preserved the fail-closed `401`/`503` lock on unattended `GET /api/cron/tick`.

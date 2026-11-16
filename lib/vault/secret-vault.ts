@@ -62,7 +62,7 @@ function deriveVaultKey(rawKey?: string): Buffer {
     hkdfSync(
       "sha256",
       Buffer.from(candidate, "utf8"),
-      Buffer.from("grokbot-parity-vault-v1", "utf8"),
+      Buffer.from("assistant-parity-vault-v1", "utf8"),
       Buffer.from("aes-256-gcm", "utf8"),
       32
     )
