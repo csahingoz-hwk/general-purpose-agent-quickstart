@@ -12,7 +12,7 @@ const ROLE_OVERRIDE_PATTERN =
   /(?:^|\n)\s*(?:system|developer)\s*:|<\|\s*im_start\s*\|>|\byou are now in developer mode\b|artık sistem yöneticisisin/i;
 
 const TOOL_SPOOF_PATTERN =
-  /<\s*\/?\s*tool_call\s*>|\b(?:draftOutboundMessage|setSoul|scheduleTask|cancelSchedule|deleteVaultSecret)\s*\(/i;
+  /<\s*\/?\s*tool_call\s*>|\b(?:draftOutboundMessage|gmailCreateDraft|driveCreateDraftDoc|setSoul|scheduleTask|cancelSchedule|deleteVaultSecret)\s*\(/i;
 
 const MARKDOWN_EXFIL_PATTERN =
   /!\[[^\]]*\]\(\s*https?:\/\/[^)\s]+(?:\?[^)\s]*(?:secret|token|key|email|body|data)=|\b(?:webhook|exfil|ngrok)\b)/i;

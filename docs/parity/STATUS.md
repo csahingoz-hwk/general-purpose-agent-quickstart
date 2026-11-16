@@ -37,12 +37,12 @@
 
 ## 2. Verification Summary
 
-- **Lint & Format (`pnpm check`):** PASS (0 errors across 257 files).
+- **Lint & Format (`pnpm check`):** PASS (0 errors across 276 files).
 - **TypeScript (`pnpm exec tsc --noEmit`):** PASS (0 errors).
-- **Security & Regression Suite (`pnpm test:security`):** **120 / 120 PASS** (103 existing baseline assertions + 17 new tests covering AES-256-GCM AAD vault integrity, normalized uppercase secret names, untrusted fence breakouts, EN/TR injection detection, outbound draft approval & `webSearch` exclusion, Profile+Journal isolation, routine validation, background task state transitions, skills triggers, and results extraction).
+- **Security & Regression Suite (`pnpm test:security`):** **133 / 133 PASS** (103 existing baseline assertions + 30 Phase 0/Phase 1 tests covering AES-256-GCM AAD vault integrity, owner-only signed file proxy URLs, PDF/CSV magic-byte & parser safety, ~40 MB `launchd` queue worker + log rotation + loopback `/healthz`, vault-backed Gmail/Drive read + unsent-draft-only URL guards, untrusted fence breakouts, Profile+Journal isolation, routines/tasks, skills, and results extraction).
 - **Playwright Mobile & Desktop UI Suite (`pnpm test:readiness-ui`):** **5 / 5 PASS** (`390×844` phone and `1440×1000` desktop viewports: 16px composer text, ≥44px touch targets, no horizontal overflow, local inbox filtering, History reload, and `/usage` route slot).
 - **Production Dependency Audit (`pnpm audit --prod`):** **0 vulnerabilities found**.
-- **Production Build (`POSTGRES_URL="" pnpm build`):** **PASS** (all 44 static/dynamic App Router routes compiled cleanly with zero live inference or DB writes).
+- **Production Build (`POSTGRES_URL="" pnpm build`):** **PASS** (all 46 static/dynamic App Router routes compiled cleanly with zero live inference or DB writes).
 
 ---
 
@@ -74,10 +74,13 @@
 ### Slice 2 (`P1.1` — Lightweight Mac mini `launchd` Queue Worker): DONE
 - **What changed (in plain English):** Added a tiny background queue worker (`pnpm worker:once` / `ops/launchd/install-launchd.sh`) tailored specifically for the **8 GB RAM Mac mini**. It compiles to plain JavaScript so Node runs without `tsx` bloat (`--jitless --max-old-space-size=24`, ~40 MB target cap), claims due scheduled routines and queued background tasks one at a time, pauses risky tasks for your approval, and automatically refuses heavy video/container/batch jobs locally (deferring them to scale-to-zero Cloud Run while blocking employer/Korn Ferry material from personal cloud endpoints). It exposes a local-only health check (`http://127.0.0.1:4319/healthz` + `/api/worker/health`), rotates logs automatically at 2 MB × 3 backups (redacting any tokens), and self-recycles cleanly for `launchd` auto-restart if memory ever creeps up.
 
+### Slice 3 (`P1.4` — Vault-Backed Gmail & Google Drive Read + Draft Connectors): DONE
+- **What changed (in plain English):** Added opt-in **Gmail** and **Google Drive** connectors (`GOOGLE_CONNECTORS_ENABLED=true`) whose OAuth tokens are decrypted on the server directly from your **AES-256-GCM Secret Vault** (supporting either a direct token or auto-refreshing OAuth credentials, with masked status at `/api/connectors`). The connectors can **read** recent Gmail emails and Google Drive docs (wrapping all external text inside `<untrusted_content>` prompt-injection fences and keeping reads separated from state-changing tools) and can **save unsent Gmail drafts** (`gmailCreateDraft`) or **private `[DRAFT]` Google Docs** (`driveCreateDraftDoc`) only after you click Allow on the **reused `ApprovalCard`**. Live sending, deleting, trashing, or sharing files is hard-blocked at the URL safety layer, and Korn Ferry/employer terms are blocked from personal Gmail/Drive.
+
+### Remaining / Next Up (Wait for Owner Go-Ahead)
 1. **Provision isolated local/preview Postgres** and apply `lib/db/usage-schema.sql` + `lib/db/parity-schema.sql`.
-2. **Mac mini Companion Worker (`packages/box-daemon`):** Outbound ~40 MB native `launchd` worker over Tailscale polling `BackgroundTask` and `CronJob` (`FOR UPDATE SKIP LOCKED`) + single-tab ephemeral Playwright reads with `ApprovalCard` gates (routing heavy/container jobs to Colab or RunPod).
-3. **Finance Attachments & Vision:** Private authenticated file proxy + deterministic `pdf-parse` / `papaparse` CSV/PDF table extraction into OpenUI + `vision: true` on `gpt-6-luna` / `gpt-6.1-terra` (enforcing the work-data boundary).
-4. **Voice Memos + Gemini Live Sheet:** Push-to-talk memo transcription (`gemini-4-hydrogen` / OpenAI STT) in `MultimodalInput` + ephemeral-token **Gemini Live API (current model)** voice session billed against the claimed US$40/mo Ultra 5x credit (personal/non-KF use only).
+2. **P1.3 Voice Memos + Gemini Live Sheet:** Push-to-talk memo transcription (`gemini-4-hydrogen` / OpenAI STT) in `MultimodalInput` + ephemeral-token **Gemini Live API (current model)** voice session billed against the confirmed US$40/mo GCP credit (personal/non-KF use only).
+3. **Phase 2:** Multi-bot specialist teammates, HMAC event webhooks, hardened Telegram inline approvals, and signed read-only `/share/[token]` page snapshots.
 
 ---
 
@@ -86,14 +89,15 @@
 ```bash
 cd /Users/caglar/.t3/worktrees/general-purpose-agent-quickstart/feat-grokbot-parity-e6766ad591e9f9aa
 
-# 1. Run lint, typecheck, and all 120 security/unit tests
+# 1. Run lint, typecheck, and all 133 security/unit tests
 pnpm check && pnpm exec tsc --noEmit && pnpm test:security
 
 # 2. (Optional) Apply additive parity tables to an ISOLATED local/dev Postgres ONLY
 # psql "$LOCAL_DEV_POSTGRES_URL" -f lib/db/parity-schema.sql
 
-# 3. (Optional) Generate a local-only vault master key in .env.local (never commit!)
-# echo "SECRET_VAULT_KEY=$(openssl rand -base64 32)" >> .env.local
+# 3. (Optional) Smoke-test or dry-run install the ~40 MB Mac mini launchd queue worker
+POSTGRES_URL="" pnpm worker:once
+./ops/launchd/install-launchd.sh --dry-run
 
 # 4. Run credential-free production build check
 POSTGRES_URL="" pnpm build
@@ -101,7 +105,7 @@ POSTGRES_URL="" pnpm build
 # 5. Start local dev server and preview new surfaces
 pnpm dev
 # Visit:
-# - http://localhost:3000/          (Chat + Results drawer in '...' menu + @skill:<slug>)
+# - http://localhost:3000/          (Chat + PDF/CSV '+' attachments + Results drawer + @skill:<slug>)
 # - http://localhost:3000/routines  (Routines presets, Background Tasks, Secret Vault)
 # - http://localhost:3000/memory    (Profile facts + Journal timeline)
 # - http://localhost:3000/skills    (Built-in & custom Skills Library)

@@ -79,7 +79,7 @@
 
 ## 3. Recommended Stacks
 
-### Stack 1: Recommended Default Stack — **~£6.50 to £13.40/month out-of-pocket** *(Well under £30/month target)*
+### Stack 1: Recommended Default Stack — **~£6.50 to £15.40/month out-of-pocket** *(Well under £30/month target)*
 
 Grounded in confirmed billing account `0140A2-72DEB2-62EDCD` (**US$100 Nov → US$40/mo Dec Ultra 5x credit + Free Trial to 11 Feb 2027**, covering Cloud Run, Firebase Hosting, and Gemini API), **scale-to-zero Cloud Run** instead of always-on VMs, and strict **no-KF-data on personal Google / DeepSeek / free OpenRouter**:
 

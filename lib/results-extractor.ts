@@ -97,6 +97,30 @@ export function extractConversationResults(
           title: `Draft → ${input?.recipient ?? "recipient"}`,
           subtitle: `${input?.channel ?? "outbound"} (${part.state})`,
         });
+      } else if ((part.type as string) === "tool-gmailCreateDraft") {
+        const input =
+          "input" in part
+            ? (part.input as { recipient?: string; subject?: string })
+            : undefined;
+        const partState = "state" in part ? String(part.state) : "pending";
+        results.push({
+          id: `${message.id}-gmail-draft-${i}`,
+          messageId: message.id,
+          kind: "draft",
+          title: `Gmail draft → ${input?.recipient ?? "recipient"}`,
+          subtitle: `Unsent draft (${partState})`,
+        });
+      } else if ((part.type as string) === "tool-driveCreateDraftDoc") {
+        const input =
+          "input" in part ? (part.input as { title?: string }) : undefined;
+        const partState = "state" in part ? String(part.state) : "pending";
+        results.push({
+          id: `${message.id}-drive-draft-${i}`,
+          messageId: message.id,
+          kind: "document",
+          title: input?.title ?? "Drive [DRAFT] doc",
+          subtitle: `Google Drive draft (${partState})`,
+        });
       } else if (
         part.type === "tool-demoInbox" &&
         part.state === "output-available"

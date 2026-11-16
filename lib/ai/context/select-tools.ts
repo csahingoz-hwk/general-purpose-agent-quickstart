@@ -1,3 +1,4 @@
+import { isGoogleConnectorsEnabled } from "@/lib/connectors/google-vault-auth";
 import { isRoutinesEnabled } from "@/lib/cron/routine-presets";
 import { isMemoryToolsEnabled } from "@/lib/memory/store";
 import type { ChatMessage } from "@/lib/types";
@@ -22,6 +23,10 @@ export const AVAILABLE_CHAT_TOOLS = [
   "saveProfileFact",
   "addJournalEntry",
   "recallMemories",
+  "gmailReadMessages",
+  "driveReadFiles",
+  "gmailCreateDraft",
+  "driveCreateDraftDoc",
 ] as const;
 
 export type ChatToolName = (typeof AVAILABLE_CHAT_TOOLS)[number];
@@ -63,7 +68,7 @@ const FIXTURE_PATTERN_TR =
   /(?<![\p{L}])(?:sıradaki|siradaki|bir sonraki|bi(?:r)? dahaki|sonraki ma\p{L}*|gelecek ma\p{L}*|fikst[uü]r\p{L}*|maç sonucu|mac sonucu|son ma\p{L}*|sonuç|sonuc|skor\p{L}*|ne zaman.{0,40}ma[cç]|ma[cç]\p{L}*.{0,24}ne zaman)(?![\p{L}])/iu;
 
 const LOCAL_COMMAND_PATTERN =
-  /\b(demo|mock|fictional|sample|test inbox|my home city|set my city|my city is|i live in|i'?m based in|home is in|my schedules|scheduled tasks|recurring tasks|cancel schedule|schedule a task|schedule a routine|create a routine|customize your personality|change your personality|remember my preferred style|set your personality|draft an? email|draft a message|draft a slack|draft a telegram|prepare an? outbound draft|ask me a clarifying question|give me clickable options|save to my profile|log in my journal|search my memory|recall from memory)\b|hayal[iî]|örnek gelen kutusu|sahte e.?posta|ev şehrim|şehrim|yaşıyorum|zamanlanmış görev|planlanmış görev|görevlerimi listele|görevi iptal|rutin oluştur|kişiliğini değiştir|tarzını kaydet|kişiselleştir|taslak e-?posta hazırla|gönderim taslağı|bana seçenek kartı göster|belleğime kaydet|günlüğüme ekle/;
+  /\b(demo|mock|fictional|sample|test inbox|my home city|set my city|my city is|i live in|i'?m based in|home is in|my schedules|scheduled tasks|recurring tasks|cancel schedule|schedule a task|schedule a routine|create a routine|customize your personality|change your personality|remember my preferred style|set your personality|draft an? email|draft a message|draft a slack|draft a telegram|prepare an? outbound draft|ask me a clarifying question|give me clickable options|save to my profile|log in my journal|search my memory|recall from memory|check (?:my )?gmail|read (?:my )?gmail|search (?:my )?gmail|create (?:a )?gmail draft|save (?:a )?draft in gmail|search (?:my )?(?:google )?drive|read (?:from )?(?:my )?(?:google )?drive|list (?:my )?(?:google )?drive files|create (?:a )?(?:google )?drive draft|save (?:a )?draft (?:doc|document) in (?:google )?drive)\b|hayal[iî]|örnek gelen kutusu|sahte e.?posta|ev şehrim|şehrim|yaşıyorum|zamanlanmış görev|planlanmış görev|görevlerimi listele|görevi iptal|rutin oluştur|kişiliğini değiştir|tarzını kaydet|kişiselleştir|taslak e-?posta hazırla|gönderim taslağı|bana seçenek kartı göster|belleğime kaydet|günlüğüme ekle|gmail(?:imi|'imi)? (?:kontrol et|oku|ara)|gmail taslağı oluştur|gmail'e taslak kaydet|(?:google )?drive(?:'da|da| dosyalarımı) (?:ara|listele|oku)|(?:google )?drive taslağı oluştur|drive'a taslak kaydet/;
 
 /** Tools that change stored state; never offered in a turn that reads web content. */
 const STATE_CHANGING_TOOLS: readonly ChatToolName[] = [
@@ -78,6 +83,8 @@ const STATE_CHANGING_TOOLS: readonly ChatToolName[] = [
   "draftOutboundMessage",
   "saveProfileFact",
   "addJournalEntry",
+  "gmailCreateDraft",
+  "driveCreateDraftDoc",
 ];
 
 function userText(message: ChatMessage): string {
@@ -307,6 +314,45 @@ export function selectActiveTools(
     }
   }
 
+  if (canPersonalize && isGoogleConnectorsEnabled()) {
+    const isSyntheticDemo =
+      /\b(demo|mock|fictional|sample|synthetic|test inbox)\b|hayal[iî]|örnek|sahte/.test(
+        phrase
+      );
+
+    if (!isSyntheticDemo) {
+      if (
+        /\b(create (?:a )?gmail draft|save (?:a )?draft in gmail|gmail draft to)\b|gmail taslağı oluştur|gmail'e taslak kaydet/.test(
+          phrase
+        )
+      ) {
+        enabled.push("gmailCreateDraft");
+      }
+      if (
+        /\b(check (?:my )?gmail|read (?:my )?(?:gmail|unread emails? in gmail)|search (?:my )?gmail|latest emails? in (?:my )?gmail)\b|gmail(?:imi|'imi)? (?:kontrol et|oku|ara)/.test(
+          phrase
+        )
+      ) {
+        enabled.push("gmailReadMessages");
+      }
+
+      if (
+        /\b(create (?:a )?(?:google )?drive draft|save (?:a )?draft (?:doc|document) in (?:google )?drive)\b|(?:google )?drive taslağı oluştur|drive'a taslak kaydet/.test(
+          phrase
+        )
+      ) {
+        enabled.push("driveCreateDraftDoc");
+      }
+      if (
+        /\b(search (?:my )?(?:google )?drive|read (?:from )?(?:my )?(?:google )?drive|find in (?:my )?(?:google )?drive|list (?:my )?(?:google )?drive files)\b|(?:google )?drive(?:'da|da| dosyalarımı) (?:ara|listele|oku)/.test(
+          phrase
+        )
+      ) {
+        enabled.push("driveReadFiles");
+      }
+    }
+  }
+
   // Ensure any tool whose persisted approval just completed remains active for continuation
   // without offering webSearch on the approval-continuation step.
   const trailing = messages.at(-1);
@@ -340,6 +386,18 @@ export function selectActiveTools(
         ...enabled.filter((name) => !STATE_CHANGING_TOOLS.includes(name)),
         "webSearch" as const,
       ]),
+    ];
+  }
+
+  // Untrusted connector reads (Gmail/Drive) never sit alongside state-changing tools in the same turn.
+  if (
+    enabled.includes("gmailReadMessages") ||
+    enabled.includes("driveReadFiles")
+  ) {
+    return [
+      ...new Set(
+        enabled.filter((name) => !STATE_CHANGING_TOOLS.includes(name))
+      ),
     ];
   }
 

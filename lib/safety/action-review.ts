@@ -20,6 +20,8 @@ const READ_ONLY_TOOLS = new Set([
   "recallMemories",
   "askUserQuestion",
   "webSearch",
+  "gmailReadMessages",
+  "driveReadFiles",
 ]);
 
 const INTERNAL_WRITE_TOOLS = new Set([

@@ -461,6 +461,18 @@ const PurePreviewMessage = ({
         state === "approval-responded" ||
         state === "output-denied"
       ) {
+        const friendlyTitles: Record<string, string> = {
+          gmailCreateDraft:
+            locale === "tr"
+              ? "Gmail taslağı kaydet (asla göndermez)"
+              : "Save unsent Gmail draft (never sends)",
+          driveCreateDraftDoc:
+            locale === "tr"
+              ? "Google Drive özel [DRAFT] belgesi oluştur"
+              : "Save private Google Drive [DRAFT] doc",
+          scheduleTask:
+            locale === "tr" ? "Zamanlanmış rutin oluştur" : "Create routine",
+        };
         return (
           <ApprovalCard
             addToolApprovalResponse={addToolApprovalResponse}
@@ -471,7 +483,7 @@ const PurePreviewMessage = ({
             key={toolCallId}
             locale={locale}
             state={state}
-            title={toolName}
+            title={friendlyTitles[toolName] ?? toolName}
             toolName={toolName}
           />
         );

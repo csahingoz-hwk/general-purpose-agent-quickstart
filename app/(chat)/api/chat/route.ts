@@ -50,6 +50,7 @@ import { editDocument } from "@/lib/ai/tools/edit-document";
 import { getCurrentTime } from "@/lib/ai/tools/get-current-time";
 import { getFixtures } from "@/lib/ai/tools/get-fixtures";
 import { getWeather } from "@/lib/ai/tools/get-weather";
+import { createGoogleConnectorTools } from "@/lib/ai/tools/google-connectors";
 import { listMySchedules } from "@/lib/ai/tools/list-my-schedules";
 import { createMemoryTools } from "@/lib/ai/tools/memory-tools";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
@@ -58,6 +59,7 @@ import { setHomeLocation } from "@/lib/ai/tools/set-home-location";
 import { setSoul } from "@/lib/ai/tools/set-soul";
 import { updateDocument } from "@/lib/ai/tools/update-document";
 import { webSearch } from "@/lib/ai/tools/web-search";
+import { isGoogleConnectorsEnabled } from "@/lib/connectors/google-vault-auth";
 import { isProductionEnvironment } from "@/lib/constants";
 import { isRoutinesEnabled } from "@/lib/cron/routine-presets";
 import { acquireChatLock } from "@/lib/db/chat-lock";
@@ -383,24 +385,46 @@ export async function POST(request: Request) {
             listMySchedules: listMySchedules({ session }),
             cancelSchedule: cancelSchedule({ session }),
             ...(session.user.type !== "guest"
-              ? {
-                  setSoul: setSoul({ userId: session.user.id }),
-                  setHomeLocation: setHomeLocation({ userId: session.user.id }),
-                  draftOutboundMessage: draftOutboundMessage({
-                    hasUntrustedContext:
-                      requestedTools.includes("webSearch") ||
-                      attachmentPrep.hasUntrustedAttachment,
-                  }),
-                  ...(isRoutinesEnabled()
-                    ? { scheduleTask: scheduleTask({ session }) }
-                    : {}),
-                  ...(isMemoryToolsEnabled()
-                    ? createMemoryTools({
-                        userId: session.user.id,
-                        store: createPostgresMemoryStore(),
-                      })
-                    : {}),
-                }
+              ? (() => {
+                  const hasPriorConnectorReads = uiMessages.some((m) =>
+                    m.parts.some(
+                      (p) =>
+                        (p.type as string) === "tool-gmailReadMessages" ||
+                        (p.type as string) === "tool-driveReadFiles"
+                    )
+                  );
+                  const hasUntrusted =
+                    requestedTools.includes("webSearch") ||
+                    requestedTools.includes("gmailReadMessages") ||
+                    requestedTools.includes("driveReadFiles") ||
+                    attachmentPrep.hasUntrustedAttachment ||
+                    hasPriorConnectorReads;
+
+                  return {
+                    setSoul: setSoul({ userId: session.user.id }),
+                    setHomeLocation: setHomeLocation({
+                      userId: session.user.id,
+                    }),
+                    draftOutboundMessage: draftOutboundMessage({
+                      hasUntrustedContext: hasUntrusted,
+                    }),
+                    ...(isRoutinesEnabled()
+                      ? { scheduleTask: scheduleTask({ session }) }
+                      : {}),
+                    ...(isMemoryToolsEnabled()
+                      ? createMemoryTools({
+                          userId: session.user.id,
+                          store: createPostgresMemoryStore(),
+                        })
+                      : {}),
+                    ...(isGoogleConnectorsEnabled()
+                      ? createGoogleConnectorTools({
+                          userId: session.user.id,
+                          hasUntrustedContext: hasUntrusted,
+                        })
+                      : {}),
+                  };
+                })()
               : {}),
           };
 
