@@ -760,6 +760,51 @@ export async function deleteCronJob({
   }
 }
 
+export async function getCronJobByIdAndUser({
+  id,
+  userId,
+}: {
+  id: string;
+  userId: string;
+}): Promise<CronJob | null> {
+  try {
+    const [row] = await db
+      .select()
+      .from(cronJob)
+      .where(and(eq(cronJob.id, id), eq(cronJob.userId, userId)))
+      .limit(1);
+    return row ?? null;
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to get cron job");
+  }
+}
+
+export async function setCronJobEnabled({
+  id,
+  userId,
+  enabled,
+  nextRunAt,
+}: {
+  id: string;
+  userId: string;
+  enabled: boolean;
+  nextRunAt?: Date;
+}): Promise<CronJob | null> {
+  try {
+    const [updated] = await db
+      .update(cronJob)
+      .set({
+        enabled,
+        ...(nextRunAt ? { nextRunAt } : {}),
+      })
+      .where(and(eq(cronJob.id, id), eq(cronJob.userId, userId)))
+      .returning();
+    return updated ?? null;
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to update cron job");
+  }
+}
+
 export async function createTelegramLinkToken({
   userId,
   ttlMs = 10 * 60 * 1000,
