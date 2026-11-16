@@ -1,0 +1,380 @@
+import { randomUUID } from "node:crypto";
+import postgres from "postgres";
+
+export type MemoryCategory =
+  | "identity"
+  | "preference"
+  | "work"
+  | "finance"
+  | "project"
+  | "general";
+
+export type ProfileFact = {
+  id: string;
+  userId: string;
+  category: MemoryCategory;
+  key: string;
+  value: string;
+  sharedAcrossBots: boolean;
+  updatedAt: string;
+};
+
+export type JournalEntry = {
+  id: string;
+  userId: string;
+  title: string;
+  body: string;
+  tags: string[];
+  source: "chat" | "routine" | "manual";
+  createdAt: string;
+};
+
+export interface MemoryStore {
+  upsertProfileFact: (input: {
+    userId: string;
+    category?: MemoryCategory;
+    key: string;
+    value: string;
+    sharedAcrossBots?: boolean;
+  }) => Promise<ProfileFact>;
+  listProfileFacts: (opts: {
+    userId: string;
+    sharedOnly?: boolean;
+  }) => Promise<ProfileFact[]>;
+  deleteProfileFact: (opts: { userId: string; id: string }) => Promise<boolean>;
+  addJournalEntry: (input: {
+    userId: string;
+    title: string;
+    body: string;
+    tags?: string[];
+    source?: "chat" | "routine" | "manual";
+  }) => Promise<JournalEntry>;
+  listJournalEntries: (opts: {
+    userId: string;
+    query?: string;
+    tag?: string;
+    limit?: number;
+  }) => Promise<JournalEntry[]>;
+  deleteJournalEntry: (opts: {
+    userId: string;
+    id: string;
+  }) => Promise<boolean>;
+}
+
+export class MemoryStoreUnavailableError extends Error {}
+
+export function isMemoryToolsEnabled(): boolean {
+  return process.env.MEMORY_TOOLS_ENABLED === "true";
+}
+
+function normalizeFactKey(key: string): string {
+  return key.trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+export function createInMemoryMemoryStore(): MemoryStore {
+  const facts = new Map<string, ProfileFact>();
+  const journal: JournalEntry[] = [];
+  let sequence = 0;
+
+  return {
+    upsertProfileFact({
+      userId,
+      category = "general",
+      key,
+      value,
+      sharedAcrossBots = true,
+    }) {
+      const normalizedKey = normalizeFactKey(key);
+      const mapKey = `${userId}:${normalizedKey}`;
+      const existing = facts.get(mapKey);
+      const now = new Date(Date.now() + sequence++).toISOString();
+      const saved: ProfileFact = {
+        id: existing?.id ?? randomUUID(),
+        userId,
+        category,
+        key: normalizedKey,
+        value: value.trim(),
+        sharedAcrossBots,
+        updatedAt: now,
+      };
+      facts.set(mapKey, saved);
+      return Promise.resolve({ ...saved });
+    },
+    listProfileFacts({ userId, sharedOnly = false }) {
+      const items = [...facts.values()]
+        .filter(
+          (item) =>
+            item.userId === userId && (!sharedOnly || item.sharedAcrossBots)
+        )
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .map((item) => ({ ...item }));
+      return Promise.resolve(items);
+    },
+    deleteProfileFact({ userId, id }) {
+      for (const [key, item] of facts.entries()) {
+        if (item.userId === userId && item.id === id) {
+          facts.delete(key);
+          return Promise.resolve(true);
+        }
+      }
+      return Promise.resolve(false);
+    },
+    addJournalEntry({ userId, title, body, tags = [], source = "chat" }) {
+      const cleanTags = [
+        ...new Set(
+          tags
+            .map((t) => t.trim().toLowerCase())
+            .filter((t) => t.length > 0)
+            .slice(0, 8)
+        ),
+      ];
+      const entry: JournalEntry = {
+        id: randomUUID(),
+        userId,
+        title: title.trim(),
+        body: body.trim(),
+        tags: cleanTags,
+        source,
+        createdAt: new Date(Date.now() + sequence++).toISOString(),
+      };
+      journal.push(entry);
+      return Promise.resolve({ ...entry, tags: [...entry.tags] });
+    },
+    listJournalEntries({ userId, query, tag, limit = 25 }) {
+      const q = query?.trim().toLowerCase();
+      const t = tag?.trim().toLowerCase();
+      const filtered = journal
+        .filter((entry) => {
+          if (entry.userId !== userId) {
+            return false;
+          }
+          if (t && !entry.tags.includes(t)) {
+            return false;
+          }
+          if (
+            q &&
+            !entry.title.toLowerCase().includes(q) &&
+            !entry.body.toLowerCase().includes(q) &&
+            !entry.tags.some((item) => item.includes(q))
+          ) {
+            return false;
+          }
+          return true;
+        })
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+        .slice(0, Math.max(1, limit))
+        .map((entry) => ({ ...entry, tags: [...entry.tags] }));
+      return Promise.resolve(filtered);
+    },
+    deleteJournalEntry({ userId, id }) {
+      const index = journal.findIndex(
+        (entry) => entry.userId === userId && entry.id === id
+      );
+      if (index === -1) {
+        return Promise.resolve(false);
+      }
+      journal.splice(index, 1);
+      return Promise.resolve(true);
+    },
+  };
+}
+
+let pgClient: ReturnType<typeof postgres> | undefined;
+function getSql() {
+  if (!process.env.POSTGRES_URL) {
+    throw new MemoryStoreUnavailableError("POSTGRES_URL is not configured");
+  }
+  pgClient ??= postgres(process.env.POSTGRES_URL, {
+    max: 3,
+    prepare: false,
+    idle_timeout: 2,
+  });
+  return pgClient;
+}
+
+function isMissingTable(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: string }).code === "42P01"
+  );
+}
+
+export function createPostgresMemoryStore(): MemoryStore {
+  return {
+    async upsertProfileFact({
+      userId,
+      category = "general",
+      key,
+      value,
+      sharedAcrossBots = true,
+    }) {
+      const normalizedKey = normalizeFactKey(key);
+      const id = randomUUID();
+      try {
+        const [row] = await getSql()`
+          INSERT INTO "MemoryProfileFact" ("id", "userId", "category", "key", "value", "sharedAcrossBots")
+          VALUES (${id}, ${userId}, ${category}, ${normalizedKey}, ${value.trim()}, ${sharedAcrossBots})
+          ON CONFLICT ("userId", "key")
+          DO UPDATE SET
+            "category" = EXCLUDED."category",
+            "value" = EXCLUDED."value",
+            "sharedAcrossBots" = EXCLUDED."sharedAcrossBots",
+            "updatedAt" = now()
+          RETURNING "id", "userId", "category", "key", "value", "sharedAcrossBots", "updatedAt"
+        `;
+        return {
+          id: String(row.id),
+          userId: String(row.userId),
+          category: row.category as MemoryCategory,
+          key: String(row.key),
+          value: String(row.value),
+          sharedAcrossBots: Boolean(row.sharedAcrossBots),
+          updatedAt: new Date(row.updatedAt).toISOString(),
+        };
+      } catch (error) {
+        if (isMissingTable(error)) {
+          throw new MemoryStoreUnavailableError("Memory tables missing");
+        }
+        throw error;
+      }
+    },
+    async listProfileFacts({ userId, sharedOnly = false }) {
+      try {
+        const rows = sharedOnly
+          ? await getSql()`
+              SELECT "id", "userId", "category", "key", "value", "sharedAcrossBots", "updatedAt"
+              FROM "MemoryProfileFact"
+              WHERE "userId" = ${userId} AND "sharedAcrossBots" = true
+              ORDER BY "updatedAt" DESC
+            `
+          : await getSql()`
+              SELECT "id", "userId", "category", "key", "value", "sharedAcrossBots", "updatedAt"
+              FROM "MemoryProfileFact"
+              WHERE "userId" = ${userId}
+              ORDER BY "updatedAt" DESC
+            `;
+        return rows.map((row) => ({
+          id: String(row.id),
+          userId: String(row.userId),
+          category: row.category as MemoryCategory,
+          key: String(row.key),
+          value: String(row.value),
+          sharedAcrossBots: Boolean(row.sharedAcrossBots),
+          updatedAt: new Date(row.updatedAt).toISOString(),
+        }));
+      } catch (error) {
+        if (isMissingTable(error)) {
+          throw new MemoryStoreUnavailableError("Memory tables missing");
+        }
+        throw error;
+      }
+    },
+    async deleteProfileFact({ userId, id }) {
+      try {
+        const deleted = await getSql()`
+          DELETE FROM "MemoryProfileFact"
+          WHERE "userId" = ${userId} AND "id" = ${id}
+          RETURNING "id"
+        `;
+        return deleted.length > 0;
+      } catch (error) {
+        if (isMissingTable(error)) {
+          throw new MemoryStoreUnavailableError("Memory tables missing");
+        }
+        throw error;
+      }
+    },
+    async addJournalEntry({ userId, title, body, tags = [], source = "chat" }) {
+      const cleanTags = [
+        ...new Set(
+          tags
+            .map((t) => t.trim().toLowerCase())
+            .filter((t) => t.length > 0)
+            .slice(0, 8)
+        ),
+      ];
+      const id = randomUUID();
+      try {
+        const [row] = await getSql()`
+          INSERT INTO "MemoryJournalEntry" ("id", "userId", "title", "body", "tags", "source")
+          VALUES (${id}, ${userId}, ${title.trim()}, ${body.trim()}, ${JSON.stringify(cleanTags)}::jsonb, ${source})
+          RETURNING "id", "userId", "title", "body", "tags", "source", "createdAt"
+        `;
+        return {
+          id: String(row.id),
+          userId: String(row.userId),
+          title: String(row.title),
+          body: String(row.body),
+          tags: Array.isArray(row.tags) ? row.tags.map(String) : cleanTags,
+          source: row.source as "chat" | "routine" | "manual",
+          createdAt: new Date(row.createdAt).toISOString(),
+        };
+      } catch (error) {
+        if (isMissingTable(error)) {
+          throw new MemoryStoreUnavailableError("Memory tables missing");
+        }
+        throw error;
+      }
+    },
+    async listJournalEntries({ userId, query, tag, limit = 25 }) {
+      try {
+        const rows = await getSql()`
+          SELECT "id", "userId", "title", "body", "tags", "source", "createdAt"
+          FROM "MemoryJournalEntry"
+          WHERE "userId" = ${userId}
+          ORDER BY "createdAt" DESC
+          LIMIT ${Math.min(100, Math.max(1, limit * 2))}
+        `;
+        const q = query?.trim().toLowerCase();
+        const t = tag?.trim().toLowerCase();
+        return rows
+          .map((row) => ({
+            id: String(row.id),
+            userId: String(row.userId),
+            title: String(row.title),
+            body: String(row.body),
+            tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
+            source: row.source as "chat" | "routine" | "manual",
+            createdAt: new Date(row.createdAt).toISOString(),
+          }))
+          .filter((entry) => {
+            if (t && !entry.tags.includes(t)) {
+              return false;
+            }
+            if (
+              q &&
+              !entry.title.toLowerCase().includes(q) &&
+              !entry.body.toLowerCase().includes(q) &&
+              !entry.tags.some((item) => item.includes(q))
+            ) {
+              return false;
+            }
+            return true;
+          })
+          .slice(0, Math.max(1, limit));
+      } catch (error) {
+        if (isMissingTable(error)) {
+          throw new MemoryStoreUnavailableError("Memory tables missing");
+        }
+        throw error;
+      }
+    },
+    async deleteJournalEntry({ userId, id }) {
+      try {
+        const deleted = await getSql()`
+          DELETE FROM "MemoryJournalEntry"
+          WHERE "userId" = ${userId} AND "id" = ${id}
+          RETURNING "id"
+        `;
+        return deleted.length > 0;
+      } catch (error) {
+        if (isMissingTable(error)) {
+          throw new MemoryStoreUnavailableError("Memory tables missing");
+        }
+        throw error;
+      }
+    },
+  };
+}
