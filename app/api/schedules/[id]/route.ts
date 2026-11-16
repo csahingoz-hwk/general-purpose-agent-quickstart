@@ -17,6 +17,8 @@ const toggleSchema = z.object({
   enabled: z.boolean(),
 });
 
+const uuidSchema = z.string().uuid();
+
 export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -34,6 +36,9 @@ export async function PATCH(
   }
 
   const { id } = await params;
+  if (!uuidSchema.safeParse(id).success) {
+    return Response.json({ error: "Invalid schedule id" }, { status: 400 });
+  }
   const existing = await getCronJobByIdAndUser({
     id,
     userId: session.user.id,
@@ -74,6 +79,9 @@ export async function POST(
   }
 
   const { id } = await params;
+  if (!uuidSchema.safeParse(id).success) {
+    return Response.json({ error: "Invalid schedule id" }, { status: 400 });
+  }
   const job = await getCronJobByIdAndUser({ id, userId: session.user.id });
   if (!job) {
     return Response.json({ error: "Not found" }, { status: 404 });
@@ -122,6 +130,9 @@ export async function DELETE(
   }
 
   const { id } = await params;
+  if (!uuidSchema.safeParse(id).success) {
+    return new Response("Invalid schedule id", { status: 400 });
+  }
   const deleted = await deleteCronJob({ id, userId: session.user.id });
   if (!deleted) {
     return new Response("Not found", { status: 404 });

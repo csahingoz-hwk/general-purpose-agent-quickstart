@@ -8,6 +8,7 @@ import {
   PaletteIcon,
   PenLineIcon,
   PenSquareIcon,
+  SparklesIcon,
   Trash2Icon,
   XIcon,
 } from "lucide-react";
@@ -64,6 +65,12 @@ export const slashCommands: SlashCommand[] = [
     description: "Open profile & journal memory",
     icon: <BookOpenIcon className="size-3.5" />,
     action: "memory",
+  },
+  {
+    name: "skills",
+    description: "Open reusable skills library",
+    icon: <SparklesIcon className="size-3.5" />,
+    action: "skills",
   },
   {
     name: "delete",

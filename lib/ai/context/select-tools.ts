@@ -307,8 +307,10 @@ export function selectActiveTools(
     }
   }
 
-  // Ensure any tool whose persisted approval just completed remains active for continuation.
+  // Ensure any tool whose persisted approval just completed remains active for continuation
+  // without offering webSearch on the approval-continuation step.
   const trailing = messages.at(-1);
+  const approvedTools: ChatToolName[] = [];
   if (trailing?.role === "assistant") {
     for (const part of trailing.parts) {
       if (
@@ -318,10 +320,13 @@ export function selectActiveTools(
       ) {
         const toolName = part.type.slice(5) as ChatToolName;
         if ((AVAILABLE_CHAT_TOOLS as readonly string[]).includes(toolName)) {
-          enabled.push(toolName);
+          approvedTools.push(toolName);
         }
       }
     }
+  }
+  if (approvedTools.length > 0) {
+    return [...new Set([...enabled, ...approvedTools])];
   }
 
   // Weather, clock, greetings, and pure edits never pay for a search. Anything

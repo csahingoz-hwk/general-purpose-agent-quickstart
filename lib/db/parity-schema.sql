@@ -65,3 +65,18 @@ CREATE TABLE IF NOT EXISTS "BackgroundTask" (
 
 CREATE INDEX IF NOT EXISTS "BackgroundTask_user_created"
   ON "BackgroundTask" ("userId", "createdAt" DESC);
+
+CREATE TABLE IF NOT EXISTS "SkillEntry" (
+  "id" uuid PRIMARY KEY,
+  "userId" uuid NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+  "slug" varchar(80) NOT NULL,
+  "name" varchar(120) NOT NULL,
+  "description" varchar(280) NOT NULL,
+  "instructions" text NOT NULL,
+  "updatedAt" timestamptz NOT NULL DEFAULT now(),
+  UNIQUE ("userId", "slug")
+);
+
+CREATE INDEX IF NOT EXISTS "SkillEntry_user_slug"
+  ON "SkillEntry" ("userId", "slug");
+

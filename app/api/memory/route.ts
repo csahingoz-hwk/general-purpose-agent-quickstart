@@ -136,9 +136,12 @@ export async function DELETE(request: Request) {
   const { searchParams } = new URL(request.url);
   const kind = searchParams.get("type");
   const id = searchParams.get("id")?.trim() ?? "";
-  if ((kind !== "profile" && kind !== "journal") || !id) {
+  if (
+    (kind !== "profile" && kind !== "journal") ||
+    !z.string().uuid().safeParse(id).success
+  ) {
     return Response.json(
-      { error: "Missing valid type or id" },
+      { error: "Missing valid type or uuid id" },
       { status: 400 }
     );
   }

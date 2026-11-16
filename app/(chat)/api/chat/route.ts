@@ -81,6 +81,11 @@ import {
 } from "@/lib/memory/store";
 import { attachOpenUiPart } from "@/lib/openui/attach";
 import { checkIpRateLimit } from "@/lib/ratelimit";
+import {
+  createPostgresSkillStore,
+  extractRequestedSkillSlug,
+  formatSkillPromptBlock,
+} from "@/lib/skills/library";
 import { contextBlock, validTimeZone } from "@/lib/temporal";
 import type { ChatMessage } from "@/lib/types";
 import { convertToUIMessages, generateUUID } from "@/lib/utils";
@@ -292,6 +297,19 @@ export async function POST(request: Request) {
         ?.parts.filter((part) => part.type === "text")
         .map((part) => part.text)
         .join(" ") ?? "";
+    const requestedSkillSlug = extractRequestedSkillSlug(finalUserText);
+    const activeSkill = requestedSkillSlug
+      ? ((
+          await createPostgresSkillStore()
+            .listSkills(session.user.id)
+            .catch(() => [])
+        ).find((s) => s.slug === requestedSkillSlug) ?? null)
+      : null;
+    const baseContext = contextBlock({
+      now: requestNow,
+      timeZone: requestTimeZone ?? homeLocation?.timeZone ?? null,
+      home: homeLocation,
+    });
     const replySystemPrompt = systemPrompt({
       supportsTools,
       soul,
@@ -302,11 +320,9 @@ export async function POST(request: Request) {
       includeVisual: requestedTools.some(
         (name) => name === "webSearch" || name === "getWeather"
       ),
-      context: contextBlock({
-        now: requestNow,
-        timeZone: requestTimeZone ?? homeLocation?.timeZone ?? null,
-        home: homeLocation,
-      }),
+      context: activeSkill
+        ? `${baseContext}\n\n${formatSkillPromptBlock(activeSkill)}`
+        : baseContext,
     });
     // A single text step may use most of the budget; a tool call and a
     // follow-up must share a minute on Groq's limited free account.

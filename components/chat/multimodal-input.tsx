@@ -166,7 +166,11 @@ function PureMultimodalInput({
     const val = event.target.value;
     setInput(val);
 
-    if (val.startsWith("/") && !val.includes(" ")) {
+    if (
+      val.startsWith("/") &&
+      !val.includes(" ") &&
+      !val.toLowerCase().startsWith("/skill:")
+    ) {
       setSlashOpen(true);
       setSlashQuery(val.slice(1));
       setSlashIndex(0);
@@ -203,6 +207,9 @@ function PureMultimodalInput({
         break;
       case "memory":
         router.push("/memory");
+        break;
+      case "skills":
+        router.push("/skills");
         break;
       case "delete":
         toast("Delete this chat?", {

@@ -27,10 +27,12 @@ export function stripControlAndBidiChars(input: string): string {
     const isAsciiControl =
       (code >= 0x00 && code <= 0x1f && !isAllowedWhitespace) || code === 0x7f;
     const isBidiOrZeroWidth =
+      code === 0x00_ad ||
       (code >= 0x20_0b && code <= 0x20_0f) ||
       (code >= 0x20_2a && code <= 0x20_2e) ||
-      (code >= 0x20_66 && code <= 0x20_69) ||
-      code === 0xfe_ff;
+      (code >= 0x20_60 && code <= 0x20_69) ||
+      code === 0xfe_ff ||
+      (code >= 0xe_00_00 && code <= 0xe_00_7f);
     if (!isAsciiControl && !isBidiOrZeroWidth) {
       out += ch;
     }

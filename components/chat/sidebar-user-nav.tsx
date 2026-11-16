@@ -111,6 +111,12 @@ export function SidebarUserNav({
             </DropdownMenuItem>
             <DropdownMenuItem
               className="min-h-11 cursor-pointer text-[13px] md:min-h-8"
+              onSelect={() => router.push("/skills")}
+            >
+              {copy.skillsLibrary}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 cursor-pointer text-[13px] md:min-h-8"
               onSelect={() => router.push("/usage")}
             >
               {copy.usageAndSettings}

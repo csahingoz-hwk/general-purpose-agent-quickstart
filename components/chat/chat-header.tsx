@@ -21,6 +21,7 @@ import { fetcher } from "@/lib/utils";
 import { AgentMascot } from "./agent-mascot";
 import { HomeLocationPanel } from "./home-location";
 import { MascotPicker, useMascotPreference } from "./mascot-preference";
+import { ConversationResultsPanel } from "./results-sheet";
 import {
   type ChatHistory,
   getChatHistoryPaginationKey,
@@ -178,6 +179,8 @@ function PureChatHeader({
             </Button>
           </PopoverTrigger>
           <PopoverContent align="end" className="w-80 rounded-[20px] p-4">
+            <ConversationResultsPanel />
+            <div className="my-4 h-px bg-border" />
             <MascotPicker />
             <div className="my-4 h-px bg-border" />
             <HomeLocationPanel />

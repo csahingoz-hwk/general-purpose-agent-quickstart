@@ -69,8 +69,12 @@ function deriveVaultKey(rawKey?: string): Buffer {
   );
 }
 
+function normalizeSecretName(name: string): string {
+  return name.trim().toUpperCase();
+}
+
 function aadFor(userId: string, name: string): Buffer {
-  return Buffer.from(`${userId}:${name.trim().toLowerCase()}`, "utf8");
+  return Buffer.from(`${userId}:${normalizeSecretName(name)}`, "utf8");
 }
 
 export function maskSecretHint(plaintext: string): string {
@@ -174,11 +178,11 @@ function toPublicMetadata(row: StoredRow): VaultSecretMetadata {
 export function createInMemoryVaultStore(masterKey?: string): SecretVaultStore {
   const rows = new Map<string, StoredRow>();
   const mapKey = (userId: string, name: string) =>
-    `${userId}:${name.trim().toLowerCase()}`;
+    `${userId}:${normalizeSecretName(name)}`;
 
   return {
     upsertSecret({ userId, name, provider = "custom", plaintext }) {
-      const trimmedName = name.trim();
+      const trimmedName = normalizeSecretName(name);
       const encrypted = encryptSecretPayload({
         userId,
         name: trimmedName,
@@ -256,7 +260,7 @@ function isMissingTable(error: unknown): boolean {
 export function createPostgresVaultStore(masterKey?: string): SecretVaultStore {
   return {
     async upsertSecret({ userId, name, provider = "custom", plaintext }) {
-      const trimmedName = name.trim();
+      const trimmedName = normalizeSecretName(name);
       const encrypted = encryptSecretPayload({
         userId,
         name: trimmedName,
@@ -326,7 +330,7 @@ export function createPostgresVaultStore(masterKey?: string): SecretVaultStore {
       try {
         const deleted = await getSql()`
           DELETE FROM "VaultSecret"
-          WHERE "userId" = ${userId} AND lower("name") = ${name.trim().toLowerCase()}
+          WHERE "userId" = ${userId} AND "name" = ${normalizeSecretName(name)}
           RETURNING "id"
         `;
         return deleted.length > 0;
@@ -345,7 +349,7 @@ export function createPostgresVaultStore(masterKey?: string): SecretVaultStore {
         const [row] = await getSql()`
           SELECT "name", "ciphertext", "iv", "authTag"
           FROM "VaultSecret"
-          WHERE "userId" = ${userId} AND lower("name") = ${name.trim().toLowerCase()}
+          WHERE "userId" = ${userId} AND "name" = ${normalizeSecretName(name)}
           LIMIT 1
         `;
         if (!row) {
