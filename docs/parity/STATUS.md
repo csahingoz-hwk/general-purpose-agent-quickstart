@@ -95,6 +95,9 @@
 ### Slice 9 (`P3.1` — Visual Computer-Use Browser Subagent Safety & Trace Engine): DONE
 - **What changed (in plain English):** Added the `browser_agent` task runner (`lib/subagents/browser-agent.ts` + `POST /api/subagents/browser`) plus an **Approve** button on `awaiting_approval` tasks in `/routines`. Every browser step checks a domain allowlist, blocks private-network SSRF URLs, routes multi-step sessions to scale-to-zero Cloud Run (protecting the 8 GB RAM Mac mini), and immediately hard-pauses in `awaiting_approval` if it encounters a non-allowlisted domain, login/password field, checkout/payment/submit button, or anti-bot/CAPTCHA screen (handing back to you rather than ever attempting a bypass), saving the full step trace in `BackgroundTask`.
 
+### Slice 10 (`P3.2` — Isolated Git-Worktree Coding Subagent): DONE
+- **What changed (in plain English):** Added the `coding_worktree` task profile (`lib/subagents/worktree-coder.ts` + `POST /api/subagents/coder`) that restricts coding tasks strictly to isolated `agent/<slug>` or `draft/<slug>` worktree branches — hard-blocking `main`, `master`, `release/*`, and `feature/openai-premium-model-routing`. It serializes `pnpm check` and `pnpm test:security` so two builds never run at once on the 8 GB Mac mini, fails the task immediately if checks or tests fail, and pauses in `awaiting_approval` with a SHA-256 action digest before any `git push` can happen.
+
 ### Remaining / Next Up (Wait for Owner Go-Ahead)
 1. **Provision isolated local/preview Postgres** and apply `lib/db/usage-schema.sql` + `lib/db/parity-schema.sql`.
 2. **P1.3 Voice Memos + Gemini Live Sheet:** Push-to-talk memo transcription (`gemini-4-hydrogen` / OpenAI STT) in `MultimodalInput` + ephemeral-token **Gemini Live API (current model)** voice session billed against the confirmed US$40/mo GCP credit (personal/non-KF use only).
