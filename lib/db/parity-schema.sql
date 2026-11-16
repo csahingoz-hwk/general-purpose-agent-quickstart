@@ -80,3 +80,30 @@ CREATE TABLE IF NOT EXISTS "SkillEntry" (
 CREATE INDEX IF NOT EXISTS "SkillEntry_user_slug"
   ON "SkillEntry" ("userId", "slug");
 
+ALTER TABLE "MemoryProfileFact"
+  ADD COLUMN IF NOT EXISTS "botSlug" varchar(80);
+
+CREATE TABLE IF NOT EXISTS "BotProfile" (
+  "id" uuid PRIMARY KEY,
+  "userId" uuid NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+  "slug" varchar(80) NOT NULL,
+  "name" varchar(120) NOT NULL,
+  "description" varchar(280) NOT NULL DEFAULT '',
+  "soul" text NOT NULL,
+  "defaultModel" varchar(64) NOT NULL DEFAULT 'gpt-6-luna',
+  "mascotVariant" varchar(32) NOT NULL DEFAULT 'blue',
+  "skillSlugs" jsonb NOT NULL DEFAULT '[]'::jsonb,
+  "updatedAt" timestamptz NOT NULL DEFAULT now(),
+  UNIQUE ("userId", "slug")
+);
+
+CREATE INDEX IF NOT EXISTS "BotProfile_user_slug"
+  ON "BotProfile" ("userId", "slug");
+
+CREATE TABLE IF NOT EXISTS "ChatBotBinding" (
+  "chatId" uuid PRIMARY KEY REFERENCES "Chat"("id") ON DELETE CASCADE,
+  "userId" uuid NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+  "botSlug" varchar(80) NOT NULL,
+  "updatedAt" timestamptz NOT NULL DEFAULT now()
+);
+

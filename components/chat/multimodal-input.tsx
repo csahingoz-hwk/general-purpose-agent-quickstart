@@ -212,6 +212,9 @@ function PureMultimodalInput({
       case "skills":
         router.push("/skills");
         break;
+      case "teammates":
+        router.push("/teammates");
+        break;
       case "delete":
         toast("Delete this chat?", {
           action: {

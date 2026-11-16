@@ -33,6 +33,7 @@ export const postRequestBodySchema = z
     messages: z.array(toolApprovalMessageSchema).optional(),
     retry: z.boolean().optional(),
     selectedChatModel: z.string(),
+    selectedBotSlug: z.string().max(64).optional(),
     timeZone: z.string().max(64).optional(),
     selectedVisibilityType: z.enum(["public", "private"]),
   })

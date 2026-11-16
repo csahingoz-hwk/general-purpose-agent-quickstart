@@ -73,6 +73,12 @@ export const slashCommands: SlashCommand[] = [
     action: "skills",
   },
   {
+    name: "teammates",
+    description: "Switch specialist bot teammates",
+    icon: <SparklesIcon className="size-3.5" />,
+    action: "teammates",
+  },
+  {
     name: "delete",
     description: "Delete current chat",
     icon: <XIcon className="size-3.5" />,

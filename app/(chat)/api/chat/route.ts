@@ -60,6 +60,11 @@ import { setHomeLocation } from "@/lib/ai/tools/set-home-location";
 import { setSoul } from "@/lib/ai/tools/set-soul";
 import { updateDocument } from "@/lib/ai/tools/update-document";
 import { webSearch } from "@/lib/ai/tools/web-search";
+import {
+  composeTeammateSoul,
+  createPostgresBotRosterStore,
+  extractRequestedBotSlug,
+} from "@/lib/bots/roster";
 import { isGithubConnectorEnabled } from "@/lib/connectors/calendar-and-github";
 import { isGoogleConnectorsEnabled } from "@/lib/connectors/google-vault-auth";
 import { isProductionEnvironment } from "@/lib/constants";
@@ -169,6 +174,7 @@ export async function POST(request: Request) {
       message,
       messages,
       selectedChatModel,
+      selectedBotSlug,
       selectedVisibilityType,
       timeZone,
       retry,
@@ -289,7 +295,6 @@ export async function POST(request: Request) {
     const homeLocation = await getUserHomeLocation({ userId: session.user.id });
     const requestTimeZone = validTimeZone(timeZone);
     const requestNow = new Date();
-    const needsOnboarding = !soul && session.user.type !== "guest";
     // Web search exists only when this request is served by the AI Gateway lane.
     const searchLane = supportsTools && webSearchLane(chatModel);
     const requestedTools = supportsTools
@@ -302,7 +307,19 @@ export async function POST(request: Request) {
         ?.parts.filter((part) => part.type === "text")
         .map((part) => part.text)
         .join(" ") ?? "";
-    const requestedSkillSlug = extractRequestedSkillSlug(finalUserText);
+    const requestedBotSlug =
+      extractRequestedBotSlug(finalUserText) ??
+      (selectedBotSlug?.trim() || null);
+    const activeTeammate = requestedBotSlug
+      ? await createPostgresBotRosterStore()
+          .getBotBySlug(session.user.id, requestedBotSlug)
+          .catch(() => null)
+      : null;
+    const effectiveSoul = composeTeammateSoul(soul, activeTeammate);
+    const requestedSkillSlug =
+      extractRequestedSkillSlug(finalUserText) ??
+      activeTeammate?.skillSlugs[0] ??
+      null;
     const activeSkill = requestedSkillSlug
       ? ((
           await createPostgresSkillStore()
@@ -317,8 +334,8 @@ export async function POST(request: Request) {
     });
     const replySystemPrompt = systemPrompt({
       supportsTools,
-      soul,
-      needsOnboarding,
+      soul: effectiveSoul,
+      needsOnboarding: !effectiveSoul && session.user.type !== "guest",
       includeArtifacts: needsArtifactInstructions(requestedTools),
       includeWebSearch: searchLane && requestedTools.includes("webSearch"),
       includeFixtures: requestedTools.includes("getFixtures"),

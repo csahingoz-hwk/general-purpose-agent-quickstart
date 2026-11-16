@@ -16,6 +16,7 @@ export type ProfileFact = {
   key: string;
   value: string;
   sharedAcrossBots: boolean;
+  botSlug?: string | null;
   updatedAt: string;
 };
 
@@ -36,6 +37,7 @@ export interface MemoryStore {
     key: string;
     value: string;
     sharedAcrossBots?: boolean;
+    botSlug?: string | null;
   }) => Promise<ProfileFact>;
   listProfileFacts: (opts: {
     userId: string;
@@ -83,9 +85,11 @@ export function createInMemoryMemoryStore(): MemoryStore {
       key,
       value,
       sharedAcrossBots = true,
+      botSlug = null,
     }) {
       const normalizedKey = normalizeFactKey(key);
-      const mapKey = `${userId}:${normalizedKey}`;
+      const scopeSuffix = sharedAcrossBots ? "shared" : (botSlug ?? "private");
+      const mapKey = `${userId}:${scopeSuffix}:${normalizedKey}`;
       const existing = facts.get(mapKey);
       const now = new Date(Date.now() + sequence++).toISOString();
       const saved: ProfileFact = {
@@ -95,6 +99,7 @@ export function createInMemoryMemoryStore(): MemoryStore {
         key: normalizedKey,
         value: value.trim(),
         sharedAcrossBots,
+        botSlug,
         updatedAt: now,
       };
       facts.set(mapKey, saved);

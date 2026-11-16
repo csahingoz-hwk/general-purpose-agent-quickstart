@@ -83,6 +83,9 @@
 ### Slice 5 (`P1.4b` — Vault-Backed Google Calendar & GitHub Read + Draft Connectors): DONE
 - **What changed (in plain English):** Completed the remaining Phase 1 connectors for **Google Calendar** (`calendarReadEvents` + `calendarCreateDraftEvent`) and **GitHub** (`githubReadPullRequests` + `githubCreateDraftReview`, gated behind `GITHUB_CONNECTOR_ENABLED=true` and `GITHUB_CONNECTOR_PAT` in your Secret Vault). Calendar drafts are saved strictly as private tentative `[DRAFT]` entries with `sendUpdates=none` so **no attendee invites are ever emailed**, and GitHub review drafts omit the submit event so GitHub stores them as **unpublished `PENDING` draft reviews** visible only to you — after you approve them via `ApprovalCard`. Merges, deletes, and public broadcasts are blocked at the URL guard layer.
 
+### Slice 6 (`P2.1` — Multi-Bot Teammate Roster & Scoped Shared Memory): DONE
+- **What changed (in plain English):** Added a `/teammates` roster page (reachable from the user menu and `/teammates` slash command, or inline in chat via `@bot:<slug>`) pre-seeded with three specialist teammates: **Chief of Staff** (`blue`), **Finance Controller** (`green`), and **Vibecoder** (`purple`), plus custom teammate creation (`BotProfile` table). Activating a teammate switches the mascot color theme, applies that teammate's domain persona and default skills in chat, shares core profile facts marked `sharedAcrossBots: true`, and keeps private `sharedAcrossBots: false` facts isolated to the teammate that saved them.
+
 ### Remaining / Next Up (Wait for Owner Go-Ahead)
 1. **Provision isolated local/preview Postgres** and apply `lib/db/usage-schema.sql` + `lib/db/parity-schema.sql`.
 2. **P1.3 Voice Memos + Gemini Live Sheet:** Push-to-talk memo transcription (`gemini-4-hydrogen` / OpenAI STT) in `MultimodalInput` + ephemeral-token **Gemini Live API (current model)** voice session billed against the confirmed US$40/mo GCP credit (personal/non-KF use only).
