@@ -89,6 +89,9 @@
 ### Slice 7 (`P2.2` — HMAC Event Webhooks & Hardened Telegram Inline Approvals): DONE
 - **What changed (in plain English):** Added an opt-in signed event webhook endpoint (`POST /api/webhooks/[source]`, gated behind `WEBHOOK_TRIGGERS_ENABLED=true`) that verifies GitHub/custom **HMAC-SHA256** signatures in constant time, wraps payloads in `<untrusted_content>` fences, and queues matching background tasks (auto-escalating suspicious payloads to require approval). Also built the hardened single-owner Telegram handler (`TELEGRAM_WEBHOOK_ENABLED=true` — staying locked at `503` by default) that drops unlinked `chat.id` messages with zero spend and verifies compact **HMAC-signed inline-keyboard Approve/Deny buttons** bound to the exact SHA-256 action digest.
 
+### Slice 8 (`P2.3` — Read-Only Published Page Snapshots `/share/[token]`): DONE
+- **What changed (in plain English):** Added 1-click **"Publish read-only snapshot"** and **"Revoke"** controls inside the **Results in this chat** drawer (`components/chat/results-sheet.tsx`), backed by `PublishedPage` (`app/api/share/route.ts` + `app/share/[token]/page.tsx`). Published links store only the SHA-256 hash of a 192-bit random token, scrub your email address and scripts, block Korn Ferry/employer terms, never expose chat messages or other documents, allow unauthenticated `GET /share/[token]` only, and return `404` the instant you click Revoke.
+
 ### Remaining / Next Up (Wait for Owner Go-Ahead)
 1. **Provision isolated local/preview Postgres** and apply `lib/db/usage-schema.sql` + `lib/db/parity-schema.sql`.
 2. **P1.3 Voice Memos + Gemini Live Sheet:** Push-to-talk memo transcription (`gemini-4-hydrogen` / OpenAI STT) in `MultimodalInput` + ephemeral-token **Gemini Live API (current model)** voice session billed against the confirmed US$40/mo GCP credit (personal/non-KF use only).

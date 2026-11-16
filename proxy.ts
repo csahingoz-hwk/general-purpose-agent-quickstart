@@ -25,7 +25,9 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith("/api/auth/") ||
     pathname === "/api/cron/tick" ||
     pathname === "/api/telegram-webhook" ||
-    (request.method === "POST" && pathname.startsWith("/api/webhooks/"))
+    (request.method === "POST" && pathname.startsWith("/api/webhooks/")) ||
+    (request.method === "GET" &&
+      /^\/share\/[a-zA-Z0-9_-]{24,128}$/.test(pathname))
   ) {
     return NextResponse.next();
   }

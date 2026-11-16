@@ -121,3 +121,17 @@ CREATE TABLE IF NOT EXISTS "RoutineTrigger" (
 CREATE INDEX IF NOT EXISTS "RoutineTrigger_user_source"
   ON "RoutineTrigger" ("userId", "source");
 
+CREATE TABLE IF NOT EXISTS "PublishedPage" (
+  "id" uuid PRIMARY KEY,
+  "userId" uuid NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+  "tokenHash" varchar(64) NOT NULL UNIQUE,
+  "title" varchar(160) NOT NULL,
+  "sanitizedPayload" jsonb NOT NULL DEFAULT '[]'::jsonb,
+  "createdAt" timestamptz NOT NULL DEFAULT now(),
+  "expiresAt" timestamptz NOT NULL,
+  "revokedAt" timestamptz
+);
+
+CREATE INDEX IF NOT EXISTS "PublishedPage_user_created"
+  ON "PublishedPage" ("userId", "createdAt" DESC);
+
