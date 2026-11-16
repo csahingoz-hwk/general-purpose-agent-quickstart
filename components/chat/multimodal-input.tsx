@@ -49,6 +49,7 @@ import {
   slashCommands,
 } from "./slash-commands";
 import type { VisibilityType } from "./visibility-selector";
+import { VoiceMemoControls } from "./voice-memo-button";
 
 const copy = getCopy();
 
@@ -566,6 +567,14 @@ function PureMultimodalInput({
               fileInputRef={fileInputRef}
               selectedModelId={selectedModelId}
               status={status}
+            />
+            <VoiceMemoControls
+              disabled={status !== "ready"}
+              onTranscript={(spoken) => {
+                setInput((prev) =>
+                  prev.trim() ? `${prev.trim()} ${spoken}` : spoken
+                );
+              }}
             />
             <ModelSelectorCompact
               onModelChange={onModelChange}
