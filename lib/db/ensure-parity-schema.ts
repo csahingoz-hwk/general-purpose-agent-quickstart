@@ -52,7 +52,7 @@ export async function ensureParitySchema(
         "category" varchar(48) NOT NULL DEFAULT 'about_me',
         "key" varchar(120) NOT NULL,
         "value" text NOT NULL,
-        "source" varchar(24) NOT NULL DEFAULT 'chat',
+        "source" varchar(64) NOT NULL DEFAULT 'chat',
         "pinned" boolean NOT NULL DEFAULT false,
         "learnedAt" timestamptz NOT NULL DEFAULT now(),
         "sharedAcrossBots" boolean NOT NULL DEFAULT true,
@@ -63,7 +63,9 @@ export async function ensureParitySchema(
       ALTER TABLE "MemoryProfileFact"
         ADD COLUMN IF NOT EXISTS "botSlug" varchar(80);
       ALTER TABLE "MemoryProfileFact"
-        ADD COLUMN IF NOT EXISTS "source" varchar(24) NOT NULL DEFAULT 'chat';
+        ADD COLUMN IF NOT EXISTS "source" varchar(64) NOT NULL DEFAULT 'chat';
+      ALTER TABLE "MemoryProfileFact"
+        ALTER COLUMN "source" TYPE varchar(64);
       ALTER TABLE "MemoryProfileFact"
         ADD COLUMN IF NOT EXISTS "pinned" boolean NOT NULL DEFAULT false;
       ALTER TABLE "MemoryProfileFact"

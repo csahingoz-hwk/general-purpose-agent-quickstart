@@ -8,7 +8,10 @@ import {
 } from "@/lib/bots/roster";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import { getChatById, getMessagesByChatId } from "@/lib/db/queries";
-import { buildGroupedMemoryPromptBlock } from "@/lib/memory/bulk-import";
+import {
+  buildGroupedMemoryPromptBlock,
+  isAllowedShortKornFerryContextFact,
+} from "@/lib/memory/bulk-import";
 import { createPostgresMemoryStore } from "@/lib/memory/store";
 import {
   buildVoiceSystemInstruction,
@@ -128,7 +131,11 @@ export async function POST(request: Request) {
   const safeVoiceFacts = filterFactsForBot(
     facts,
     teammate?.slug ?? "chief-of-staff"
-  ).filter((f) => !containsRestrictedWorkData(`${f.key} ${f.value}`));
+  ).filter(
+    (f) =>
+      !containsRestrictedWorkData(`${f.key} ${f.value}`) ||
+      isAllowedShortKornFerryContextFact(f.value)
+  );
   const groupedMemoryBlock = buildGroupedMemoryPromptBlock(
     safeVoiceFacts,
     latestRecentText,

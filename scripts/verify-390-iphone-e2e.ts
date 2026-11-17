@@ -5,6 +5,12 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { encode } from "next-auth/jwt";
+import {
+  deterministicFallbackMerge,
+  mergeMemoryExports,
+  type RawMemoryExportSource,
+} from "../lib/memory/multi-source-merge";
+import type { ProfileFact } from "../lib/memory/store";
 import { buildOpenUiPayload } from "../lib/openui/attach";
 
 const MAC_CHROME =
@@ -825,12 +831,30 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
             value?: string;
             source?: string;
             pinned?: boolean;
+            learnedAt?: string;
+            replaceFactId?: string;
           }>;
         };
         if (body.type === "profile_batch" && Array.isArray(body.items)) {
           const created = body.items.map((item) => {
+            const nowIso = item.learnedAt || "2026-11-17T22:15:00.000Z";
+            if (item.replaceFactId) {
+              const existingTarget = memoryState.find(
+                (m) => m.id === item.replaceFactId
+              );
+              if (existingTarget) {
+                existingTarget.category =
+                  item.category ?? existingTarget.category;
+                existingTarget.value = item.value ?? existingTarget.value;
+                existingTarget.source =
+                  item.source ?? body.source ?? existingTarget.source;
+                existingTarget.pinned = Boolean(item.pinned);
+                existingTarget.learnedAt = nowIso;
+                existingTarget.updatedAt = nowIso;
+                return existingTarget;
+              }
+            }
             nextMemSeq += 1;
-            const nowIso = "2026-11-17T22:15:00.000Z";
             const row = {
               id: `50000000-0000-4000-8000-${String(nextMemSeq).padStart(12, "0")}`,
               userId,
@@ -891,6 +915,78 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
       return route.fulfill({ status: 400, json: { error: "Unsupported" } });
     });
 
+    await page.route("**/api/memory/merge", async (route) => {
+      const body = JSON.parse(route.request().postData() ?? "{}") as {
+        sources?: RawMemoryExportSource[];
+      };
+      const sources = body.sources ?? [];
+      const merged = await mergeMemoryExports({
+        sources,
+        existingFacts: memoryState as unknown as ProfileFact[],
+        runner: ({ candidates, existingFacts, preferredModel }) => {
+          // For multi-source 4-export test, exercise realistic Vertex Argon cross-lingual merge + conflict resolution
+          const proIdx = candidates.findIndex((c) =>
+            /google ai pro/i.test(c.text)
+          );
+          const ultraIdx = candidates.findIndex((c) =>
+            /google ai ultra/i.test(c.text)
+          );
+          const enFlightIdx = candidates.findIndex((c) =>
+            /aisle seats/i.test(c.text)
+          );
+          const trFlightIdx = candidates.findIndex((c) =>
+            /koridor koltuğu/i.test(c.text)
+          );
+          if (proIdx !== -1 && ultraIdx !== -1) {
+            const items: ReturnType<
+              typeof deterministicFallbackMerge
+            >["items"] = [
+              {
+                status: "conflict",
+                fact: "Subscribes to the Google AI Ultra tier ($40/mo Cloud credit).",
+                category: "projects",
+                candidateIndices: [ultraIdx, proIdx],
+                conflictTopic: "Google AI subscription tier",
+                conflictOptions: [
+                  {
+                    fact: "Subscribes to the Google AI Ultra tier ($40/mo Cloud credit).",
+                    candidateIndex: ultraIdx,
+                    isNewest: true,
+                  },
+                  {
+                    fact: "Subscribes to the Google AI Pro tier.",
+                    candidateIndex: proIdx,
+                    isNewest: false,
+                  },
+                ],
+              },
+            ];
+            if (enFlightIdx !== -1 && trFlightIdx !== -1) {
+              items.push({
+                status: "merged",
+                fact: "Prefers aisle seats on flights longer than 3 hours.",
+                category: "preferences",
+                candidateIndices: [enFlightIdx, trFlightIdx],
+              });
+            }
+            const used = new Set([proIdx, ultraIdx, enFlightIdx, trFlightIdx]);
+            const remaining = candidates.filter((c) => !used.has(c.idx));
+            const rest = deterministicFallbackMerge(remaining, existingFacts);
+            items.push(...rest.items);
+            return Promise.resolve({
+              modelUsed: preferredModel,
+              payload: { items },
+            });
+          }
+          return Promise.resolve({
+            modelUsed: "gemini-4-hydrogen",
+            payload: deterministicFallbackMerge(candidates, existingFacts),
+          });
+        },
+      });
+      return route.fulfill({ status: 200, json: merged });
+    });
+
     // Navigate to Settings (/usage) first and tap "Open" on Memory card
     await page.goto(`${origin}/usage`, { waitUntil: "domcontentloaded" });
     const settingsMemoryLink = page.getByTestId("settings-open-memory");
@@ -933,7 +1029,7 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
     await expect(sensitiveWarning).toContainText("Card number");
     await expect(sensitiveWarning).toContainText("Street / postal address");
     await expect(page.getByTestId("memory-preview-summary")).toContainText(
-      "47 new selected · 3 already saved"
+      "47 ready to save · 3 already saved"
     );
     await expect(page.getByTestId("memory-duplicate-badge")).toHaveCount(3);
 
@@ -1003,6 +1099,125 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
     );
     const memorySavedShot = join(scratchDir, "verify-memory-saved-390.png");
     await page.screenshot({ path: memorySavedShot, fullPage: false });
+
+    // 4-Source Multi-Export Merge Test (ChatGPT JSON + Claude MD + Gemini TR + Grok Bot MD) at 390px!
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.getByTestId("memory-add-source-chatgpt").click();
+    await expect(page.getByTestId("memory-source-select-0")).toHaveValue(
+      "chatgpt"
+    );
+    await page.getByTestId("memory-bulk-textarea").fill(
+      JSON.stringify([
+        {
+          memory: "Subscribes to Google AI Pro tier",
+          updated_at: "2025-09-12T10:00:00Z",
+        },
+        {
+          memory: "Prefers aisle seats on flights over 3 hours",
+          updated_at: "2025-10-01T10:00:00Z",
+        },
+        {
+          memory:
+            "Works as MENA Finance Controller at Korn Ferry covering UAE, Saudi Arabia, and Turkey",
+          updated_at: "2025-10-05T10:00:00Z",
+        },
+        { memory: "WiFi password is SuperSecretPassword99!" },
+      ])
+    );
+
+    await page.getByTestId("memory-add-source-claude").click();
+    await page
+      .getByTestId("memory-source-textarea-1")
+      .fill(
+        [
+          "## Work",
+          "- Korn Ferry'de MENA Finans Kontrolörü olarak çalışıyor.",
+          "- Korn Ferry SA90 EOSB GL 239300 accrual balance is SAR 1,240,000.",
+          "## Subscriptions",
+          "- [2026-11-01] Subscribes to Google AI Ultra tier ($40/mo Cloud credit)",
+        ].join("\n")
+      );
+
+    await page.getByTestId("memory-add-source-gemini").click();
+    await page
+      .getByTestId("memory-source-textarea-2")
+      .fill(
+        [
+          "- 3 saatten uzun uçuşlarda koridor koltuğu tercih eder",
+          "- StreamVault TV projesini Samsung Tizen TV için geliştiriyor",
+        ].join("\n")
+      );
+
+    await page.getByTestId("memory-add-source-grok_bot").click();
+    await page
+      .getByTestId("memory-source-textarea-3")
+      .fill(
+        [
+          "### Projects",
+          "- Uses Tailscale private mesh for Cloud VM assistant-computer-01. _(source: chat, learned: 2026-11-14, searchable)_",
+        ].join("\n")
+      );
+
+    const slotsOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth
+    );
+    assert.ok(
+      slotsOverflow <= 390,
+      `Multi-source slots horizontal overflow at 390px: ${slotsOverflow}`
+    );
+    const multiSlotsShot = join(
+      scratchDir,
+      "verify-memory-multisource-slots-390.png"
+    );
+    await page.screenshot({ path: multiSlotsShot, fullPage: false });
+
+    await page.getByTestId("memory-preview-button").click();
+    await expect(page.getByTestId("memory-merge-stats")).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByTestId("memory-merge-model")).toContainText(
+      "Gemini 4 Argon · Vertex"
+    );
+    await expect(page.getByTestId("memory-stat-new")).toContainText("2");
+    await expect(page.getByTestId("memory-stat-merged")).toContainText("2");
+    await expect(page.getByTestId("memory-stat-conflicts")).toContainText("1");
+    await expect(page.getByTestId("memory-stat-sensitive")).toContainText("2");
+    await expect(page.getByTestId("memory-sensitive-warning")).toContainText(
+      "Korn Ferry data skipped (role/regions only)"
+    );
+    await expect(page.getByTestId("memory-conflict-item")).toHaveCount(1);
+    await expect(page.getByTestId("memory-conflict-option")).toHaveCount(2);
+
+    // Toggle conflict option to older and back to newest to verify 1-tap choice
+    await page.getByTestId("memory-conflict-option").nth(1).click();
+    await page.getByTestId("memory-conflict-option").nth(0).click();
+
+    const multiPreviewOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth
+    );
+    assert.ok(
+      multiPreviewOverflow <= 390,
+      `Multi-source preview horizontal overflow at 390px: ${multiPreviewOverflow}`
+    );
+    await page.getByTestId("memory-import-preview").scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+    const multiPreviewShot = join(
+      scratchDir,
+      "verify-memory-multisource-preview-390.png"
+    );
+    await page.screenshot({ path: multiPreviewShot, fullPage: false });
+
+    // One-tap approval saves all 5 merged/new/conflict items (49 + 5 = 54)!
+    await page.getByTestId("memory-confirm-save").click();
+    await expect(page.getByTestId("memory-fact-row")).toHaveCount(54, {
+      timeout: 10_000,
+    });
+    await expect(page.getByTestId("memory-saved-list")).toContainText(
+      "ChatGPT + Claude"
+    );
+    await expect(page.getByTestId("memory-saved-list")).toContainText(
+      "Subscribes to the Google AI Ultra tier ($40/mo Cloud credit)."
+    );
 
     // Also verify "Remember this: …" renders the compact "Saved to memory" card in chat at 390x844
     await page.unroute("**/api/chat");

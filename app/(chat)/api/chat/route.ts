@@ -101,6 +101,7 @@ import { isMediaStudioEnabled } from "@/lib/media/media-studio";
 import {
   buildGroupedMemoryPromptBlock,
   extractExplicitRememberFact,
+  isAllowedShortKornFerryContextFact,
 } from "@/lib/memory/bulk-import";
 import {
   createPostgresMemoryStore,
@@ -417,7 +418,11 @@ export async function POST(request: Request) {
     const safeBotFacts = filterFactsForBot(
       mergedFacts,
       activeTeammate?.slug ?? "chief-of-staff"
-    ).filter((f) => !containsRestrictedWorkData(`${f.key} ${f.value}`));
+    ).filter(
+      (f) =>
+        !containsRestrictedWorkData(`${f.key} ${f.value}`) ||
+        isAllowedShortKornFerryContextFact(f.value)
+    );
     const memoryContextBlock = buildGroupedMemoryPromptBlock(
       safeBotFacts,
       finalUserText,

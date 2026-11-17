@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
 import { isOwnerIdentity } from "@/lib/access-policy";
-import { deriveFactKey } from "@/lib/memory/bulk-import";
+import { deriveFactKey, normalizeMemorySource } from "@/lib/memory/bulk-import";
 import {
   createPostgresMemoryStore,
   isMemoryToolsEnabled,
@@ -24,29 +24,37 @@ const categoryEnum = z.enum([
   "general",
 ]);
 
-const sourceEnum = z.enum(["pasted", "chat", "voice"]);
+const sourceSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .transform((val) => normalizeMemorySource(val, "pasted"));
 
 const profileBodySchema = z.object({
   type: z.literal("profile"),
   category: categoryEnum.default("about_me"),
   key: z.string().trim().min(1).max(120).optional(),
   value: z.string().trim().min(1).max(2000),
-  source: sourceEnum.default("pasted"),
+  source: sourceSchema.default("pasted"),
   pinned: z.boolean().optional(),
+  learnedAt: z.string().trim().max(64).optional(),
   sharedAcrossBots: z.boolean().default(true),
 });
 
 const profileBatchBodySchema = z.object({
   type: z.literal("profile_batch"),
-  source: sourceEnum.default("pasted"),
+  source: sourceSchema.default("pasted"),
   items: z
     .array(
       z.object({
         category: categoryEnum.default("about_me"),
         key: z.string().trim().min(1).max(120).optional(),
         value: z.string().trim().min(1).max(2000),
-        source: sourceEnum.optional(),
+        source: sourceSchema.optional(),
         pinned: z.boolean().optional(),
+        learnedAt: z.string().trim().max(64).optional(),
+        replaceFactId: z.string().uuid().optional(),
         sharedAcrossBots: z.boolean().default(true),
       })
     )
@@ -162,6 +170,7 @@ export async function POST(request: Request) {
         value: body.value,
         source: body.source,
         pinned: body.pinned,
+        learnedAt: body.learnedAt,
         sharedAcrossBots: body.sharedAcrossBots,
       });
       return Response.json({ fact }, { status: 201 });
@@ -195,7 +204,9 @@ export async function POST(request: Request) {
       return Response.json(
         {
           error:
-            "Passwords, card numbers, and street addresses are never stored in memory.",
+            error.reason === "korn_ferry_data"
+              ? "Korn Ferry facts are stored only as short role and region context lines — never internal data or documents."
+              : "Passwords, card numbers, and street addresses are never stored in memory.",
           reason: error.reason,
         },
         { status: 422 }
@@ -259,7 +270,9 @@ export async function PATCH(request: Request) {
       return Response.json(
         {
           error:
-            "Passwords, card numbers, and street addresses are never stored in memory.",
+            error.reason === "korn_ferry_data"
+              ? "Korn Ferry facts are stored only as short role and region context lines — never internal data or documents."
+              : "Passwords, card numbers, and street addresses are never stored in memory.",
           reason: error.reason,
         },
         { status: 422 }

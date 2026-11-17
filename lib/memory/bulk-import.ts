@@ -1,9 +1,32 @@
+import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import type {
   CanonicalMemoryCategory,
   JournalEntry,
   MemorySource,
   ProfileFact,
 } from "@/lib/memory/store";
+
+export const IMPORT_MEMORY_SOURCES = [
+  "chatgpt",
+  "claude",
+  "gemini",
+  "grok_bot",
+  "pasted",
+] as const;
+
+export type ImportMemorySource = (typeof IMPORT_MEMORY_SOURCES)[number];
+
+export const ATOMIC_MEMORY_SOURCES = [
+  "chatgpt",
+  "claude",
+  "gemini",
+  "grok_bot",
+  "pasted",
+  "chat",
+  "voice",
+] as const;
+
+export type AtomicMemorySource = (typeof ATOMIC_MEMORY_SOURCES)[number];
 
 export const ORDERED_MEMORY_CATEGORIES: readonly CanonicalMemoryCategory[] = [
   "rules",
@@ -36,7 +59,11 @@ export const MEMORY_CATEGORY_LABELS: Record<
   },
 };
 
-export type SensitiveMemoryReason = "password" | "card_number" | "address";
+export type SensitiveMemoryReason =
+  | "password"
+  | "card_number"
+  | "address"
+  | "korn_ferry_data";
 
 export type SkippedSensitiveLine = {
   id: string;
@@ -242,6 +269,138 @@ export function maskSensitivePreview(raw: string): string {
     : maskedSecrets;
 }
 
+const FORBIDDEN_KF_DATA_TOKENS_RE =
+  /(?<![\p{L}])(?:hay[\s_-]*group|sa90|eosb|gl[\s_-]*\d+|239300|sox|sap\b|gaap|ifrs|accrual\p{L}*|trial\s+balance|reconcil\p{L}*|ledger|journal|invoice\p{L}*|billing|revenue\p{L}*|margin\p{L}*|ebitda|profit|loss|budget|forecast|variance|payroll|headcount|salary|bonus|compensation|fee\b|fees\b|contract\p{L}*|client\p{L}*|engagement\p{L}*|proposal|pitch|deck|spreadsheet|workbook|xlsx|pdf|confidential|secret|internal\s+only|audit\p{L}*|close\b|closing|month[- ]end|quarter[- ]end|year[- ]end|q[1-4]\b|fy\d{2,4}|provision\p{L}*|receivable\p{L}*|payable\p{L}*|tax\b|vat\b|zakat|wht\b|intercompany|ic\s+revenue|mizan\p{L}*|tahakkuk\p{L}*|mutabakat\p{L}*|fatura\p{L}*|gelir\p{L}*|bütçe\p{L}*|müşteri\p{L}*|sözleşme\p{L}*|denetim\p{L}*|kapanış\p{L}*|maaş\p{L}*|bordro\p{L}*)(?![\p{L}])|[$£€₺]|\b(?:usd|gbp|eur|sar|aed|qar|try)\s*\d|\b\d[\d,.]*\s*(?:m|mn|k|bn|million|thousand|usd|gbp|eur|sar|aed)\b/iu;
+
+const ALLOWED_KF_ROLE_OR_REGION_RE =
+  /(?<![\p{L}])(?:work\p{L}*|role\p{L}*|title|position|employ\p{L}*|lead\p{L}*|head\b|director\p{L}*|controller\p{L}*|vp\b|vice\s+president|manager\p{L}*|cfo|finance|regional|region\p{L}*|mena|emea|apac|latam|middle\s+east|north\s+africa|gcc|uae|dubai|abu\s+dhabi|saudi|ksa|riyadh|qatar|doha|kuwait|bahrain|oman|egypt|turkey|türkiye|istanbul|uk\b|london|çalış\p{L}*|görev\p{L}*|pozisyon\p{L}*|ünvan\p{L}*|unvan\p{L}*|direktör\p{L}*|kontrolör\p{L}*|finans\p{L}*|bölge\p{L}*|orta\s*doğu)(?![\p{L}])/iu;
+
+const ANY_KF_MENTION_RE = /\bkorn[\s_-]*ferry\b/iu;
+
+/**
+ * Returns true ONLY when a Korn Ferry mention is strictly a short biographical
+ * context line (job title / role / regions covered) with zero financial,
+ * accounting, audit, SOX, EOSB, SA90, GL, SAP, client, or document content.
+ */
+export function isAllowedShortKornFerryContextFact(raw: string): boolean {
+  const cleaned = raw.trim().replace(BULLET_PREFIX_RE, "").trim();
+  if (
+    !cleaned ||
+    cleaned.length < 10 ||
+    cleaned.length > 180 ||
+    /[\r\n]/.test(cleaned)
+  ) {
+    return false;
+  }
+  if (!ANY_KF_MENTION_RE.test(cleaned)) {
+    return false;
+  }
+  if (FORBIDDEN_KF_DATA_TOKENS_RE.test(cleaned)) {
+    return false;
+  }
+  // Block multi-digit numbers (except 4-digit calendar years 2010..2035 for role tenure)
+  const numericTokens = cleaned.match(/\d+/g) ?? [];
+  for (const num of numericTokens) {
+    const n = Number(num);
+    if (!(num.length === 4 && n >= 2010 && n <= 2035)) {
+      return false;
+    }
+  }
+  return ALLOWED_KF_ROLE_OR_REGION_RE.test(cleaned);
+}
+
+export function maskKornFerryPreview(raw: string): string {
+  const cleaned = raw
+    .trim()
+    .replace(BULLET_PREFIX_RE, "")
+    .replace(/\s+/g, " ")
+    .replace(/(?:\d[.,]?)+/g, "••");
+  return cleaned.length > 58 ? `${cleaned.slice(0, 55)}…` : cleaned;
+}
+
+export type KornFerryMemoryClassification =
+  | { kind: "none" }
+  | { kind: "short_context"; fact: string }
+  | {
+      kind: "partial_short_context";
+      fact: string;
+      skippedPreview: string;
+    }
+  | { kind: "blocked_kf_data"; skippedPreview: string };
+
+/**
+ * Classifies a statement for Korn Ferry / employer governance:
+ * - Non-KF text -> `none`
+ * - Short role/region context line -> `short_context`
+ * - Compound line with a safe role/region clause + restricted KF details ->
+ *   keeps ONLY the short role/region sentence and flags the stripped details
+ * - Any KF accounting/SOX/EOSB/SA90/financial/document line -> `blocked_kf_data`
+ */
+export function classifyKornFerryMemoryFact(
+  raw: string
+): KornFerryMemoryClassification {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return { kind: "none" };
+  }
+  const hasKfOrRestricted =
+    containsRestrictedWorkData(trimmed) || ANY_KF_MENTION_RE.test(trimmed);
+  if (!hasKfOrRestricted) {
+    return { kind: "none" };
+  }
+
+  if (isAllowedShortKornFerryContextFact(trimmed)) {
+    return {
+      kind: "short_context",
+      fact: toSelfContainedSentence(trimmed),
+    };
+  }
+
+  // Check if a compound statement has a clean short role/region clause before
+  // restricted KF details (e.g. separated by `;`, `—`, ` - `, or `. `)
+  const clauses = trimmed
+    .split(/(?:\s+[—–-]\s+|;\s*|\.\s+|\r?\n)/u)
+    .map((c) => c.trim())
+    .filter(Boolean);
+  if (clauses.length > 1) {
+    const safeClause = clauses.find((c) =>
+      isAllowedShortKornFerryContextFact(c)
+    );
+    if (safeClause) {
+      const rest = clauses.filter((c) => c !== safeClause).join("; ");
+      return {
+        kind: "partial_short_context",
+        fact: toSelfContainedSentence(safeClause),
+        skippedPreview: maskKornFerryPreview(rest || trimmed),
+      };
+    }
+  }
+
+  return {
+    kind: "blocked_kf_data",
+    skippedPreview: maskKornFerryPreview(trimmed),
+  };
+}
+
+/**
+ * Validates whether a candidate durable `ProfileFact` must be blocked from
+ * storage (passwords, card numbers, street addresses, or restricted KF data
+ * beyond short job-title/region context lines).
+ */
+export function detectDisallowedProfileFactReason(
+  raw: string
+): SensitiveMemoryReason | null {
+  const personalSecret = detectSensitiveMemoryContent(raw);
+  if (personalSecret) {
+    return personalSecret;
+  }
+  const kf = classifyKornFerryMemoryFact(raw);
+  if (kf.kind === "blocked_kf_data" || kf.kind === "partial_short_context") {
+    return "korn_ferry_data";
+  }
+  return null;
+}
+
 /**
  * Ensures each extracted fact reads as one clean, self-contained sentence.
  */
@@ -390,12 +549,38 @@ export function parsePastedMemoryInput(
         continue;
       }
 
-      const sentence = toSelfContainedSentence(seg).slice(0, 1500);
+      const kfClass = classifyKornFerryMemoryFact(seg);
+      if (kfClass.kind === "blocked_kf_data") {
+        skippedSensitive.push({
+          id: `sens_${skippedSensitive.length}`,
+          preview: kfClass.skippedPreview,
+          reason: "korn_ferry_data",
+        });
+        continue;
+      }
+      if (kfClass.kind === "partial_short_context") {
+        skippedSensitive.push({
+          id: `sens_${skippedSensitive.length}`,
+          preview: kfClass.skippedPreview,
+          reason: "korn_ferry_data",
+        });
+      }
+
+      const sentence = (
+        kfClass.kind === "short_context" ||
+        kfClass.kind === "partial_short_context"
+          ? kfClass.fact
+          : toSelfContainedSentence(seg)
+      ).slice(0, 1500);
       if (sentence.length < 3) {
         continue;
       }
       const key = deriveFactKey(sentence);
-      const category = inferMemoryCategory(sentence, activeHeadingCategory);
+      const category =
+        kfClass.kind === "short_context" ||
+        kfClass.kind === "partial_short_context"
+          ? "work"
+          : inferMemoryCategory(sentence, activeHeadingCategory);
       candidates.push({
         id: `${key}_${candidates.length}`,
         key,
@@ -510,8 +695,20 @@ export function extractExplicitRememberFact(
       if (sensitive) {
         return { kind: "sensitive_blocked", reason: sensitive };
       }
-      const sentence = toSelfContainedSentence(captured);
-      const category = inferMemoryCategory(sentence);
+      const kfClass = classifyKornFerryMemoryFact(captured);
+      if (kfClass.kind === "blocked_kf_data") {
+        return { kind: "sensitive_blocked", reason: "korn_ferry_data" };
+      }
+      const sentence =
+        kfClass.kind === "short_context" ||
+        kfClass.kind === "partial_short_context"
+          ? kfClass.fact
+          : toSelfContainedSentence(captured);
+      const category =
+        kfClass.kind === "short_context" ||
+        kfClass.kind === "partial_short_context"
+          ? "work"
+          : inferMemoryCategory(sentence);
       return {
         kind: "ok",
         key: deriveFactKey(sentence),
@@ -678,18 +875,127 @@ export function buildGroupedMemoryPromptBlock(
   return sections.join("\n");
 }
 
+const SINGLE_SOURCE_LABELS: Record<
+  "en" | "tr",
+  Record<AtomicMemorySource, string>
+> = {
+  en: {
+    chatgpt: "ChatGPT",
+    claude: "Claude",
+    gemini: "Gemini",
+    grok_bot: "Grok Bot",
+    pasted: "Pasted",
+    chat: "Chat",
+    voice: "Voice",
+  },
+  tr: {
+    chatgpt: "ChatGPT",
+    claude: "Claude",
+    gemini: "Gemini",
+    grok_bot: "Grok Bot",
+    pasted: "Yapıştırıldı",
+    chat: "Sohbet",
+    voice: "Ses",
+  },
+};
+
+function normalizeAtomicSource(raw: string): AtomicMemorySource | null {
+  const s = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  if (s === "chatgpt" || s === "openai") {
+    return "chatgpt";
+  }
+  if (s === "claude" || s === "anthropic") {
+    return "claude";
+  }
+  if (s === "gemini" || s === "google") {
+    return "gemini";
+  }
+  if (s === "grok_bot" || s === "grokbot" || s === "grok") {
+    return "grok_bot";
+  }
+  if (s === "pasted" || s === "paste" || s === "other" || s === "imported") {
+    return "pasted";
+  }
+  if (s === "voice") {
+    return "voice";
+  }
+  if (s === "chat") {
+    return "chat";
+  }
+  return null;
+}
+
+export function normalizeMemorySource(
+  raw?: string | null,
+  fallback: AtomicMemorySource = "chat"
+): MemorySource {
+  if (!raw?.trim()) {
+    return fallback;
+  }
+  const parts = raw
+    .split("+")
+    .map((p) => normalizeAtomicSource(p))
+    .filter((p): p is AtomicMemorySource => p !== null);
+  const unique = [...new Set(parts)];
+  if (unique.length === 0) {
+    return fallback;
+  }
+  return unique.join("+").slice(0, 64);
+}
+
+export function joinMemorySources(
+  sources: readonly string[],
+  fallback: AtomicMemorySource = "pasted"
+): MemorySource {
+  const normalized = sources
+    .flatMap((s) => s.split("+"))
+    .map((s) => normalizeAtomicSource(s))
+    .filter((s): s is AtomicMemorySource => s !== null);
+  const unique = [...new Set(normalized)].sort(
+    (a, b) =>
+      ATOMIC_MEMORY_SOURCES.indexOf(a) - ATOMIC_MEMORY_SOURCES.indexOf(b)
+  );
+  if (unique.length === 0) {
+    return fallback;
+  }
+  return unique.join("+").slice(0, 64);
+}
+
+export function inferImportSourceFromFileName(
+  fileName: string
+): ImportMemorySource {
+  const lower = fileName.toLowerCase();
+  if (lower.includes("chatgpt") || lower.includes("openai")) {
+    return "chatgpt";
+  }
+  if (lower.includes("claude") || lower.includes("anthropic")) {
+    return "claude";
+  }
+  if (lower.includes("gemini") || lower.includes("takeout")) {
+    return "gemini";
+  }
+  if (lower.includes("grok")) {
+    return "grok_bot";
+  }
+  return "pasted";
+}
+
 export function formatMemorySourceLabel(
   source: MemorySource,
   lang: "en" | "tr" = "en"
 ): string {
-  if (lang === "tr") {
-    return source === "pasted"
-      ? "Yapıştırıldı"
-      : source === "voice"
-        ? "Ses"
-        : "Sohbet";
+  const parts = String(source ?? "")
+    .split("+")
+    .map((p) => normalizeAtomicSource(p))
+    .filter((p): p is AtomicMemorySource => p !== null);
+  const unique = [...new Set(parts)];
+  if (unique.length === 0) {
+    return SINGLE_SOURCE_LABELS[lang].chat;
   }
-  return source === "pasted" ? "Pasted" : source === "voice" ? "Voice" : "Chat";
+  return unique.map((p) => SINGLE_SOURCE_LABELS[lang][p]).join(" + ");
 }
 
 export function buildMemoriesExportMarkdown(

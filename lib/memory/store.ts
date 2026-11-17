@@ -2,11 +2,14 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { ensureParitySchema } from "@/lib/db/ensure-parity-schema";
 import {
+  type AtomicMemorySource,
   defaultPinnedForCategory,
   deriveFactKey,
+  detectDisallowedProfileFactReason,
   detectSensitiveMemoryContent,
   normalizeMemoryCategory,
   normalizeMemoryComparisonText,
+  normalizeMemorySource,
   type SensitiveMemoryReason,
 } from "@/lib/memory/bulk-import";
 
@@ -27,13 +30,15 @@ export type LegacyMemoryCategory =
 
 export type MemoryCategory = CanonicalMemoryCategory | LegacyMemoryCategory;
 
-export type MemorySource = "pasted" | "chat" | "voice";
+export type MemorySource = AtomicMemorySource | (string & {});
 
 export class SensitiveMemoryBlockedError extends Error {
   readonly reason: SensitiveMemoryReason;
   constructor(reason: SensitiveMemoryReason) {
     super(
-      `Blocked sensitive memory (${reason}): passwords, card numbers, and street addresses are never stored in memory.`
+      reason === "korn_ferry_data"
+        ? "Blocked restricted Korn Ferry data: store only short role and region context lines in memory."
+        : `Blocked sensitive memory (${reason}): passwords, card numbers, and street addresses are never stored in memory.`
     );
     this.reason = reason;
   }
@@ -84,6 +89,8 @@ export interface MemoryStore {
       value: string;
       source?: MemorySource;
       pinned?: boolean;
+      learnedAt?: string;
+      replaceFactId?: string;
       sharedAcrossBots?: boolean;
       botSlug?: string | null;
     }>;
@@ -97,7 +104,9 @@ export interface MemoryStore {
     id: string;
     category?: MemoryCategory;
     value?: string;
+    source?: MemorySource;
     pinned?: boolean;
+    learnedAt?: string;
     sharedAcrossBots?: boolean;
   }) => Promise<ProfileFact | null>;
   listProfileFacts: (opts: {
@@ -142,10 +151,18 @@ function normalizeFactKey(key: string): string {
 }
 
 function normalizeSource(raw?: string | null): MemorySource {
-  if (raw === "pasted" || raw === "voice" || raw === "chat") {
-    return raw;
+  return normalizeMemorySource(raw, "chat");
+}
+
+function validIsoOrNull(raw?: string | null): string | null {
+  if (!raw?.trim()) {
+    return null;
   }
-  return "chat";
+  const parsed = Date.parse(raw);
+  if (Number.isNaN(parsed)) {
+    return null;
+  }
+  return new Date(parsed).toISOString();
 }
 
 export function createInMemoryMemoryStore(): MemoryStore {
@@ -166,9 +183,9 @@ export function createInMemoryMemoryStore(): MemoryStore {
       botSlug = null,
     }) {
       const trimmed = value.trim();
-      const sensitive = detectSensitiveMemoryContent(trimmed);
-      if (sensitive) {
-        return Promise.reject(new SensitiveMemoryBlockedError(sensitive));
+      const disallowed = detectDisallowedProfileFactReason(trimmed);
+      if (disallowed) {
+        return Promise.reject(new SensitiveMemoryBlockedError(disallowed));
       }
       const canonicalCategory = normalizeMemoryCategory(category);
       const normalizedKey = normalizeFactKey(key);
@@ -176,6 +193,7 @@ export function createInMemoryMemoryStore(): MemoryStore {
       const mapKey = `${userId}:${scopeSuffix}:${normalizedKey}`;
       const existing = facts.get(mapKey);
       const now = new Date(Date.now() + sequence++).toISOString();
+      const validLearned = validIsoOrNull(learnedAt);
       const saved: ProfileFact = {
         id: existing?.id ?? randomUUID(),
         userId,
@@ -187,7 +205,7 @@ export function createInMemoryMemoryStore(): MemoryStore {
           pinned ??
           existing?.pinned ??
           defaultPinnedForCategory(canonicalCategory),
-        learnedAt: existing?.learnedAt ?? learnedAt ?? now,
+        learnedAt: validLearned ?? existing?.learnedAt ?? now,
         sharedAcrossBots,
         botSlug,
         updatedAt: now,
@@ -197,8 +215,14 @@ export function createInMemoryMemoryStore(): MemoryStore {
     },
     async upsertProfileFactsBatch({ userId, source = "pasted", items }) {
       const existing = await this.listProfileFacts({ userId });
+      const replacingIds = new Set(
+        items
+          .map((i) => i.replaceFactId?.trim())
+          .filter((id): id is string => Boolean(id))
+      );
       const seenNorm = new Set(
         existing
+          .filter((f) => !replacingIds.has(f.id))
           .map((f) => normalizeMemoryComparisonText(f.value))
           .filter(Boolean)
       );
@@ -210,7 +234,7 @@ export function createInMemoryMemoryStore(): MemoryStore {
         if (!trimmed) {
           continue;
         }
-        if (detectSensitiveMemoryContent(trimmed)) {
+        if (detectDisallowedProfileFactReason(trimmed)) {
           skippedSensitive += 1;
           continue;
         }
@@ -224,6 +248,22 @@ export function createInMemoryMemoryStore(): MemoryStore {
         }
         seenNorm.add(norm);
         const canonicalCategory = normalizeMemoryCategory(item.category);
+        if (item.replaceFactId) {
+          const updatedExisting = await this.updateProfileFact({
+            userId,
+            id: item.replaceFactId,
+            category: canonicalCategory,
+            value: trimmed,
+            source: item.source ?? source,
+            pinned: item.pinned ?? defaultPinnedForCategory(canonicalCategory),
+            learnedAt: item.learnedAt,
+            sharedAcrossBots: item.sharedAcrossBots ?? true,
+          });
+          if (updatedExisting) {
+            saved.push(updatedExisting);
+            continue;
+          }
+        }
         const created = await this.upsertProfileFact({
           userId,
           category: canonicalCategory,
@@ -231,6 +271,7 @@ export function createInMemoryMemoryStore(): MemoryStore {
           value: trimmed,
           source: item.source ?? source,
           pinned: item.pinned ?? defaultPinnedForCategory(canonicalCategory),
+          learnedAt: item.learnedAt,
           sharedAcrossBots: item.sharedAcrossBots ?? true,
           botSlug: item.botSlug ?? null,
         });
@@ -243,22 +284,26 @@ export function createInMemoryMemoryStore(): MemoryStore {
       id,
       category,
       value,
+      source,
       pinned,
+      learnedAt,
       sharedAcrossBots,
     }) {
       for (const [mapKey, item] of facts.entries()) {
         if (item.userId === userId && item.id === id) {
           const nextValue =
             value !== undefined ? value.trim() : item.value.trim();
-          const sensitive = detectSensitiveMemoryContent(nextValue);
-          if (sensitive) {
-            return Promise.reject(new SensitiveMemoryBlockedError(sensitive));
+          const disallowed = detectDisallowedProfileFactReason(nextValue);
+          if (disallowed) {
+            return Promise.reject(new SensitiveMemoryBlockedError(disallowed));
           }
           const nextCategory = category
             ? normalizeMemoryCategory(category)
             : item.category;
           const nextPinned = pinned ?? item.pinned;
           const nextShared = sharedAcrossBots ?? item.sharedAcrossBots;
+          const nextSource = source ? normalizeSource(source) : item.source;
+          const nextLearnedAt = validIsoOrNull(learnedAt) ?? item.learnedAt;
           const candidateKey =
             value !== undefined ? deriveFactKey(nextValue) : item.key;
           const nextScope = nextShared ? "shared" : (item.botSlug ?? "private");
@@ -272,7 +317,9 @@ export function createInMemoryMemoryStore(): MemoryStore {
             category: nextCategory,
             key: finalKey,
             value: nextValue,
+            source: nextSource,
             pinned: nextPinned,
+            learnedAt: nextLearnedAt,
             sharedAcrossBots: nextShared,
             updatedAt: new Date(Date.now() + sequence++).toISOString(),
           };
@@ -458,18 +505,20 @@ export function createPostgresMemoryStore(): MemoryStore {
       value,
       source = "chat",
       pinned,
+      learnedAt,
       sharedAcrossBots = true,
       botSlug = null,
     }) {
       const trimmed = value.trim();
-      const sensitive = detectSensitiveMemoryContent(trimmed);
-      if (sensitive) {
-        throw new SensitiveMemoryBlockedError(sensitive);
+      const disallowed = detectDisallowedProfileFactReason(trimmed);
+      if (disallowed) {
+        throw new SensitiveMemoryBlockedError(disallowed);
       }
       const canonicalCategory = normalizeMemoryCategory(category);
       const effectivePinned =
         pinned ?? defaultPinnedForCategory(canonicalCategory);
       const normalizedKey = normalizeFactKey(key);
+      const validLearned = validIsoOrNull(learnedAt);
       const id = randomUUID();
       try {
         const sql = await readySql();
@@ -479,7 +528,7 @@ export function createPostgresMemoryStore(): MemoryStore {
           )
           VALUES (
             ${id}, ${userId}, ${canonicalCategory}, ${normalizedKey}, ${trimmed},
-            ${normalizeSource(source)}, ${effectivePinned}, now(), ${sharedAcrossBots}, ${botSlug}
+            ${normalizeSource(source)}, ${effectivePinned}, COALESCE(${validLearned}::timestamptz, now()), ${sharedAcrossBots}, ${botSlug}
           )
           ON CONFLICT ("userId", "key")
           DO UPDATE SET
@@ -487,6 +536,7 @@ export function createPostgresMemoryStore(): MemoryStore {
             "value" = EXCLUDED."value",
             "source" = EXCLUDED."source",
             "pinned" = EXCLUDED."pinned",
+            "learnedAt" = COALESCE(${validLearned}::timestamptz, "MemoryProfileFact"."learnedAt"),
             "sharedAcrossBots" = EXCLUDED."sharedAcrossBots",
             "botSlug" = EXCLUDED."botSlug",
             "updatedAt" = now()
@@ -503,8 +553,14 @@ export function createPostgresMemoryStore(): MemoryStore {
     async upsertProfileFactsBatch({ userId, source = "pasted", items }) {
       try {
         const existing = await this.listProfileFacts({ userId });
+        const replacingIds = new Set(
+          items
+            .map((i) => i.replaceFactId?.trim())
+            .filter((id): id is string => Boolean(id))
+        );
         const seenNorm = new Set(
           existing
+            .filter((f) => !replacingIds.has(f.id))
             .map((f) => normalizeMemoryComparisonText(f.value))
             .filter(Boolean)
         );
@@ -516,7 +572,7 @@ export function createPostgresMemoryStore(): MemoryStore {
           if (!trimmed) {
             continue;
           }
-          if (detectSensitiveMemoryContent(trimmed)) {
+          if (detectDisallowedProfileFactReason(trimmed)) {
             skippedSensitive += 1;
             continue;
           }
@@ -530,6 +586,23 @@ export function createPostgresMemoryStore(): MemoryStore {
           }
           seenNorm.add(norm);
           const canonicalCategory = normalizeMemoryCategory(item.category);
+          if (item.replaceFactId) {
+            const updatedExisting = await this.updateProfileFact({
+              userId,
+              id: item.replaceFactId,
+              category: canonicalCategory,
+              value: trimmed,
+              source: item.source ?? source,
+              pinned:
+                item.pinned ?? defaultPinnedForCategory(canonicalCategory),
+              learnedAt: item.learnedAt,
+              sharedAcrossBots: item.sharedAcrossBots ?? true,
+            });
+            if (updatedExisting) {
+              saved.push(updatedExisting);
+              continue;
+            }
+          }
           const created = await this.upsertProfileFact({
             userId,
             category: canonicalCategory,
@@ -537,6 +610,7 @@ export function createPostgresMemoryStore(): MemoryStore {
             value: trimmed,
             source: item.source ?? source,
             pinned: item.pinned ?? defaultPinnedForCategory(canonicalCategory),
+            learnedAt: item.learnedAt,
             sharedAcrossBots: item.sharedAcrossBots ?? true,
             botSlug: item.botSlug ?? null,
           });
@@ -555,17 +629,21 @@ export function createPostgresMemoryStore(): MemoryStore {
       id,
       category,
       value,
+      source,
       pinned,
+      learnedAt,
       sharedAcrossBots,
     }) {
       if (value !== undefined) {
-        const sensitive = detectSensitiveMemoryContent(value.trim());
-        if (sensitive) {
-          throw new SensitiveMemoryBlockedError(sensitive);
+        const disallowed = detectDisallowedProfileFactReason(value.trim());
+        if (disallowed) {
+          throw new SensitiveMemoryBlockedError(disallowed);
         }
       }
       const nextCategory = category ? normalizeMemoryCategory(category) : null;
       const trimmedValue = value !== undefined ? value.trim() : null;
+      const nextSource = source ? normalizeSource(source) : null;
+      const nextLearnedAt = validIsoOrNull(learnedAt);
       const nextKey =
         trimmedValue !== null ? deriveFactKey(trimmedValue) : null;
       try {
@@ -575,7 +653,9 @@ export function createPostgresMemoryStore(): MemoryStore {
           SET
             "category" = COALESCE(${nextCategory}, m."category"),
             "value" = COALESCE(${trimmedValue}, m."value"),
+            "source" = COALESCE(${nextSource}, m."source"),
             "pinned" = COALESCE(${pinned ?? null}, m."pinned"),
+            "learnedAt" = COALESCE(${nextLearnedAt}::timestamptz, m."learnedAt"),
             "sharedAcrossBots" = COALESCE(${sharedAcrossBots ?? null}, m."sharedAcrossBots"),
             "key" = CASE
               WHEN ${nextKey}::varchar IS NULL THEN m."key"

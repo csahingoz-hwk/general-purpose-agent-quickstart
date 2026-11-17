@@ -6,31 +6,42 @@ import {
   CheckIcon,
   ClipboardCopyIcon,
   DownloadIcon,
+  GitCompareArrowsIcon,
+  GitMergeIcon,
+  Loader2Icon,
   PencilIcon,
   PinIcon,
   PlusIcon,
   SearchIcon,
   SparklesIcon,
   Trash2Icon,
+  UploadIcon,
   UserCheckIcon,
   XIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { SubpageHeader } from "@/components/chat/subpage-header";
 import { toast } from "@/components/chat/toast";
 import {
   buildMemoriesExportMarkdown,
   defaultPinnedForCategory,
+  deriveFactKey,
   formatMemorySourceLabel,
+  IMPORT_MEMORY_SOURCES,
+  type ImportMemorySource,
+  inferImportSourceFromFileName,
   MEMORY_CATEGORY_LABELS,
-  type MemoryImportPreviewItem,
   normalizeMemoryCategory,
   ORDERED_MEMORY_CATEGORIES,
-  prepareMemoryImportPreview,
   type SensitiveMemoryReason,
   type SkippedSensitiveLine,
 } from "@/lib/memory/bulk-import";
+import type {
+  MergedMemoryPreviewItem,
+  MultiSourceMergeCounts,
+  MultiSourceMergeResult,
+} from "@/lib/memory/multi-source-merge";
 import type {
   CanonicalMemoryCategory,
   JournalEntry,
@@ -45,33 +56,72 @@ type MemoryApiResponse = {
   journalEntries: JournalEntry[];
 };
 
+type SourceSlotState = {
+  id: string;
+  source: ImportMemorySource;
+  rawText: string;
+  exportedAt: string;
+  fileName?: string;
+};
+
+const QUICK_ADD_SOURCES: readonly ImportMemorySource[] = [
+  "chatgpt",
+  "claude",
+  "gemini",
+  "grok_bot",
+] as const;
+
 const LABELS = {
   en: {
     title: "Memory",
     subtitle:
-      "Durable self-contained facts grouped by category (Rules & Preferences first). Pinned facts are always included; searchable facts are pulled in when relevant.",
+      "Durable single-sentence facts grouped by category (Rules & Preferences first). Pinned facts are always included; searchable facts are pulled in when relevant.",
     autoBadge: "Active in chat & voice",
-    pasteTitle: "Paste a list of facts",
+    pasteTitle: "Import & merge memories",
     pasteHint:
-      "Bullets, lines, or paragraphs are split into single-sentence facts. Passwords, card numbers, and street addresses are skipped automatically.",
-    pastePlaceholder:
-      "- Never use pay-per-use API models without asking first\n- Prefer concise comparison tables with clear takeaways\n- I live in London (Europe/London)\n- Daughter's name is Ece…",
-    previewBtn: "Preview before saving",
-    previewHeading: "Review extracted facts",
-    newSelected: "new selected",
+      "Paste or upload exports from ChatGPT, Claude, Gemini, or Grok Bot (JSON, Markdown, CSV, or bullets in English or Turkish). Duplicates are merged, conflicts keep the newest and flag choices, Korn Ferry entries keep only short role/region context, and passwords/cards/addresses are skipped.",
+    uploadFiles: "Upload exports",
+    addSource: "Add source",
+    exportDateOptional: "Export date (optional)",
+    removeSource: "Remove source",
+    pastePlaceholderBySource: {
+      chatgpt:
+        "Paste ChatGPT memory list or memories.json…\n- [2025-09-12] Uses Google AI Pro tier\n- Lives in London (Europe/London)",
+      claude:
+        "Paste Claude memory summary or Markdown…\n- [2026-11-01] Uses Google AI Ultra tier ($40/mo Cloud credit)\n- Works as MENA Finance Controller at Korn Ferry covering UAE, Saudi Arabia, and Turkey",
+      gemini:
+        "Paste Gemini Saved Info (EN or TR)…\n- Kızım Ece GCSE Tarih sınavına hazırlanıyor\n- Kahvemi sade ve şekersiz içerim",
+      grok_bot:
+        "Paste Grok Bot memory export…\n- Never use pay-per-use API models without asking first",
+      pasted:
+        "- Never use pay-per-use API models without asking first\n- Prefer concise comparison tables with clear takeaways\n- I live in London (Europe/London)\n- Daughter's name is Ece…",
+    } as Record<ImportMemorySource, string>,
+    previewBtnSingle: "Merge & preview",
+    mergingBtn: "Merging on Vertex…",
+    previewHeading: "Merged memory preview",
+    statNew: "new",
+    statMerged: "merged",
+    statConflicts: "conflicts",
+    statSensitive: "skipped as sensitive",
+    selectedReady: "ready to save",
     duplicatesSkipped: "already saved",
-    selectAllNew: "Select new",
+    selectAllNew: "Select active",
     clearSelection: "Clear",
     alreadySaved: "Already saved",
-    repeatInPaste: "Repeated line",
+    mergedPrefix: "Merged",
+    viewOriginals: "Merged lines",
+    conflictBadge: "Conflict · Newest kept",
+    newestBadge: "Newest",
+    olderBadge: "Older",
     sensitiveWarningTitle:
-      "Skipped sensitive lines — passwords, card numbers, and addresses are never stored in memory:",
+      "Skipped sensitive or restricted lines — never sent to the model or stored in memory:",
     sensitiveReasons: {
       password: "Password / secret",
       card_number: "Card number",
       address: "Street / postal address",
+      korn_ferry_data: "Korn Ferry data skipped (role/regions only)",
     } as Record<SensitiveMemoryReason, string>,
-    saveSelected: "Save selected",
+    approveOneTap: "Approve & save",
     saving: "Saving…",
     cancel: "Cancel",
     savedMemoriesTab: "Facts",
@@ -83,7 +133,7 @@ const LABELS = {
     downloadAll: "Download",
     downloadedAll: "Downloaded memory export.",
     emptyMemories:
-      "No memories saved yet. Paste a list above or say “remember this: …” in chat or voice.",
+      "No memories saved yet. Paste or upload exports above, or say “remember this: …” in chat or voice.",
     emptySearch: "No saved facts match your filter.",
     pinnedLabel: "Pinned",
     searchableLabel: "Searchable",
@@ -106,27 +156,51 @@ const LABELS = {
     subtitle:
       "Kategorilere ayrılmış tek cümlelik kalıcı bilgiler (Kurallar ve Tercihler ilk sırada). Sabitlenenler her zaman eklenir; aranabilir olanlar ilgili olduğunda çağrılır.",
     autoBadge: "Sohbet ve seste aktif",
-    pasteTitle: "Uzun bilgi listesi yapıştır",
+    pasteTitle: "Bellekleri içe aktar ve birleştir",
     pasteHint:
-      "Maddeler, satırlar veya paragraflar tek cümlelik bilgilere ayrılır. Şifreler, kart numaraları ve açık adresler uyarı gösterilerek atlanır.",
-    pastePlaceholder:
-      "- Onayım olmadan asla kullandıkça öde API modeli kullanma\n- Kısa ve net karşılaştırma tablolarını tercih ederim\n- Londra'da yaşıyorum (Europe/London)\n- Kızımın adı Ece…",
-    previewBtn: "Kaydetmeden önizle",
-    previewHeading: "Ayrıştırılan bilgileri kontrol et",
-    newSelected: "yeni seçili",
+      "ChatGPT, Claude, Gemini veya Grok Bot dışa aktarımlarını (JSON, Markdown, CSV veya Türkçe/İngilizce maddeler) yapıştırın ya da yükleyin. Benzerler birleştirilir, çakışmalarda en yenisi seçilip onayınıza sunulur, Korn Ferry için yalnızca kısa görev/bölge bilgisi tutulur, şifre/kart/adres satırları atlanır.",
+    uploadFiles: "Dosya yükle",
+    addSource: "Kaynak ekle",
+    exportDateOptional: "Tarih (isteğe bağlı)",
+    removeSource: "Kaynağı kaldır",
+    pastePlaceholderBySource: {
+      chatgpt:
+        "ChatGPT bellek listesini veya memories.json içeriğini yapıştırın…\n- [2025-09-12] Google AI Pro aboneliği kullanıyor\n- Londra'da yaşıyor (Europe/London)",
+      claude:
+        "Claude bellek özetini yapıştırın…\n- [2026-11-01] Google AI Ultra ($40/ay bulut kredisi) kullanıyor\n- Korn Ferry'de MENA Finans Kontrolörü olarak çalışıyor (BAE, Suudi Arabistan, Türkiye)",
+      gemini:
+        "Gemini Kayıtlı Bilgiler listesini yapıştırın…\n- Kızım Ece GCSE Tarih sınavına hazırlanıyor\n- Kahvemi sade ve şekersiz içerim",
+      grok_bot:
+        "Grok Bot bellek dışa aktarımını yapıştırın…\n- Onayım olmadan kullandıkça öde API modeli kullanma",
+      pasted:
+        "- Onayım olmadan asla kullandıkça öde API modeli kullanma\n- Kısa ve net karşılaştırma tablolarını tercih ederim\n- Londra'da yaşıyorum (Europe/London)\n- Kızımın adı Ece…",
+    } as Record<ImportMemorySource, string>,
+    previewBtnSingle: "Birleştir ve önizle",
+    mergingBtn: "Vertex ile birleştiriliyor…",
+    previewHeading: "Birleştirilmiş bellek önizlemesi",
+    statNew: "yeni",
+    statMerged: "birleştirilen",
+    statConflicts: "çakışma",
+    statSensitive: "hassas / atlanan",
+    selectedReady: "kaydedilecek",
     duplicatesSkipped: "zaten kayıtlı",
-    selectAllNew: "Yenileri seç",
+    selectAllNew: "Aktifleri seç",
     clearSelection: "Temizle",
     alreadySaved: "Zaten kayıtlı",
-    repeatInPaste: "Tekrarlanan satır",
+    mergedPrefix: "Birleştirildi",
+    viewOriginals: "Birleştirilen satırlar",
+    conflictBadge: "Çakışma · En yenisi seçili",
+    newestBadge: "En yeni",
+    olderBadge: "Eski",
     sensitiveWarningTitle:
-      "Hassas satırlar atlandı — şifreler, kart numaraları ve adresler bellekte saklanmaz:",
+      "Hassas veya kısıtlı satırlar atlandı — modele gönderilmez ve bellekte saklanmaz:",
     sensitiveReasons: {
       password: "Şifre / gizli anahtar",
       card_number: "Kart numarası",
       address: "Açık adres / posta kodu",
+      korn_ferry_data: "Korn Ferry verisi atlandı (yalnızca görev/bölge)",
     } as Record<SensitiveMemoryReason, string>,
-    saveSelected: "Seçilenleri kaydet",
+    approveOneTap: "Onayla ve kaydet",
     saving: "Kaydediliyor…",
     cancel: "Vazgeç",
     savedMemoriesTab: "Bilgiler",
@@ -138,7 +212,7 @@ const LABELS = {
     downloadAll: "İndir",
     downloadedAll: "Bellek dışa aktarımı indirildi.",
     emptyMemories:
-      "Henüz kayıtlı bilgi yok. Yukarıya liste yapıştırabilir veya sohbette “bunu hatırla: …” diyebilirsin.",
+      "Henüz kayıtlı bilgi yok. Yukarıdan dışa aktarım yapıştırıp yükleyebilir veya sohbette “bunu hatırla: …” diyebilirsin.",
     emptySearch: "Filtreyle eşleşen bilgi bulunamadı.",
     pinnedLabel: "Sabit",
     searchableLabel: "Aranabilir",
@@ -170,21 +244,61 @@ function formatLearnedDate(iso: string, lang: "en" | "tr"): string {
   }
 }
 
+function formatModelUsedBadge(
+  modelUsed: MultiSourceMergeResult["modelUsed"] | null
+): string | null {
+  if (modelUsed === "gemini-4-argon") {
+    return "Gemini 4 Argon · Vertex";
+  }
+  if (modelUsed === "gemini-4-hydrogen") {
+    return "Gemini 4 Hydrogen · Vertex";
+  }
+  return null;
+}
+
+let slotCounter = 1;
+function createSlot(
+  source: ImportMemorySource = "pasted",
+  rawText = "",
+  exportedAt = "",
+  fileName?: string
+): SourceSlotState {
+  return {
+    id: `slot_${slotCounter++}`,
+    source,
+    rawText,
+    exportedAt,
+    fileName,
+  };
+}
+
 export default function MemoryPage() {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [lang, setLang] = useState<"en" | "tr">("en");
   const [tab, setTab] = useState<"profile" | "journal">("profile");
   const [categoryFilter, setCategoryFilter] = useState<
     "all" | CanonicalMemoryCategory
   >("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [bulkText, setBulkText] = useState("");
+
+  // Multi-source import slots (starts with 1 clean slot; supports adding/uploading 3-4+ sources)
+  const [slots, setSlots] = useState<SourceSlotState[]>(() => [
+    { id: "slot_0", source: "pasted", rawText: "", exportedAt: "" },
+  ]);
+  const [merging, setMerging] = useState(false);
   const [previewItems, setPreviewItems] = useState<
-    MemoryImportPreviewItem[] | null
+    MergedMemoryPreviewItem[] | null
   >(null);
+  const [mergeCounts, setMergeCounts] = useState<MultiSourceMergeCounts | null>(
+    null
+  );
   const [skippedSensitive, setSkippedSensitive] = useState<
     SkippedSensitiveLine[]
   >([]);
+  const [mergeModelUsed, setMergeModelUsed] = useState<
+    MultiSourceMergeResult["modelUsed"] | null
+  >(null);
   const [submitting, setSubmitting] = useState(false);
 
   // Inline edit state
@@ -221,7 +335,6 @@ export default function MemoryPage() {
   const allFacts = data?.profileFacts ?? [];
   const allJournal = data?.journalEntries ?? [];
 
-  // Sort facts grouped in priority order (Rules & Preferences first, then newest learnedAt)
   const sortedFilteredFacts = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return allFacts
@@ -237,7 +350,8 @@ export default function MemoryPage() {
           fact.value.toLowerCase().includes(q) ||
           normCat.includes(q) ||
           catLabels[normCat].toLowerCase().includes(q) ||
-          fact.source.toLowerCase().includes(q)
+          fact.source.toLowerCase().includes(q) ||
+          formatMemorySourceLabel(fact.source, lang).toLowerCase().includes(q)
         );
       })
       .sort((a, b) => {
@@ -257,7 +371,7 @@ export default function MemoryPage() {
           a.learnedAt ?? a.updatedAt
         );
       });
-  }, [allFacts, categoryFilter, searchQuery, catLabels]);
+  }, [allFacts, categoryFilter, searchQuery, catLabels, lang]);
 
   const filteredJournal = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -272,14 +386,138 @@ export default function MemoryPage() {
     );
   }, [allJournal, searchQuery]);
 
-  function handleBuildPreview(event: React.FormEvent) {
-    event.preventDefault();
-    if (!bulkText.trim()) {
+  function clearPreviewState() {
+    if (
+      previewItems !== null ||
+      mergeCounts !== null ||
+      skippedSensitive.length > 0
+    ) {
+      setPreviewItems(null);
+      setMergeCounts(null);
+      setSkippedSensitive([]);
+      setMergeModelUsed(null);
+    }
+  }
+
+  function handleQuickAddSource(source: ImportMemorySource) {
+    clearPreviewState();
+    setSlots((prev) => {
+      if (
+        prev.length === 1 &&
+        !prev[0]?.rawText.trim() &&
+        prev[0]?.source === "pasted"
+      ) {
+        return [{ ...(prev[0] as SourceSlotState), source }];
+      }
+      if (prev.length >= 10) {
+        return prev;
+      }
+      return [...prev, createSlot(source)];
+    });
+  }
+
+  function handleUpdateSlot(
+    slotId: string,
+    patch: Partial<Omit<SourceSlotState, "id">>
+  ) {
+    clearPreviewState();
+    setSlots((prev) =>
+      prev.map((slot) => (slot.id === slotId ? { ...slot, ...patch } : slot))
+    );
+  }
+
+  function handleRemoveSlot(slotId: string) {
+    clearPreviewState();
+    setSlots((prev) => {
+      if (prev.length <= 1) {
+        return [
+          { id: "slot_0", source: "pasted", rawText: "", exportedAt: "" },
+        ];
+      }
+      return prev.filter((slot) => slot.id !== slotId);
+    });
+  }
+
+  async function handleFilesSelected(
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const fileList = event.target.files;
+    if (!fileList || fileList.length === 0) {
       return;
     }
-    const result = prepareMemoryImportPreview(bulkText, allFacts);
-    setSkippedSensitive(result.skippedSensitive);
-    setPreviewItems(result.items);
+    clearPreviewState();
+    const files = Array.from(fileList).slice(0, 8);
+    const loadedSlots: SourceSlotState[] = [];
+    for (const file of files) {
+      try {
+        const text = (await file.text()).slice(0, 120_000);
+        if (!text.trim()) {
+          continue;
+        }
+        const source = inferImportSourceFromFileName(file.name);
+        const exportedAt = file.lastModified
+          ? new Date(file.lastModified).toISOString().slice(0, 10)
+          : "";
+        loadedSlots.push(createSlot(source, text, exportedAt, file.name));
+      } catch {
+        /* ignore unreadable file */
+      }
+    }
+    event.target.value = "";
+    if (loadedSlots.length === 0) {
+      return;
+    }
+    setSlots((prev) => {
+      const nonEmptyPrev = prev.filter((s) => s.rawText.trim().length > 0);
+      return [...nonEmptyPrev, ...loadedSlots].slice(0, 10);
+    });
+  }
+
+  const hasAnySourceText = slots.some((s) => s.rawText.trim().length > 0);
+
+  async function handleBuildPreview(event: React.FormEvent) {
+    event.preventDefault();
+    const nonEmpty = slots.filter((s) => s.rawText.trim().length > 0);
+    if (nonEmpty.length === 0) {
+      return;
+    }
+    setMerging(true);
+    try {
+      const response = await fetch(`${basePath}/api/memory/merge`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sources: nonEmpty.map((s) => ({
+            id: s.id,
+            source: s.source,
+            rawText: s.rawText,
+            fileName: s.fileName,
+            exportedAt: s.exportedAt || undefined,
+          })),
+        }),
+      });
+      const resJson = (await response.json().catch(() => ({}))) as Partial<
+        MultiSourceMergeResult & { error?: string }
+      >;
+      if (!response.ok || !Array.isArray(resJson.items) || !resJson.counts) {
+        throw new Error(
+          resJson.error ??
+            "Could not merge memory exports right now. Please try again."
+        );
+      }
+      setPreviewItems(resJson.items);
+      setMergeCounts(resJson.counts);
+      setSkippedSensitive(resJson.skippedSensitive ?? []);
+      setMergeModelUsed(resJson.modelUsed ?? null);
+    } catch (err) {
+      toast({
+        type: "error",
+        description:
+          err instanceof Error ? err.message : "Could not merge memory exports",
+      });
+    } finally {
+      setMerging(false);
+    }
   }
 
   function togglePreviewItem(itemId: string) {
@@ -321,6 +559,28 @@ export default function MemoryPage() {
     );
   }
 
+  function selectConflictOption(itemId: string, optionIndex: number) {
+    setPreviewItems((prev) =>
+      prev
+        ? prev.map((item) => {
+            if (item.id !== itemId || !item.conflictOptions?.[optionIndex]) {
+              return item;
+            }
+            const chosen = item.conflictOptions[optionIndex];
+            return {
+              ...item,
+              selectedOptionIndex: optionIndex,
+              value: chosen.fact,
+              key: deriveFactKey(chosen.fact),
+              source: chosen.source,
+              learnedAt: chosen.observedAt,
+              checked: true,
+            };
+          })
+        : null
+    );
+  }
+
   async function handleConfirmBatchSave() {
     if (!previewItems) {
       return;
@@ -328,6 +588,7 @@ export default function MemoryPage() {
     const selected = previewItems.filter((item) => item.checked);
     if (selected.length === 0) {
       setPreviewItems(null);
+      setMergeCounts(null);
       setSkippedSensitive([]);
       return;
     }
@@ -343,8 +604,10 @@ export default function MemoryPage() {
             category: item.category,
             key: item.key,
             value: item.value,
-            source: "pasted",
+            source: item.source,
             pinned: item.pinned,
+            learnedAt: item.learnedAt ?? undefined,
+            replaceFactId: item.replaceFactId,
             sharedAcrossBots: true,
           })),
         }),
@@ -354,9 +617,13 @@ export default function MemoryPage() {
         throw new Error(body.error ?? "Could not save memories");
       }
       const resJson = (await response.json()) as { savedCount?: number };
-      setBulkText("");
+      setSlots([
+        { id: "slot_0", source: "pasted", rawText: "", exportedAt: "" },
+      ]);
       setPreviewItems(null);
+      setMergeCounts(null);
       setSkippedSensitive([]);
+      setMergeModelUsed(null);
       await mutate();
       toast({
         type: "success",
@@ -520,8 +787,9 @@ export default function MemoryPage() {
 
   const selectedPreviewCount =
     previewItems?.filter((item) => item.checked).length ?? 0;
-  const duplicatePreviewCount =
-    previewItems?.filter((item) => item.isDuplicate).length ?? 0;
+  const alreadySavedPreviewCount =
+    previewItems?.filter((item) => item.status === "already_saved").length ?? 0;
+  const modelBadge = formatModelUsedBadge(mergeModelUsed);
 
   return (
     <main className="h-dvh w-full overflow-x-hidden overflow-y-auto bg-background">
@@ -582,32 +850,148 @@ export default function MemoryPage() {
           </div>
         )}
 
-        {/* Bulk Paste & De-duplicated Preview Box */}
+        {/* Multi-Source Import & One-Tap Vertex Merge Card */}
         <section className="rounded-2xl border border-[color:var(--hairline)] bg-card p-4">
           <form className="space-y-3" onSubmit={handleBuildPreview}>
             <div className="space-y-1">
-              <h2 className="font-semibold text-[15px] text-foreground">
-                {t.pasteTitle}
-              </h2>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="font-semibold text-[15px] text-foreground">
+                  {t.pasteTitle}
+                </h2>
+                <div>
+                  <input
+                    accept=".txt,.md,.markdown,.json,.csv,text/plain,application/json,text/csv"
+                    className="sr-only"
+                    data-testid="memory-upload-files-input"
+                    multiple
+                    onChange={handleFilesSelected}
+                    ref={fileInputRef}
+                    type="file"
+                  />
+                  <button
+                    className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-background px-3 font-medium text-foreground text-xs transition-colors hover:bg-muted"
+                    data-testid="memory-upload-files-button"
+                    onClick={() => fileInputRef.current?.click()}
+                    type="button"
+                  >
+                    <UploadIcon className="size-3.5" />
+                    <span>{t.uploadFiles}</span>
+                  </button>
+                </div>
+              </div>
               <p className="text-muted-foreground text-xs leading-relaxed">
                 {t.pasteHint}
               </p>
             </div>
 
-            <textarea
-              aria-label={t.pasteTitle}
-              className="min-h-36 w-full rounded-xl border border-[color:var(--hairline)] bg-background p-3 text-[16px] text-foreground leading-relaxed placeholder:text-muted-foreground"
-              data-testid="memory-bulk-textarea"
-              onChange={(e) => {
-                setBulkText(e.target.value);
-                if (previewItems || skippedSensitive.length > 0) {
-                  setPreviewItems(null);
-                  setSkippedSensitive([]);
-                }
-              }}
-              placeholder={t.pastePlaceholder}
-              value={bulkText}
-            />
+            {/* Quick-add source pills */}
+            <div className="-mx-1 flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5 [scrollbar-width:none]">
+              {QUICK_ADD_SOURCES.map((src) => (
+                <button
+                  className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-full border border-[color:var(--hairline)] bg-background px-2.5 font-medium text-foreground text-xs transition-colors hover:bg-muted"
+                  data-testid={`memory-add-source-${src}`}
+                  key={src}
+                  onClick={() => handleQuickAddSource(src)}
+                  type="button"
+                >
+                  <PlusIcon className="size-3 text-muted-foreground" />
+                  <span>{formatMemorySourceLabel(src, lang)}</span>
+                </button>
+              ))}
+              {slots.length < 10 && (
+                <button
+                  className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded-full border border-dashed border-[color:var(--hairline)] px-2.5 text-muted-foreground text-xs transition-colors hover:text-foreground"
+                  data-testid="memory-add-source-other"
+                  onClick={() =>
+                    setSlots((prev) => [...prev, createSlot("pasted")])
+                  }
+                  type="button"
+                >
+                  <PlusIcon className="size-3" />
+                  <span>{t.addSource}</span>
+                </button>
+              )}
+            </div>
+
+            {/* Source Slots */}
+            <div className="space-y-2.5">
+              {slots.map((slot, idx) => (
+                <div
+                  className="space-y-2 rounded-xl border border-[color:var(--hairline)] bg-background p-2.5"
+                  data-testid={`memory-source-slot-${idx}`}
+                  key={slot.id}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      <select
+                        aria-label="Export source"
+                        className="min-h-9 rounded-full border border-[color:var(--hairline)] bg-card px-3 font-medium text-[14px] text-foreground"
+                        data-testid={`memory-source-select-${idx}`}
+                        onChange={(e) =>
+                          handleUpdateSlot(slot.id, {
+                            source: e.target.value as ImportMemorySource,
+                          })
+                        }
+                        value={slot.source}
+                      >
+                        {IMPORT_MEMORY_SOURCES.map((src) => (
+                          <option key={src} value={src}>
+                            {formatMemorySourceLabel(src, lang)}
+                          </option>
+                        ))}
+                      </select>
+
+                      <input
+                        aria-label={t.exportDateOptional}
+                        className="min-h-9 rounded-full border border-[color:var(--hairline)] bg-card px-2.5 text-[13px] text-muted-foreground"
+                        data-testid={`memory-source-date-${idx}`}
+                        onChange={(e) =>
+                          handleUpdateSlot(slot.id, {
+                            exportedAt: e.target.value,
+                          })
+                        }
+                        type="date"
+                        value={slot.exportedAt}
+                      />
+
+                      {slot.fileName && (
+                        <span className="max-w-40 truncate rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                          {slot.fileName}
+                        </span>
+                      )}
+                    </div>
+
+                    {slots.length > 1 && (
+                      <button
+                        aria-label={t.removeSource}
+                        className="inline-flex size-8 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+                        data-testid={`memory-source-remove-${idx}`}
+                        onClick={() => handleRemoveSlot(slot.id)}
+                        type="button"
+                      >
+                        <XIcon className="size-4" />
+                      </button>
+                    )}
+                  </div>
+
+                  <textarea
+                    aria-label={`${formatMemorySourceLabel(slot.source, lang)} export`}
+                    className="min-h-28 w-full rounded-lg border border-[color:var(--hairline)] bg-card/50 p-2.5 text-[16px] text-foreground leading-relaxed placeholder:text-muted-foreground"
+                    data-slot-index={idx}
+                    data-testid={
+                      idx === 0
+                        ? "memory-bulk-textarea"
+                        : `memory-source-textarea-${idx}`
+                    }
+                    onChange={(e) =>
+                      handleUpdateSlot(slot.id, { rawText: e.target.value })
+                    }
+                    placeholder={t.pastePlaceholderBySource[slot.source]}
+                    value={slot.rawText}
+                  />
+                </div>
+              ))}
+            </div>
 
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="flex items-center gap-1.5 text-muted-foreground text-xs">
@@ -618,14 +1002,24 @@ export default function MemoryPage() {
                 className="inline-flex min-h-11 shrink-0 items-center gap-1.5 rounded-full bg-primary px-4 font-medium text-primary-foreground text-sm transition-colors hover:bg-primary/90 disabled:opacity-50"
                 data-testid="memory-preview-button"
                 disabled={
-                  !bulkText.trim() ||
+                  !hasAnySourceText ||
+                  merging ||
                   submitting ||
                   data?.status === "setup_required"
                 }
                 type="submit"
               >
-                <PlusIcon className="size-4" />
-                {t.previewBtn}
+                {merging ? (
+                  <>
+                    <Loader2Icon className="size-4 animate-spin" />
+                    <span>{t.mergingBtn}</span>
+                  </>
+                ) : (
+                  <>
+                    <GitMergeIcon className="size-4" />
+                    <span>{t.previewBtnSingle}</span>
+                  </>
+                )}
               </button>
             </div>
           </form>
@@ -635,6 +1029,120 @@ export default function MemoryPage() {
               className="mt-4 space-y-3 border-[color:var(--hairline)] border-t pt-4"
               data-testid="memory-import-preview"
             >
+              {/* Header + 4-stat summary + One-tap Approve button */}
+              <div className="space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="space-y-0.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-semibold text-foreground text-sm">
+                        {t.previewHeading}
+                      </h3>
+                      {modelBadge && (
+                        <span
+                          className="rounded-full border border-[color:var(--hairline)] bg-background px-2 py-0.5 text-[11px] text-muted-foreground"
+                          data-testid="memory-merge-model"
+                        >
+                          {modelBadge}
+                        </span>
+                      )}
+                    </div>
+                    <p
+                      className="text-muted-foreground text-xs tabular-nums"
+                      data-testid="memory-preview-summary"
+                    >
+                      {selectedPreviewCount} {t.selectedReady}
+                      {alreadySavedPreviewCount > 0
+                        ? ` · ${alreadySavedPreviewCount} ${t.duplicatesSkipped}`
+                        : ""}
+                    </p>
+                  </div>
+
+                  {/* One-tap Approve CTA at top for instant iPhone approval */}
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      className="inline-flex min-h-10 items-center rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-foreground text-xs hover:bg-muted"
+                      onClick={() => {
+                        setPreviewItems(null);
+                        setMergeCounts(null);
+                        setSkippedSensitive([]);
+                        setMergeModelUsed(null);
+                      }}
+                      type="button"
+                    >
+                      {t.cancel}
+                    </button>
+                    {previewItems && previewItems.length > 0 && (
+                      <button
+                        className="inline-flex min-h-10 items-center gap-1.5 rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs disabled:opacity-50"
+                        data-testid="memory-confirm-save"
+                        disabled={selectedPreviewCount === 0 || submitting}
+                        onClick={handleConfirmBatchSave}
+                        type="button"
+                      >
+                        <CheckIcon className="size-3.5" />
+                        <span>
+                          {submitting
+                            ? t.saving
+                            : `${t.approveOneTap} (${selectedPreviewCount})`}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {mergeCounts && (
+                  <div
+                    className="grid grid-cols-2 gap-2 sm:grid-cols-4"
+                    data-testid="memory-merge-stats"
+                  >
+                    <div
+                      className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] px-3 py-2"
+                      data-testid="memory-stat-new"
+                    >
+                      <div className="font-semibold text-base text-emerald-700 tabular-nums dark:text-emerald-300">
+                        {mergeCounts.newCount}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {t.statNew}
+                      </div>
+                    </div>
+                    <div
+                      className="rounded-xl border border-sky-500/25 bg-sky-500/[0.06] px-3 py-2"
+                      data-testid="memory-stat-merged"
+                    >
+                      <div className="font-semibold text-base text-sky-700 tabular-nums dark:text-sky-300">
+                        {mergeCounts.mergedCount}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {t.statMerged}
+                      </div>
+                    </div>
+                    <div
+                      className="rounded-xl border border-amber-500/30 bg-amber-500/[0.07] px-3 py-2"
+                      data-testid="memory-stat-conflicts"
+                    >
+                      <div className="font-semibold text-amber-800 text-base tabular-nums dark:text-amber-300">
+                        {mergeCounts.conflictCount}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {t.statConflicts}
+                      </div>
+                    </div>
+                    <div
+                      className="rounded-xl border border-rose-500/25 bg-rose-500/[0.06] px-3 py-2"
+                      data-testid="memory-stat-sensitive"
+                    >
+                      <div className="font-semibold text-base text-rose-700 tabular-nums dark:text-rose-300">
+                        {mergeCounts.skippedSensitiveCount}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {t.statSensitive}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {skippedSensitive.length > 0 && (
                 <div
                   className="space-y-2 rounded-xl border border-amber-500/35 bg-amber-500/[0.08] p-3 text-xs"
@@ -649,7 +1157,7 @@ export default function MemoryPage() {
                   <ul className="space-y-1 pl-6 text-foreground/85">
                     {skippedSensitive.map((skip) => (
                       <li className="break-words" key={skip.id}>
-                        <span className="mr-1.5 rounded-full bg-amber-500/20 px-2 py-0.5 font-medium text-[11px] text-amber-900 dark:text-amber-200">
+                        <span className="mr-1.5 inline-block rounded-full bg-amber-500/20 px-2 py-0.5 font-medium text-[11px] text-amber-900 dark:text-amber-200">
                           {t.sensitiveReasons[skip.reason]}
                         </span>
                         <span className="text-muted-foreground">
@@ -663,164 +1171,257 @@ export default function MemoryPage() {
 
               {previewItems && previewItems.length > 0 && (
                 <>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <h3 className="font-semibold text-foreground text-sm">
-                        {t.previewHeading}
-                      </h3>
-                      <p
-                        className="text-muted-foreground text-xs tabular-nums"
-                        data-testid="memory-preview-summary"
-                      >
-                        {selectedPreviewCount} {t.newSelected}
-                        {duplicatePreviewCount > 0
-                          ? ` · ${duplicatePreviewCount} ${t.duplicatesSkipped}`
-                          : ""}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-1.5 text-xs">
-                      <button
-                        className="min-h-9 rounded-full border border-[color:var(--hairline)] bg-background px-3 font-medium text-foreground hover:bg-muted"
-                        onClick={() =>
-                          setPreviewItems((prev) =>
-                            prev
-                              ? prev.map((i) => ({
-                                  ...i,
-                                  checked: !i.isDuplicate,
-                                }))
-                              : null
-                          )
-                        }
-                        type="button"
-                      >
-                        {t.selectAllNew}
-                      </button>
-                      <button
-                        className="min-h-9 rounded-full border border-[color:var(--hairline)] bg-background px-3 text-muted-foreground hover:bg-muted hover:text-foreground"
-                        onClick={() =>
-                          setPreviewItems((prev) =>
-                            prev
-                              ? prev.map((i) => ({ ...i, checked: false }))
-                              : null
-                          )
-                        }
-                        type="button"
-                      >
-                        {t.clearSelection}
-                      </button>
-                    </div>
+                  <div className="flex items-center justify-end gap-1.5 text-xs">
+                    <button
+                      className="min-h-8 rounded-full border border-[color:var(--hairline)] bg-background px-3 font-medium text-foreground hover:bg-muted"
+                      onClick={() =>
+                        setPreviewItems((prev) =>
+                          prev
+                            ? prev.map((i) => ({
+                                ...i,
+                                checked: i.status !== "already_saved",
+                              }))
+                            : null
+                        )
+                      }
+                      type="button"
+                    >
+                      {t.selectAllNew}
+                    </button>
+                    <button
+                      className="min-h-8 rounded-full border border-[color:var(--hairline)] bg-background px-3 text-muted-foreground hover:bg-muted hover:text-foreground"
+                      onClick={() =>
+                        setPreviewItems((prev) =>
+                          prev
+                            ? prev.map((i) => ({ ...i, checked: false }))
+                            : null
+                        )
+                      }
+                      type="button"
+                    >
+                      {t.clearSelection}
+                    </button>
                   </div>
 
-                  <div className="max-h-80 divide-y divide-[color:var(--hairline)] overflow-y-auto rounded-xl border border-[color:var(--hairline)] bg-background">
-                    {previewItems.map((item) => (
-                      <div
-                        className={cn(
-                          "flex items-start gap-3 px-3 py-2.5 text-sm",
-                          item.isDuplicate && !item.checked && "opacity-60"
-                        )}
-                        data-testid="memory-preview-item"
-                        key={item.id}
-                      >
-                        <input
-                          aria-label={item.value}
-                          checked={item.checked}
-                          className="mt-1 size-4 shrink-0 cursor-pointer accent-primary"
-                          data-testid="memory-preview-checkbox"
-                          onChange={() => togglePreviewItem(item.id)}
-                          type="checkbox"
-                        />
-                        <div className="min-w-0 flex-1 space-y-1.5">
-                          <p className="break-words text-[14px] text-foreground leading-snug">
-                            {item.value}
-                          </p>
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <select
-                              aria-label="Category"
-                              className="min-h-8 rounded-full border border-[color:var(--hairline)] bg-card px-2.5 text-[12px] text-foreground"
-                              data-testid="memory-preview-category"
-                              onChange={(e) =>
-                                changePreviewCategory(
-                                  item.id,
-                                  e.target.value as CanonicalMemoryCategory
-                                )
-                              }
-                              value={item.category}
-                            >
-                              {ORDERED_MEMORY_CATEGORIES.map((cat) => (
-                                <option key={cat} value={cat}>
-                                  {catLabels[cat]}
-                                </option>
-                              ))}
-                            </select>
+                  <div className="max-h-96 divide-y divide-[color:var(--hairline)] overflow-y-auto rounded-xl border border-[color:var(--hairline)] bg-background">
+                    {previewItems.map((item) => {
+                      const isConflict =
+                        item.status === "conflict" &&
+                        item.conflictOptions &&
+                        item.conflictOptions.length >= 2;
+                      return (
+                        <div
+                          className={cn(
+                            "flex items-start gap-3 px-3 py-3 text-sm",
+                            item.status === "already_saved" &&
+                              !item.checked &&
+                              "opacity-60",
+                            isConflict && "bg-amber-500/[0.04]"
+                          )}
+                          data-testid={
+                            isConflict
+                              ? "memory-conflict-item"
+                              : "memory-preview-item"
+                          }
+                          key={item.id}
+                        >
+                          <input
+                            aria-label={item.value}
+                            checked={item.checked}
+                            className="mt-1 size-4 shrink-0 cursor-pointer accent-primary"
+                            data-testid="memory-preview-checkbox"
+                            onChange={() => togglePreviewItem(item.id)}
+                            type="checkbox"
+                          />
+                          <div className="min-w-0 flex-1 space-y-2">
+                            {isConflict ? (
+                              <div className="space-y-2">
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <span
+                                    className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2.5 py-0.5 font-medium text-[11px] text-amber-900 dark:text-amber-200"
+                                    data-testid="memory-conflict-badge"
+                                  >
+                                    <GitCompareArrowsIcon className="size-3" />
+                                    <span>{t.conflictBadge}</span>
+                                  </span>
+                                  {item.conflictTopic && (
+                                    <span className="text-muted-foreground text-xs">
+                                      {item.conflictTopic}
+                                    </span>
+                                  )}
+                                </div>
 
-                            <button
-                              className={cn(
-                                "inline-flex min-h-8 items-center gap-1 rounded-full border px-2.5 font-medium text-[11px] transition-colors",
-                                item.pinned
-                                  ? "border-primary/30 bg-primary/10 text-primary"
-                                  : "border-[color:var(--hairline)] bg-card text-muted-foreground hover:text-foreground"
-                              )}
-                              data-testid="memory-preview-pin"
-                              onClick={() => togglePreviewPinned(item.id)}
-                              type="button"
-                            >
-                              {item.pinned ? (
-                                <>
-                                  <PinIcon className="size-3" />
-                                  {t.pinnedLabel}
-                                </>
-                              ) : (
-                                <>
-                                  <SearchIcon className="size-3" />
-                                  {t.searchableLabel}
-                                </>
-                              )}
-                            </button>
-
-                            {item.isDuplicate && (
-                              <span
-                                className="rounded-full bg-amber-500/15 px-2 py-0.5 font-medium text-[11px] text-amber-800 dark:text-amber-300"
-                                data-testid="memory-duplicate-badge"
-                              >
-                                {item.duplicateReason === "paste_repeat"
-                                  ? t.repeatInPaste
-                                  : t.alreadySaved}
-                              </span>
+                                <div className="space-y-1.5">
+                                  {item.conflictOptions?.map((opt, optIdx) => {
+                                    const selected =
+                                      (item.selectedOptionIndex ?? 0) ===
+                                      optIdx;
+                                    return (
+                                      <button
+                                        className={cn(
+                                          "flex min-h-11 w-full items-start gap-2.5 rounded-xl border p-2.5 text-left transition-colors",
+                                          selected
+                                            ? "border-primary/45 bg-primary/[0.06]"
+                                            : "border-[color:var(--hairline)] bg-card/60 hover:bg-muted/60"
+                                        )}
+                                        data-testid="memory-conflict-option"
+                                        key={`${item.id}_opt_${optIdx}`}
+                                        onClick={() =>
+                                          selectConflictOption(item.id, optIdx)
+                                        }
+                                        type="button"
+                                      >
+                                        <span
+                                          className={cn(
+                                            "mt-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full border",
+                                            selected
+                                              ? "border-primary bg-primary text-primary-foreground"
+                                              : "border-muted-foreground/40"
+                                          )}
+                                        >
+                                          {selected && (
+                                            <CheckIcon className="size-2.5" />
+                                          )}
+                                        </span>
+                                        <span className="min-w-0 flex-1 space-y-1">
+                                          <span className="block break-words text-[13.5px] text-foreground leading-snug">
+                                            {opt.fact}
+                                          </span>
+                                          <span className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                                            <span
+                                              className={cn(
+                                                "rounded-full px-2 py-0.5 font-medium",
+                                                opt.isNewest
+                                                  ? "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300"
+                                                  : "bg-muted text-muted-foreground"
+                                              )}
+                                            >
+                                              {opt.isNewest
+                                                ? t.newestBadge
+                                                : t.olderBadge}
+                                            </span>
+                                            <span className="rounded-full border border-[color:var(--hairline)] px-2 py-0.5 text-muted-foreground">
+                                              {formatMemorySourceLabel(
+                                                opt.source,
+                                                lang
+                                              )}
+                                            </span>
+                                            {opt.observedAt && (
+                                              <span className="text-muted-foreground tabular-nums">
+                                                {opt.observedAt.slice(0, 10)}
+                                              </span>
+                                            )}
+                                          </span>
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ) : (
+                              <p className="break-words text-[14px] text-foreground leading-snug">
+                                {item.value}
+                              </p>
                             )}
+
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <select
+                                aria-label="Category"
+                                className="min-h-8 rounded-full border border-[color:var(--hairline)] bg-card px-2.5 text-[12px] text-foreground"
+                                data-testid="memory-preview-category"
+                                onChange={(e) =>
+                                  changePreviewCategory(
+                                    item.id,
+                                    e.target.value as CanonicalMemoryCategory
+                                  )
+                                }
+                                value={item.category}
+                              >
+                                {ORDERED_MEMORY_CATEGORIES.map((cat) => (
+                                  <option key={cat} value={cat}>
+                                    {catLabels[cat]}
+                                  </option>
+                                ))}
+                              </select>
+
+                              <button
+                                className={cn(
+                                  "inline-flex min-h-8 items-center gap-1 rounded-full border px-2.5 font-medium text-[11px] transition-colors",
+                                  item.pinned
+                                    ? "border-primary/30 bg-primary/10 text-primary"
+                                    : "border-[color:var(--hairline)] bg-card text-muted-foreground hover:text-foreground"
+                                )}
+                                data-testid="memory-preview-pin"
+                                onClick={() => togglePreviewPinned(item.id)}
+                                type="button"
+                              >
+                                {item.pinned ? (
+                                  <>
+                                    <PinIcon className="size-3" />
+                                    {t.pinnedLabel}
+                                  </>
+                                ) : (
+                                  <>
+                                    <SearchIcon className="size-3" />
+                                    {t.searchableLabel}
+                                  </>
+                                )}
+                              </button>
+
+                              {item.status === "merged" ? (
+                                <span
+                                  className="inline-flex items-center gap-1 rounded-full bg-sky-500/15 px-2 py-0.5 font-medium text-[11px] text-sky-800 dark:text-sky-300"
+                                  data-testid="memory-merged-badge"
+                                >
+                                  <GitMergeIcon className="size-3" />
+                                  <span>
+                                    {t.mergedPrefix} ·{" "}
+                                    {formatMemorySourceLabel(item.source, lang)}
+                                  </span>
+                                </span>
+                              ) : (
+                                <span className="rounded-full border border-[color:var(--hairline)] px-2 py-0.5 text-[11px] text-muted-foreground">
+                                  {formatMemorySourceLabel(item.source, lang)}
+                                </span>
+                              )}
+
+                              {item.status === "already_saved" && (
+                                <span
+                                  className="rounded-full bg-amber-500/15 px-2 py-0.5 font-medium text-[11px] text-amber-800 dark:text-amber-300"
+                                  data-testid="memory-duplicate-badge"
+                                >
+                                  {t.alreadySaved}
+                                </span>
+                              )}
+                            </div>
+
+                            {item.status === "merged" &&
+                              item.mergedOriginals &&
+                              item.mergedOriginals.length >= 2 && (
+                                <details className="text-muted-foreground text-xs">
+                                  <summary className="cursor-pointer select-none hover:text-foreground">
+                                    {t.viewOriginals} (
+                                    {item.mergedOriginals.length})
+                                  </summary>
+                                  <ul className="mt-1 list-disc space-y-0.5 pl-4 text-[11.5px]">
+                                    {item.mergedOriginals.map((orig, oIdx) => (
+                                      <li
+                                        className="break-words"
+                                        key={`${item.id}_orig_${oIdx}`}
+                                      >
+                                        {orig}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </details>
+                              )}
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </>
               )}
-
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <button
-                  className="inline-flex min-h-11 items-center rounded-full border border-[color:var(--hairline)] bg-background px-4 font-medium text-foreground text-sm hover:bg-muted"
-                  onClick={() => {
-                    setPreviewItems(null);
-                    setSkippedSensitive([]);
-                  }}
-                  type="button"
-                >
-                  {t.cancel}
-                </button>
-                {previewItems && previewItems.length > 0 && (
-                  <button
-                    className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-5 font-medium text-primary-foreground text-sm disabled:opacity-50"
-                    data-testid="memory-confirm-save"
-                    disabled={selectedPreviewCount === 0 || submitting}
-                    onClick={handleConfirmBatchSave}
-                    type="button"
-                  >
-                    <CheckIcon className="size-4" />
-                    {submitting
-                      ? t.saving
-                      : `${t.saveSelected} (${selectedPreviewCount})`}
-                  </button>
-                )}
-              </div>
             </div>
           )}
         </section>

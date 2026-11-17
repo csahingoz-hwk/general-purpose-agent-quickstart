@@ -67,9 +67,13 @@ export function SavedMemoryCard({
                 : "Not saved to memory"}
             </span>
             <p className="break-words text-[13px] text-foreground/90 leading-snug">
-              {locale === "tr"
-                ? "Şifreler, kart numaraları ve açık adresler güvenlik nedeniyle bellekte saklanmaz."
-                : "Passwords, card numbers, and street addresses are never stored in memory."}
+              {parsed.reason === "korn_ferry_data"
+                ? locale === "tr"
+                  ? "Korn Ferry bilgileri yalnızca kısa görev ve bölge bağlamı olarak saklanır; iç veriler ve belgeler kaydedilmez."
+                  : "Korn Ferry facts are stored only as short role and region context lines — never internal data or documents."
+                : locale === "tr"
+                  ? "Şifreler, kart numaraları ve açık adresler güvenlik nedeniyle bellekte saklanmaz."
+                  : "Passwords, card numbers, and street addresses are never stored in memory."}
             </p>
           </div>
         </div>

@@ -7,6 +7,7 @@ import type {
   LanguageModelV4Usage,
 } from "@ai-sdk/provider";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
+import { isAllowedShortKornFerryContextFact } from "@/lib/memory/bulk-import";
 import { type VertexModelId, WEB_SEARCH_TOOL_ID } from "./routing/catalog";
 import { ModelFailure } from "./routing/policy";
 import { getVertexProjectId, getVertexWifAccessToken } from "./vertex-auth";
@@ -57,16 +58,71 @@ type VertexResponsePayload = {
   };
 };
 
+const OWNER_MEMORY_HEADER =
+  "Owner durable memory (self-contained facts; Rules and Preferences take priority):";
+const OWNER_MEMORY_SECTION_HEADING_RE =
+  /^### (?:Rules|Preferences|About me|Family|Work|Projects)$/;
+
+function systemPromptContainsRestrictedWorkData(
+  systemContent: string
+): boolean {
+  if (!containsRestrictedWorkData(systemContent)) {
+    return false;
+  }
+  const lines = systemContent.split(/\r?\n/);
+  let inOwnerMemorySection = false;
+  for (const rawLine of lines) {
+    const trimmed = rawLine.trim();
+    if (!trimmed) {
+      continue;
+    }
+    if (trimmed === OWNER_MEMORY_HEADER) {
+      inOwnerMemorySection = true;
+      continue;
+    }
+    if (inOwnerMemorySection) {
+      if (OWNER_MEMORY_SECTION_HEADING_RE.test(trimmed)) {
+        continue;
+      }
+      if (trimmed.startsWith("- ")) {
+        const factBody = trimmed.slice(2).trim();
+        if (
+          !containsRestrictedWorkData(factBody) ||
+          isAllowedShortKornFerryContextFact(factBody)
+        ) {
+          continue;
+        }
+        return true;
+      }
+      inOwnerMemorySection = false;
+    }
+    if (containsRestrictedWorkData(trimmed)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Hard Korn Ferry / employer data-governance guard: scans every prompt message
  * before ANY packet leaves for Google Vertex AI.
+ * Only validated short job-title/region context lines inside `Owner durable memory`
+ * in `system` are permitted; ALL Korn Ferry data, documents, user messages,
+ * attachments, and tool payloads are strictly blocked (`work_boundary`).
  */
 export function assertNoKornFerryDataForGoogle(
   prompt: LanguageModelV4CallOptions["prompt"]
 ) {
-  const serialized = JSON.stringify(prompt);
-  if (containsRestrictedWorkData(serialized)) {
-    throw new ModelFailure("work_boundary");
+  for (const msg of prompt) {
+    if (msg.role === "system") {
+      if (systemPromptContainsRestrictedWorkData(msg.content)) {
+        throw new ModelFailure("work_boundary");
+      }
+      continue;
+    }
+    if (containsRestrictedWorkData(JSON.stringify(msg))) {
+      throw new ModelFailure("work_boundary");
+    }
   }
 }
 
