@@ -36,6 +36,10 @@ export const AVAILABLE_CHAT_TOOLS = [
   "generateImageAsset",
   "generateVideoClip",
   "delegateTask",
+  "cloudExec",
+  "cloudWriteFile",
+  "cloudExportFileToChat",
+  "cloudBrowseUrl",
 ] as const;
 
 export type ChatToolName = (typeof AVAILABLE_CHAT_TOOLS)[number];
@@ -79,6 +83,12 @@ const FIXTURE_PATTERN_TR =
 const LOCAL_COMMAND_PATTERN =
   /\b(demo|mock|fictional|sample|test inbox|my home city|set my city|my city is|i live in|i'?m based in|home is in|my schedules|scheduled tasks|recurring tasks|cancel schedule|schedule a task|schedule a routine|create a routine|customize your personality|change your personality|remember my preferred style|set your personality|draft an? email|draft a message|draft a slack|draft a telegram|prepare an? outbound draft|ask me a clarifying question|give me clickable options|save to my profile|log in my journal|search my memory|recall from memory|check (?:my )?gmail|read (?:my )?gmail|search (?:my )?gmail|create (?:a )?gmail draft|save (?:a )?draft in gmail|search (?:my )?(?:google )?drive|read (?:from )?(?:my )?(?:google )?drive|list (?:my )?(?:google )?drive files|create (?:a )?(?:google )?drive draft|save (?:a )?draft (?:doc|document) in (?:google )?drive|check (?:my )?(?:google )?calendar|upcoming calendar events|read (?:my )?calendar|create (?:a )?(?:google )?calendar draft|draft (?:a )?calendar event|list (?:open )?(?:github )?(?:prs|pull requests)|read (?:github )?(?:prs|pull requests)|check github prs|draft (?:a )?(?:github )?(?:pr|pull request) review|create (?:a )?github draft review|generate (?:an? )?(?:image|illustration|picture|poster|video|video clip)|create (?:an? )?(?:image|video clip))\b|hayal[iî]|örnek gelen kutusu|sahte e.?posta|ev şehrim|şehrim|yaşıyorum|zamanlanmış görev|planlanmış görev|görevlerimi listele|görevi iptal|rutin oluştur|kişiliğini değiştir|tarzını kaydet|kişiselleştir|taslak e-?posta hazırla|gönderim taslağı|bana seçenek kartı göster|belleğime kaydet|günlüğüme ekle|gmail(?:imi|'imi)? (?:kontrol et|oku|ara)|gmail taslağı oluştur|gmail'e taslak kaydet|(?:google )?drive(?:'da|da| dosyalarımı) (?:ara|listele|oku)|(?:google )?drive taslağı oluştur|drive'a taslak kaydet|takvimimi (?:kontrol et|oku)|yaklaşan etkinliklerim|takvim taslağı oluştur|github açık pr|github pr taslak inceleme|görsel üret|resim oluştur|video klibi oluştur/;
 
+const CLOUD_COMPUTER_PATTERN =
+  /\b(cloud\s+(?:computer|vm|shell|sandbox)|linux\s+vm|in\s+\/workspace|\/workspace\/|clone\s+(?:the\s+|this\s+)?repo\b|run\s+(?:a\s+|the\s+)?(?:python|bash|shell|node)\b|headless\s+(?:browser|chromium)|scrape\s+https?:\/\/|export\s+.{1,40}\s+from\s+\/workspace)\b|(?<![\p{L}])(?:bulut\s+bilgisayar\p{L}*|linux\s+sunucu\p{L}*|python\s+script\p{L}*)(?![\p{L}])/iu;
+
+const CLOUD_BROWSE_PATTERN =
+  /\b(headless\s+(?:browser|chromium)|cloud\s+browser|scrape\s+https?:\/\/|open\s+https?:\/\/\S+\s+in\s+(?:the\s+)?browser|screenshot\s+of\s+https?:\/\/)\b|bulut\s+tarayıcı/iu;
+
 const PRIVATE_PERSONAL_INTENT =
   /\b(did [\p{L}\s]{1,25} e-?mail me|any (?:new |unread |recent )?e-?mails?|what'?s in my inbox|check (?:my )?(?:inbox|e-?mails?)|read (?:my )?(?:inbox|e-?mails?)|e-?mails? from |what'?s on my calendar|am i free |do i have (?:any )?meetings?|my meetings? (?:today|tomorrow|this week)|find .{1,40} in (?:my )?drive|delegate (?:a |this )?task|create a task card|run (?:this )?in the background|background task)\b|(?<![\p{L}])(?:bana (?:e-?posta|mail) geldi mi|okunmamış (?:e-?posta|mail)\p{L}*|gelen kutum\p{L}*|mailimi kontrol et|maillerime bak|takvimimde ne var|bugün toplantım var mı|yarın .{0,20}boş muyum|görev kartı|arka planda çalıştır|görev olarak başlat)(?![\p{L}])/iu;
 
@@ -102,6 +112,8 @@ const STATE_CHANGING_TOOLS: readonly ChatToolName[] = [
   "generateImageAsset",
   "generateVideoClip",
   "delegateTask",
+  "cloudExec",
+  "cloudWriteFile",
 ];
 
 function userText(message: ChatMessage): string {
@@ -171,7 +183,9 @@ export function shouldOfferWebSearch(
   const localOnly =
     (DOCUMENT_PATTERN.test(phrase) ||
       LOCAL_COMMAND_PATTERN.test(phrase) ||
-      PRIVATE_PERSONAL_INTENT.test(phrase)) &&
+      PRIVATE_PERSONAL_INTENT.test(phrase) ||
+      CLOUD_COMPUTER_PATTERN.test(phrase) ||
+      CLOUD_BROWSE_PATTERN.test(phrase)) &&
     !factual;
   if (localOnly) {
     return false;
@@ -307,6 +321,12 @@ export function selectActiveTools(
     )
   ) {
     enabled.push("scheduleTask");
+  }
+
+  if (canPersonalize && CLOUD_BROWSE_PATTERN.test(phrase)) {
+    enabled.push("cloudBrowseUrl");
+  } else if (canPersonalize && CLOUD_COMPUTER_PATTERN.test(phrase)) {
+    enabled.push("cloudExec", "cloudWriteFile", "cloudExportFileToChat");
   }
 
   if (
@@ -465,12 +485,13 @@ export function selectActiveTools(
     ];
   }
 
-  // Untrusted connector reads (Gmail/Drive/Calendar/GitHub) never sit alongside state-changing tools in the same turn.
+  // Untrusted connector reads (Gmail/Drive/Calendar/GitHub/cloudBrowse) never sit alongside state-changing tools in the same turn.
   if (
     enabled.includes("gmailReadMessages") ||
     enabled.includes("driveReadFiles") ||
     enabled.includes("calendarReadEvents") ||
-    enabled.includes("githubReadPullRequests")
+    enabled.includes("githubReadPullRequests") ||
+    enabled.includes("cloudBrowseUrl")
   ) {
     return [
       ...new Set(

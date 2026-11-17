@@ -44,6 +44,7 @@ import { inferenceSession } from "@/lib/ai/routing/session";
 import { askUserQuestion } from "@/lib/ai/tools/ask-question";
 import { createCalendarAndGithubTools } from "@/lib/ai/tools/calendar-github-connectors";
 import { cancelSchedule } from "@/lib/ai/tools/cancel-schedule";
+import { createCloudComputerTools } from "@/lib/ai/tools/cloud-computer";
 import { createDocument } from "@/lib/ai/tools/create-document";
 import { createDelegateTaskTool } from "@/lib/ai/tools/delegate-task";
 import { demoInbox } from "@/lib/ai/tools/demo-inbox";
@@ -381,6 +382,10 @@ export async function POST(request: Request) {
         "cancelSchedule",
         "draftOutboundMessage",
         "delegateTask",
+        "cloudExec",
+        "cloudWriteFile",
+        "cloudExportFileToChat",
+        "cloudBrowseUrl",
       ].includes(name)
     );
     const replySystemPrompt = systemPrompt({
@@ -463,7 +468,8 @@ export async function POST(request: Request) {
                         (p.type as string) === "tool-gmailReadMessages" ||
                         (p.type as string) === "tool-driveReadFiles" ||
                         (p.type as string) === "tool-calendarReadEvents" ||
-                        (p.type as string) === "tool-githubReadPullRequests"
+                        (p.type as string) === "tool-githubReadPullRequests" ||
+                        (p.type as string) === "tool-cloudBrowseUrl"
                     )
                   );
                   const hasUntrusted =
@@ -472,6 +478,7 @@ export async function POST(request: Request) {
                     requestedTools.includes("driveReadFiles") ||
                     requestedTools.includes("calendarReadEvents") ||
                     requestedTools.includes("githubReadPullRequests") ||
+                    requestedTools.includes("cloudBrowseUrl") ||
                     attachmentPrep.hasUntrustedAttachment ||
                     hasPriorConnectorReads;
 
@@ -489,6 +496,10 @@ export async function POST(request: Request) {
                       hasUntrustedContext: hasUntrusted,
                     }),
                     delegateTask: createDelegateTaskTool({
+                      userId: session.user.id,
+                      hasUntrustedContext: hasUntrusted,
+                    }),
+                    ...createCloudComputerTools({
                       userId: session.user.id,
                       hasUntrustedContext: hasUntrusted,
                     }),

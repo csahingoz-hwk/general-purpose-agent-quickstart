@@ -3,6 +3,7 @@ import type { Session } from "next-auth";
 import { DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
 import { gatewayEnabled } from "@/lib/ai/routing/catalog";
 import { createCalendarAndGithubTools } from "@/lib/ai/tools/calendar-github-connectors";
+import { createCloudComputerTools } from "@/lib/ai/tools/cloud-computer";
 import {
   createDelegateTaskTool,
   resolveTaskStore,
@@ -103,6 +104,11 @@ export function buildCoreSharedTools(opts: {
       userId,
       store: opts.taskStore,
       hasUntrustedContext,
+    }),
+    ...createCloudComputerTools({
+      userId,
+      hasUntrustedContext,
+      fetchImpl,
     }),
     ...(isMemoryToolsEnabled()
       ? createMemoryTools({

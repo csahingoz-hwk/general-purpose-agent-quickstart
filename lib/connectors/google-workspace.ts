@@ -1,7 +1,7 @@
 import { fenceUntrustedContent } from "@/lib/safety/untrusted-content";
 
 const WORK_DATA_BOUNDARY_PATTERN =
-  /\b(?:korn\s*ferry|hay\s*group|\bsa90\b|\beosb\b|gl\s*239300|sox\s+control)\b/i;
+  /\b(?:korn[\s_-]*ferry|hay[\s_-]*group|\bsa90\b|\beosb\b|gl[\s_-]*239300|sox\s+control)\b/i;
 
 // Hard safety guard: ONLY read endpoints and unsent draft creation endpoints are permitted.
 // Sending mail, deleting messages/files, modifying existing Drive files, or changing sharing

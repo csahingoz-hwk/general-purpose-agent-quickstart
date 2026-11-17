@@ -18,6 +18,7 @@ import {
 } from "../ai-elements/tool";
 import { AgentMascot } from "./agent-mascot";
 import { ApprovalCard } from "./approval-card";
+import { CloudComputerCard } from "./cloud-computer-card";
 import {
   ConnectorConnectCard,
   ConnectorSummaryCard,
@@ -557,6 +558,25 @@ const PurePreviewMessage = ({
       ) {
         return (
           <ConnectorSummaryCard
+            key={toolCallId}
+            locale={locale}
+            output={output as Record<string, unknown>}
+            toolName={toolName}
+          />
+        );
+      }
+
+      if (
+        state === "output-available" &&
+        output &&
+        typeof output === "object" &&
+        (toolName === "cloudExec" ||
+          toolName === "cloudWriteFile" ||
+          toolName === "cloudExportFileToChat" ||
+          toolName === "cloudBrowseUrl")
+      ) {
+        return (
+          <CloudComputerCard
             key={toolCallId}
             locale={locale}
             output={output as Record<string, unknown>}

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/app/(auth)/auth";
 import { gatewayEnabled, openAIEnabled } from "@/lib/ai/routing/catalog";
+import { isCloudComputerConfigured } from "@/lib/cloud-computer/client";
 import { GITHUB_VAULT_SECRET_NAME } from "@/lib/connectors/calendar-and-github";
 import { GOOGLE_VAULT_SECRET_NAMES } from "@/lib/connectors/google-vault-auth";
 import { isGoogleSignInConfigured } from "@/lib/google-owner";
@@ -35,6 +36,7 @@ export async function GET() {
     process.env.AUTH_GITHUB_ID?.trim() && process.env.AUTH_GITHUB_SECRET?.trim()
   );
   const redisReady = Boolean(process.env.REDIS_URL?.trim());
+  const cloudComputerReady = isCloudComputerConfigured();
 
   const storedNames = new Set<string>();
   if (vaultReady && dbReady) {
@@ -155,6 +157,15 @@ export async function GET() {
         ? undefined
         : "https://aistudio.google.com/apikey",
       externalLabel: geminiReady ? undefined : "Google AI Studio",
+    },
+    {
+      id: "cloud_computer",
+      label: "Cloud Computer (Linux VM)",
+      summary: cloudComputerReady
+        ? "Active on Google Cloud (auto-wakes on demand, £0 net on Ultra credit)."
+        : "Optional — connect your Google Cloud sandbox relay for remote Linux & browser runs.",
+      status: cloudComputerReady ? "ready" : "optional",
+      actionKind: "none",
     },
     {
       id: "redis_store",

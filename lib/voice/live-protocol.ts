@@ -322,6 +322,60 @@ export const LIVE_VOICE_TOOL_DECLARATIONS: readonly LiveToolDeclaration[] = [
       required: ["title", "prompt"],
     },
   },
+  {
+    type: "function",
+    name: "cloudExec",
+    description:
+      "Run a shell/git/Python/Node command on the persistent Linux Cloud Computer (/workspace).",
+    parameters: {
+      type: "object",
+      properties: {
+        command: { type: "string", description: "Shell command to run." },
+        cwd: { type: "string", description: "Directory inside /workspace." },
+      },
+      required: ["command"],
+    },
+  },
+  {
+    type: "function",
+    name: "cloudWriteFile",
+    description: "Write a file inside /workspace on the Cloud Computer.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        content: { type: "string" },
+      },
+      required: ["path", "content"],
+    },
+  },
+  {
+    type: "function",
+    name: "cloudExportFileToChat",
+    description:
+      "Export a generated CSV, PDF, PNG, or JPEG file from /workspace into the chat.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    type: "function",
+    name: "cloudBrowseUrl",
+    description:
+      "Open a public URL in headless Chromium on the Cloud Computer and extract content or a screenshot.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string" },
+        captureScreenshot: { type: "boolean" },
+      },
+      required: ["url"],
+    },
+  },
 ];
 
 const FILLER_EN: Record<string, string> = {
@@ -343,6 +397,10 @@ const FILLER_EN: Record<string, string> = {
   driveCreateDraftDoc: "Preparing Drive draft approval…",
   draftOutboundMessage: "Preparing message approval…",
   delegateTask: "Creating task card…",
+  cloudExec: "Running on Cloud Computer…",
+  cloudWriteFile: "Writing file on Cloud Computer…",
+  cloudExportFileToChat: "Attaching file to chat…",
+  cloudBrowseUrl: "Opening page in Cloud Browser…",
 };
 
 const FILLER_TR: Record<string, string> = {
@@ -364,6 +422,10 @@ const FILLER_TR: Record<string, string> = {
   driveCreateDraftDoc: "Drive taslak onayı hazırlıyorum…",
   draftOutboundMessage: "Mesaj onayı hazırlıyorum…",
   delegateTask: "Görev kartı oluşturuyorum…",
+  cloudExec: "Bulut bilgisayarda çalıştırıyorum…",
+  cloudWriteFile: "Bulut bilgisayara dosya yazıyorum…",
+  cloudExportFileToChat: "Dosyayı sohbete ekliyorum…",
+  cloudBrowseUrl: "Bulut tarayıcıda açıyorum…",
 };
 
 export function fillerPhraseForTool(
