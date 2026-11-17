@@ -39,7 +39,12 @@ import { OutboundDraftCard } from "./outbound-draft-card";
 import { PreviewAttachment } from "./preview-attachment";
 import { QuestionCard } from "./question-card";
 import { SavedMemoryCard } from "./saved-memory-card";
-import { isTaskCardPayload, TaskCard } from "./task-card";
+import {
+  type AgentLoopStepItem,
+  AgentLoopStepStrip,
+  isTaskCardPayload,
+  TaskCard,
+} from "./task-card";
 import { Weather } from "./weather";
 import { WebSearchCard } from "./web-search-card";
 
@@ -90,6 +95,11 @@ const PurePreviewMessage = ({
   const turnStatus = isAssistant
     ? message.parts.find((p) => p.type === "data-turn-status")?.data
     : undefined;
+  const agentSteps: AgentLoopStepItem[] = isAssistant
+    ? message.parts
+        .filter((p) => p.type === "data-task-step")
+        .map((p) => p.data)
+    : [];
 
   const hasAnyContent = message.parts?.some(
     (part) =>
@@ -704,6 +714,9 @@ const PurePreviewMessage = ({
   ) : (
     <>
       {attachments}
+      {agentSteps.length >= 2 && (
+        <AgentLoopStepStrip locale={locale} steps={agentSteps} />
+      )}
       {parts}
       {fixture && <FixtureCard locale={locale} payload={fixture} />}
       {actions}

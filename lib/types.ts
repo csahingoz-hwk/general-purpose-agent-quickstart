@@ -62,6 +62,13 @@ export type CustomUIDataTypes = {
     phase: "searching" | "weather" | "fixtures" | "tool" | "thinking";
     model: string;
   };
+  "task-step": {
+    stepIndex: number;
+    label: string;
+    toolName: string;
+    status: "running" | "done" | "error";
+    elapsedMs: number;
+  };
 };
 
 export type ChatMessage = UIMessage<

@@ -2,6 +2,7 @@
 
 import {
   CheckCircle2Icon,
+  ChevronDownIcon,
   CloudIcon,
   LaptopIcon,
   Loader2Icon,
@@ -25,6 +26,14 @@ export type TaskCardPayload = {
   riskLevel?: string;
   message?: string;
   task?: BackgroundTaskRecord;
+};
+
+export type AgentLoopStepItem = {
+  stepIndex: number;
+  label: string;
+  toolName: string;
+  status: "running" | "done" | "error";
+  elapsedMs: number;
 };
 
 export function isTaskCardPayload(value: unknown): value is TaskCardPayload {
@@ -72,6 +81,69 @@ const STATUS_META: Record<
   },
 };
 
+export function AgentLoopStepStrip({
+  steps,
+  locale = "en",
+}: {
+  steps: readonly AgentLoopStepItem[];
+  locale?: "en" | "tr";
+}) {
+  const [open, setOpen] = useState(false);
+  if (steps.length < 2) {
+    return null;
+  }
+  const totalMs = steps.reduce((acc, s) => acc + s.elapsedMs, 0);
+
+  return (
+    <div
+      className="w-[min(100%,460px)] rounded-2xl border border-[color:var(--hairline)] bg-card/85 px-3.5 py-2.5 text-xs"
+      data-testid="agent-step-strip"
+    >
+      <button
+        className="flex w-full items-center justify-between gap-2 text-left"
+        onClick={() => setOpen((prev) => !prev)}
+        type="button"
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          <CheckCircle2Icon className="size-3.5 shrink-0 text-emerald-500" />
+          <span className="truncate font-medium text-foreground">
+            {locale === "tr"
+              ? `${steps.length} adım tamamlandı`
+              : `Completed ${steps.length} steps`}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground tabular-nums">
+          <span>{(totalMs / 1000).toFixed(1)}s</span>
+          <ChevronDownIcon
+            className={cn(
+              "size-3.5 transition-transform",
+              open && "rotate-180"
+            )}
+          />
+        </span>
+      </button>
+
+      {open && (
+        <ol className="mt-2 space-y-1 border-[color:var(--hairline)] border-t pt-2">
+          {steps.map((s) => (
+            <li
+              className="flex items-center justify-between gap-2 text-muted-foreground"
+              key={`${s.stepIndex}-${s.toolName}`}
+            >
+              <span className="min-w-0 truncate">
+                {s.stepIndex}. {s.label}
+              </span>
+              <span className="shrink-0 font-mono text-[11px] tabular-nums">
+                {s.elapsedMs}ms
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 export function TaskCard({
   payload,
   input,
@@ -88,24 +160,26 @@ export function TaskCard({
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
   const initialTask = payload?.task;
   const [localTask, setLocalTask] = useState<BackgroundTaskRecord | undefined>(
-    initialTask
+    undefined
   );
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
-  const activeTask = localTask ?? initialTask;
-  const shouldPoll =
-    Boolean(activeTask?.id) &&
-    (activeTask?.status === "queued" || activeTask?.status === "running");
+  const currentStatus = localTask?.status ?? initialTask?.status;
+  const taskId = localTask?.id ?? initialTask?.id;
 
-  const { data: polled } = useSWR<{ tasks?: BackgroundTaskRecord[] }>(
-    shouldPoll ? `${basePath}/api/tasks` : null,
-    fetcher,
-    { refreshInterval: 2500, revalidateOnFocus: false }
-  );
+  const { data: fetchedById, mutate } = useSWR<{
+    task?: BackgroundTaskRecord | null;
+  }>(taskId ? `${basePath}/api/tasks/${taskId}` : null, fetcher, {
+    refreshInterval: (latestData) => {
+      const st = localTask?.status ?? latestData?.task?.status ?? currentStatus;
+      return st === "queued" || st === "running" ? 1200 : 0;
+    },
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  });
 
-  const liveTask =
-    polled?.tasks?.find((t) => t.id === activeTask?.id) ?? activeTask;
+  const liveTask = localTask ?? fetchedById?.task ?? initialTask;
 
   if (payload?.status === "blocked_data_boundary") {
     return (
@@ -142,15 +216,16 @@ export function TaskCard({
     }
     setBusy(true);
     try {
-      const res = await fetch(`${basePath}/api/tasks`, {
+      const res = await fetch(`${basePath}/api/tasks/${liveTask.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: liveTask.id, action }),
+        body: JSON.stringify({ action }),
       });
       if (res.ok) {
         const json = (await res.json()) as { task?: BackgroundTaskRecord };
         if (json.task) {
           setLocalTask(json.task);
+          await mutate({ task: json.task }, false);
         }
       }
     } finally {
@@ -177,7 +252,7 @@ export function TaskCard({
             <CheckCircle2Icon className="mt-0.5 size-4 shrink-0 text-emerald-500" />
           )}
           <div className="min-w-0">
-            <p className="font-semibold text-foreground leading-snug">
+            <p className="break-words font-semibold text-foreground leading-snug">
               {title}
             </p>
             <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -199,6 +274,16 @@ export function TaskCard({
                   </>
                 )}
               </span>
+              {steps.length > 0 && (
+                <span
+                  className="rounded-full border border-[color:var(--hairline)] px-2 py-0.5 tabular-nums"
+                  data-testid="task-card-step-counter"
+                >
+                  {locale === "tr"
+                    ? `Adım ${steps.length}`
+                    : `Step ${steps.length}`}
+                </span>
+              )}
               {payload?.digest ? (
                 <span className="font-mono text-[10px]">
                   #{payload.digest.slice(0, 8)}
@@ -221,9 +306,10 @@ export function TaskCard({
 
       {steps.length > 0 ? (
         <ul className="mt-3 space-y-1.5 border-[color:var(--hairline)] border-t pt-2.5 text-xs">
-          {steps.slice(-4).map((s) => (
+          {steps.slice(-5).map((s) => (
             <li
               className="flex items-start gap-2 text-muted-foreground"
+              data-testid="task-card-step-row"
               key={`${s.step}-${s.timestamp}`}
             >
               <span className="mt-1 size-1.5 shrink-0 rounded-full bg-primary/70" />
@@ -237,6 +323,7 @@ export function TaskCard({
         <div className="mt-2.5">
           <button
             className="text-muted-foreground text-xs underline-offset-2 hover:text-foreground hover:underline"
+            data-testid="task-card-toggle-details"
             onClick={() => setExpanded((prev) => !prev)}
             type="button"
           >

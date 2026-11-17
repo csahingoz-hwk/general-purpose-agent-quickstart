@@ -51,6 +51,54 @@ export function registerDelegatedTaskDispatcher(
   registeredDispatcher = dispatcher;
 }
 
+export async function executeApprovedTask(opts: {
+  userId: string;
+  taskId: string;
+  store?: BackgroundTaskStore;
+}): Promise<BackgroundTaskRecord | null> {
+  const store = resolveTaskStore(opts.store);
+  const existing = await store.getTask({
+    userId: opts.userId,
+    id: opts.taskId,
+  });
+  if (!existing) {
+    return null;
+  }
+  const resolvedTarget = inferTaskTarget(existing.prompt, "auto");
+  const running =
+    (await store.transitionTask({
+      userId: opts.userId,
+      id: existing.id,
+      status: "running",
+      stepMessage: `Approved by owner — executing on ${
+        resolvedTarget === "cloud"
+          ? "Cloud Computer (Linux VM)"
+          : resolvedTarget === "mac"
+            ? "Mac mini (Tailscale tmux bridge)"
+            : "Assistant task runner"
+      }`,
+    })) ?? existing;
+
+  if (registeredDispatcher) {
+    return await registeredDispatcher({
+      userId: opts.userId,
+      task: running,
+      target: resolvedTarget === "assistant" ? "auto" : resolvedTarget,
+      store,
+    });
+  }
+
+  return (
+    (await store.transitionTask({
+      userId: opts.userId,
+      id: running.id,
+      status: "succeeded",
+      stepMessage: "Approved execution finished",
+      output: `Approved and completed "${running.title}" (${resolvedTarget}).`,
+    })) ?? running
+  );
+}
+
 export function inferTaskTarget(
   prompt: string,
   explicit: TaskExecutionTarget = "auto"

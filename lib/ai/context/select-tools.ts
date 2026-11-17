@@ -58,7 +58,7 @@ const CLOCK_PATTERN =
  * "araba" must not match "ara").
  */
 const SEARCH_PATTERN_EN =
-  /\b(search|look(?:ing)? (?:it |this |that |them )?up|google|find (?:it |this |that |out )?(?:online|on the web)|on the web|web search|latest|news|breaking|who won|(?:current|today'?s|live) (?:price|prices|score|scores|result|results|rate|rates|exchange rate)|exchange rate|stock price|share price)\b/;
+  /\b(search|look(?:ing)? (?:it |this |that |them )?up|google(?!\s+(?:drive|calendar|docs?|sheets?|slides?|workspace|account|cloud|ai))|find (?:it |this |that |out )?(?:online|on the web)|on the web|web search|latest|news|breaking|who won|(?:current|today'?s|live) (?:price|prices|score|scores|result|results|rate|rates|exchange rate)|exchange rate|stock price|share price)\b/;
 const SEARCH_PATTERN_TR =
   /(?<![\p{L}])(?:ara|arar mısın|arama yap\p{L}*|araştır\p{L}*|internette|internetten|güncel|haber|haberler\p{L}*|haberi|son dakika|bugünkü|bugunku|kim kazandı|maç sonucu|dolar kaç|euro kaç|altın fiyat\p{L}*)(?![\p{L}])/u;
 
@@ -95,7 +95,7 @@ const CLOUD_BROWSE_PATTERN =
   /\b(headless\s+(?:browser|chromium)|cloud\s+browser|scrape\s+https?:\/\/|open\s+https?:\/\/\S+\s+in\s+(?:the\s+)?browser|screenshot\s+of\s+https?:\/\/)\b|bulut\s+tarayıcı/iu;
 
 const PRIVATE_PERSONAL_INTENT =
-  /\b(did [\p{L}\s]{1,25} e-?mail me|any (?:new |unread |recent )?e-?mails?|what'?s in my inbox|check (?:my )?(?:inbox|e-?mails?)|read (?:my )?(?:inbox|e-?mails?)|e-?mails? from |what'?s on my calendar|am i free |do i have (?:any )?meetings?|my meetings? (?:today|tomorrow|this week)|find .{1,40} in (?:my )?drive|delegate (?:a |this )?task|create a task card|run (?:this )?in the background|background task)\b|(?<![\p{L}])(?:bana (?:e-?posta|mail) geldi mi|okunmamış (?:e-?posta|mail)\p{L}*|gelen kutum\p{L}*|mailimi kontrol et|maillerime bak|takvimimde ne var|bugün toplantım var mı|yarın .{0,20}boş muyum|görev kartı|arka planda çalıştır|görev olarak başlat)(?![\p{L}])/iu;
+  /\b(did [\p{L}\s]{1,25} (?:e-?mail|write to|send an? e-?mail to) me|did [\p{L}\s]{1,25} send (?:me )?an? e-?mail|any (?:new |unread |recent )?e-?mails?|what'?s in my inbox|check (?:my )?(?:inbox|e-?mails?)|read (?:my )?(?:inbox|e-?mails?)|e-?mails? from |what'?s on my calendar|am i free |are you free |do i have (?:any )?(?:meetings?|appointments?|events?)|my meetings? (?:today|tomorrow|this week|on \w+)|(?:find|where is|locate) .{1,50} in (?:my )?(?:google )?drive|(?:any|check|list|are there(?: any)?) open (?:github )?(?:prs|pull requests)|what have you saved in (?:my )?memory|what do you remember about me|delegate (?:a |this )?task|create a task card|run (?:this )?in the background|background task)\b|(?<![\p{L}])(?:bana (?:e-?posta|mail) geldi m[ıi]|[\p{L}\s]{1,25} bana (?:yazd[ıi]|mail att[ıi]|e-?posta gönderdi) m[ıi]|[\p{L}']+['’]?(?:dan|den|tan|ten) (?:e-?posta|mail) var m[ıi]|okunmam[ıi]ş (?:e-?posta|mail)\p{L}*|gelen kutum\p{L}*|inbox['’]?(?:ta|da) ne var|mailimi kontrol et|maillerime bak|takvimimde ne var|haftaya takvimim nas[ıi]l|bugün (?:toplant[ıi]m|randevum) var m[ıi]|(?:yar[ıi]n|bugün|pazartesi|sal[ıi]|çarşamba|perşembe|cuma|cumartesi|pazar)\b.{0,30}(?:boş muyum|müsait miyim|uygun muyum)|drive['’]?(?:da|daki) .{1,40}(?:bul|ara|nerede|listele|oku|göster)|aç[ıi]k (?:pr|pull request)\p{L}* (?:var m[ıi]|kontrol et|listele)|hakk[ıi]mda ne (?:hat[ıi]rl[ıi]yorsun|biliyorsun)|beni hat[ıi]rl[ıi]yor musun|görev kart[ıi]|arka planda çal[ıi]şt[ıi]r|görev olarak başlat)(?![\p{L}])/iu;
 
 /** Tools that change stored state; never offered in a turn that reads web content. */
 const STATE_CHANGING_TOOLS: readonly ChatToolName[] = [
@@ -187,10 +187,17 @@ export function shouldOfferWebSearch(
   if (CHITCHAT_PATTERN.test(phrase) && !factual) {
     return false;
   }
+  if (
+    PRIVATE_PERSONAL_INTENT.test(phrase) &&
+    !/\b(search the web|on the web|find online|web search)\b|internette|internetten/iu.test(
+      phrase
+    )
+  ) {
+    return false;
+  }
   const localOnly =
     (DOCUMENT_PATTERN.test(phrase) ||
       LOCAL_COMMAND_PATTERN.test(phrase) ||
-      PRIVATE_PERSONAL_INTENT.test(phrase) ||
       CLOUD_COMPUTER_PATTERN.test(phrase) ||
       CLOUD_BROWSE_PATTERN.test(phrase) ||
       MAC_BRIDGE_PATTERN.test(phrase)) &&
@@ -366,7 +373,7 @@ export function selectActiveTools(
       enabled.push("addJournalEntry");
     }
     if (
-      /\b(search my memory|recall from memory|what do you remember|check my journal)\b|belleğimi ara|hakkımda ne hatırlıyorsun|günlüğümü kontrol et/i.test(
+      /\b(search my memory|recall from memory|what do you remember|what have you saved in (?:my )?memory|check my journal)\b|belleğimi ara|hakkımda ne (?:hatırlıyorsun|biliyorsun)|beni hatırlıyor musun|günlüğümü kontrol et/iu.test(
         phrase
       )
     ) {
@@ -389,7 +396,7 @@ export function selectActiveTools(
         enabled.push("gmailCreateDraft");
       }
       if (
-        /\b(check (?:my )?(?:gmail|inbox|e-?mails?)|read (?:my )?(?:gmail|inbox|unread emails?(?: in gmail)?|e-?mails?)|search (?:my )?gmail|latest emails? in (?:my )?gmail|did [\p{L}\s]{1,25} e-?mail me|any (?:new |unread |recent )?e-?mails?|what'?s in my inbox|e-?mails? from )\b|gmail(?:imi|'imi)? (?:kontrol et|oku|ara)|(?<![\p{L}])(?:bana (?:e-?posta|mail) geldi mi|okunmamış (?:e-?posta|mail)\p{L}*|gelen kutum\p{L}*|mailimi kontrol et|maillerime bak)(?![\p{L}])/iu.test(
+        /\b(check (?:my )?(?:gmail|inbox|e-?mails?)|read (?:my )?(?:gmail|inbox|unread emails?(?: in gmail)?|e-?mails?)|search (?:my )?gmail|latest emails? in (?:my )?gmail|did [\p{L}\s]{1,25} (?:e-?mail|write to|send an? e-?mail to) me|did [\p{L}\s]{1,25} send (?:me )?an? e-?mail|any (?:new |unread |recent )?e-?mails?|what'?s in my inbox|e-?mails? from )\b|gmail(?:imi|'imi)? (?:kontrol et|oku|ara)|(?<![\p{L}])(?:bana (?:e-?posta|mail) geldi m[ıi]|[\p{L}\s]{1,25} bana (?:yazd[ıi]|mail att[ıi]|e-?posta gönderdi) m[ıi]|[\p{L}']+['’]?(?:dan|den|tan|ten) (?:e-?posta|mail) var m[ıi]|okunmam[ıi]ş (?:e-?posta|mail)\p{L}*|gelen kutum\p{L}*|inbox['’]?(?:ta|da) ne var|mailimi kontrol et|maillerime bak)(?![\p{L}])/iu.test(
           phrase
         )
       ) {
@@ -404,7 +411,7 @@ export function selectActiveTools(
         enabled.push("driveCreateDraftDoc");
       }
       if (
-        /\b(search (?:my )?(?:google )?drive|read (?:from )?(?:my )?(?:google )?drive|find .{1,40} in (?:my )?(?:google )?drive|find in (?:my )?(?:google )?drive|list (?:my )?(?:google )?drive files)\b|(?:google )?drive(?:'da|da|'daki| dosyalarımı) (?:ara|listele|oku|bul)/iu.test(
+        /\b(search (?:my )?(?:google )?drive|read (?:from )?(?:my )?(?:google )?drive|(?:find|where is|locate) .{1,50} in (?:my )?(?:google )?drive|find in (?:my )?(?:google )?drive|list (?:my )?(?:google )?drive files)\b|(?:google )?drive(?:'da|da|'daki| dosyalarımı) (?:ara|listele|oku|bul)|drive['’]?(?:da|daki) .{1,40}(?:bul|ara|nerede|listele|oku|göster)/iu.test(
           phrase
         )
       ) {
@@ -419,7 +426,7 @@ export function selectActiveTools(
         enabled.push("calendarCreateDraftEvent");
       }
       if (
-        /\b(check (?:my )?(?:google )?calendar|upcoming calendar events|read (?:my )?calendar|what'?s on my calendar|am i free |do i have (?:any )?meetings?|my meetings? (?:today|tomorrow|this week))\b|takvimimi (?:kontrol et|oku)|yaklaşan etkinliklerim|(?<![\p{L}])(?:takvimimde ne var|bugün toplantım var mı|yarın .{0,20}boş muyum)(?![\p{L}])/iu.test(
+        /\b(check (?:my )?(?:google )?calendar|upcoming calendar events|read (?:my )?calendar|what'?s on my calendar|am i free |do i have (?:any )?(?:meetings?|appointments?|events?)|my meetings? (?:today|tomorrow|this week|on \w+))\b|takvimimi (?:kontrol et|oku)|yaklaşan etkinliklerim|(?<![\p{L}])(?:takvimimde ne var|haftaya takvimim nasıl|bugün (?:toplantım|randevum) var mı|(?:yarın|bugün|pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar)\b.{0,30}(?:boş muyum|müsait miyim|uygun muyum))(?![\p{L}])/iu.test(
           phrase
         )
       ) {
@@ -437,7 +444,7 @@ export function selectActiveTools(
       enabled.push("githubCreateDraftReview");
     }
     if (
-      /\b(list (?:open )?(?:github )?(?:prs|pull requests)|read (?:github )?(?:prs|pull requests)|check github prs)\b|github açık pr/.test(
+      /\b((?:list|check|read|any|are there(?: any)?) (?:open )?(?:github )?(?:prs|pull requests)|read (?:github )?(?:prs|pull requests)|check github prs)\b|github açık pr|(?<![\p{L}])açık (?:pr|pull request)\p{L}* (?:var mı|kontrol et|listele)(?![\p{L}])/iu.test(
         phrase
       )
     ) {

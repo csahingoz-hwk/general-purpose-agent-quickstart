@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
 import { isOwnerIdentity } from "@/lib/access-policy";
+import { executeApprovedTask } from "@/lib/ai/tools/delegate-task";
 import { commitApprovedMeetingReview } from "@/lib/meetings/meeting-copilot";
 import {
   createPostgresTaskStore,
@@ -128,11 +129,10 @@ export async function PATCH(request: Request) {
         });
         return Response.json({ task: committed.task, committed });
       }
-      const resumed = await store.transitionTask({
+      const resumed = await executeApprovedTask({
         userId: session.user.id,
-        id: body.id,
-        status: "queued",
-        stepMessage: "Approved by owner in Routines & Tasks hub",
+        taskId: body.id,
+        store,
       });
       return Response.json({ task: resumed });
     }

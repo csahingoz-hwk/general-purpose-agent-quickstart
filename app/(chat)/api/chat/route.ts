@@ -714,18 +714,47 @@ export async function POST(request: Request) {
             throw new Error("chat_context_budget");
           }
           let firstCallTokens = 0;
+          let stepStartedAtMs = Date.now();
+          let emittedTaskStepIndex = 0;
+          const stepLabels: Record<string, string> = {
+            gmailReadMessages: "Checked Gmail inbox",
+            gmailCreateDraft: "Prepared Gmail draft",
+            calendarReadEvents: "Checked Google Calendar",
+            calendarCreateDraftEvent: "Prepared Calendar draft",
+            driveReadFiles: "Searched Google Drive",
+            driveCreateDraftDoc: "Prepared Google Drive draft",
+            githubReadPullRequests: "Checked GitHub pull requests",
+            githubCreateDraftReview: "Prepared GitHub PR review draft",
+            recallMemories: "Recalled durable memories",
+            saveProfileFact: "Saved fact to memory",
+            addJournalEntry: "Logged journal note",
+            delegateTask: "Dispatched background task",
+            cloudExec: "Ran command on Cloud Computer",
+            cloudWriteFile: "Wrote file to /workspace",
+            cloudExportFileToChat: "Exported /workspace file to chat",
+            cloudBrowseUrl: "Opened URL in Cloud Browser",
+            macExec: "Ran command on Mac mini (tmux)",
+            macRunAgentCli: "Ran coding CLI on Mac mini worktree",
+            listMySchedules: "Checked scheduled routines",
+            scheduleTask: "Scheduled recurring routine",
+            cancelSchedule: "Cancelled routine",
+            getWeather: "Fetched weather forecast",
+            getFixtures: "Checked match fixtures",
+          };
           const result = streamText({
             model: getLanguageModel(chatModel),
             instructions: replySystemPrompt,
             messages: prepared.messages,
-            // Multi-step agent loop: 0 tools = 1 step; single tool (e.g. webSearch)
-            // = up to 8 steps; multi-tool / operator turns = bounded 12-step loop.
+            // Multi-step agent loop: 0 tools = 1 step; quick single lookup = 3 steps;
+            // webSearch or operator/multi-tool turns = bounded 8-step agent loop.
             stopWhen: isStepCount(
               activeTools.length === 0
                 ? 1
-                : activeTools.length > 1 || activeTools.includes("delegateTask")
-                  ? 12
-                  : 8
+                : hasOperatorToolOnTurn ||
+                    activeTools.length > 1 ||
+                    activeTools.includes("webSearch")
+                  ? 8
+                  : 3
             ),
             maxOutputTokens: replyTokens,
             maxRetries: 0,
@@ -739,6 +768,7 @@ export async function POST(request: Request) {
             ]),
             activeTools,
             prepareStep: ({ messages: stepMessages, stepNumber }) => {
+              stepStartedAtMs = Date.now();
               const next = budgetModelMessages({
                 messages: stepMessages,
                 system: replySystemPrompt,
@@ -758,6 +788,28 @@ export async function POST(request: Request) {
                 throw new Error("chat_context_budget");
               }
               return { messages: next.messages };
+            },
+            onStepFinish: ({ toolCalls }) => {
+              if (!toolCalls || toolCalls.length === 0) {
+                return;
+              }
+              const elapsedMs = Math.max(1, Date.now() - stepStartedAtMs);
+              for (const tc of toolCalls) {
+                if (tc.toolName === "webSearch") {
+                  continue;
+                }
+                emittedTaskStepIndex += 1;
+                dataStream.write({
+                  type: "data-task-step",
+                  data: {
+                    stepIndex: emittedTaskStepIndex,
+                    label: stepLabels[tc.toolName] ?? `Ran ${tc.toolName}`,
+                    toolName: tc.toolName,
+                    status: "done",
+                    elapsedMs,
+                  },
+                });
+              }
             },
             providerOptions: {
               openai: { reasoningEffort: effectiveReasoningEffort },
