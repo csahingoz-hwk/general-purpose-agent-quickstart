@@ -145,26 +145,38 @@ export function decryptSecretPayload({
   authTag: string;
   masterKey?: string;
 }): string {
-  const key = deriveVaultKey(masterKey);
-  try {
-    const decipher = createDecipheriv(
-      "aes-256-gcm",
-      key,
-      Buffer.from(iv, "base64")
-    );
-    decipher.setAAD(aadFor(userId, name));
-    decipher.setAuthTag(Buffer.from(authTag, "base64"));
-    const decrypted = Buffer.concat([
-      decipher.update(Buffer.from(ciphertext, "base64")),
-      decipher.final(),
-    ]);
-    return decrypted.toString("utf8");
-  } catch {
-    throw new VaultError(
-      "vault_integrity_failed",
-      "Secret failed authenticity verification"
-    );
+  const candidates: Buffer[] = [deriveVaultKey(masterKey)];
+  if (
+    !masterKey &&
+    process.env.SECRET_VAULT_KEY?.trim() &&
+    (process.env.AUTH_SECRET?.trim()?.length ?? 0) >= 32 &&
+    process.env.SECRET_VAULT_KEY.trim() !== process.env.AUTH_SECRET?.trim()
+  ) {
+    candidates.push(deriveVaultKey(process.env.AUTH_SECRET));
   }
+
+  for (const key of candidates) {
+    try {
+      const decipher = createDecipheriv(
+        "aes-256-gcm",
+        key,
+        Buffer.from(iv, "base64")
+      );
+      decipher.setAAD(aadFor(userId, name));
+      decipher.setAuthTag(Buffer.from(authTag, "base64"));
+      const decrypted = Buffer.concat([
+        decipher.update(Buffer.from(ciphertext, "base64")),
+        decipher.final(),
+      ]);
+      return decrypted.toString("utf8");
+    } catch {
+      /* try next candidate key */
+    }
+  }
+  throw new VaultError(
+    "vault_integrity_failed",
+    "Secret failed authenticity verification"
+  );
 }
 
 type StoredRow = VaultSecretMetadata & {

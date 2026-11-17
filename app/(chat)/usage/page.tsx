@@ -1,12 +1,7 @@
 "use client";
 
-import {
-  CheckCircle2Icon,
-  ExternalLinkIcon,
-  MonitorIcon,
-  MoonIcon,
-  SunIcon,
-} from "lucide-react";
+import { CheckCircle2Icon, MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { Suspense, useEffect, useState } from "react";
@@ -73,8 +68,6 @@ function UsagePageContent() {
   const searchParams = useSearchParams();
   const { theme, setTheme } = useTheme();
   const [hasSpeechApi, setHasSpeechApi] = useState(false);
-  const [githubSetupOpen, setGithubSetupOpen] = useState(false);
-  const [githubTokenInput, setGithubTokenInput] = useState("");
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
 
   useEffect(() => {
@@ -128,40 +121,6 @@ function UsagePageContent() {
               : "Disconnected GitHub.",
         });
       }
-    } finally {
-      setBusyProvider(null);
-    }
-  }
-
-  async function handleSaveGithubToken(event: React.FormEvent) {
-    event.preventDefault();
-    if (!githubTokenInput.trim()) {
-      return;
-    }
-    setBusyProvider("github");
-    try {
-      const res = await fetch(`${basePath}/api/vault`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: "GITHUB_CONNECTOR_PAT",
-          provider: "github",
-          plaintext: githubTokenInput.trim(),
-        }),
-      });
-      if (!res.ok) {
-        throw new Error("Could not save GitHub connection");
-      }
-      setGithubTokenInput("");
-      setGithubSetupOpen(false);
-      await mutateConnectors();
-      toast({ type: "success", description: "GitHub connected." });
-    } catch (err) {
-      toast({
-        type: "error",
-        description:
-          err instanceof Error ? err.message : "Could not connect GitHub",
-      });
     } finally {
       setBusyProvider(null);
     }
@@ -236,14 +195,21 @@ function UsagePageContent() {
         </section>
 
         <section className="space-y-3">
-          <div>
-            <h2 className="font-semibold text-xl tracking-tight">
-              Capabilities &amp; connections
-            </h2>
-            <p className="mt-1 text-muted-foreground text-sm">
-              Chat, search, voice, and images work automatically. Connect
-              accounts in one tap when you want draft assistance.
-            </p>
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <h2 className="font-semibold text-xl tracking-tight">
+                Personal apps &amp; capabilities
+              </h2>
+              <p className="mt-1 text-muted-foreground text-sm">
+                Chat, search, voice, and images work automatically.
+              </p>
+            </div>
+            <Link
+              className="inline-flex min-h-10 items-center rounded-full border border-[color:var(--hairline)] bg-card px-3.5 font-medium text-foreground text-xs transition-colors hover:bg-muted"
+              href="/setup"
+            >
+              Setup checklist
+            </Link>
           </div>
 
           <ul className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card text-sm">
@@ -333,78 +299,40 @@ function UsagePageContent() {
               )}
             </li>
 
-            <li className="space-y-3 px-4 py-3.5">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium text-foreground">
-                    GitHub Pull Requests{" "}
-                    <span className="font-normal text-muted-foreground text-xs">
-                      (optional)
-                    </span>
-                  </p>
-                  <p className="text-muted-foreground text-xs">
-                    Read pull requests &amp; prepare unpublished draft reviews
-                  </p>
-                </div>
-                {connectors?.githubReady ? (
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300">
-                      <CheckCircle2Icon className="size-3.5" />
-                      Connected
-                    </span>
-                    <button
-                      className="min-h-10 rounded-full border border-[color:var(--hairline)] px-3 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
-                      disabled={busyProvider === "github"}
-                      onClick={() => handleDisconnect("github")}
-                      type="button"
-                    >
-                      Disconnect
-                    </button>
-                  </div>
-                ) : (
+            <li className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-foreground">
+                  GitHub Pull Requests{" "}
+                  <span className="font-normal text-muted-foreground text-xs">
+                    (optional)
+                  </span>
+                </p>
+                <p className="text-muted-foreground text-xs">
+                  Read pull requests &amp; prepare unpublished draft reviews
+                </p>
+              </div>
+              {connectors?.githubReady ? (
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300">
+                    <CheckCircle2Icon className="size-3.5" />
+                    Connected
+                  </span>
                   <button
-                    className="inline-flex min-h-10 shrink-0 items-center rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-foreground text-xs transition-colors hover:bg-muted"
-                    onClick={() => setGithubSetupOpen((prev) => !prev)}
+                    className="min-h-10 rounded-full border border-[color:var(--hairline)] px-3 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
+                    disabled={busyProvider === "github"}
+                    onClick={() => handleDisconnect("github")}
                     type="button"
                   >
-                    {githubSetupOpen ? "Cancel" : "Connect GitHub"}
+                    Disconnect
                   </button>
-                )}
-              </div>
-
-              {githubSetupOpen && !connectors?.githubReady && (
-                <form
-                  className="space-y-2.5 rounded-xl bg-muted/50 p-3"
-                  onSubmit={handleSaveGithubToken}
+                </div>
+              ) : (
+                <Link
+                  className="inline-flex min-h-10 shrink-0 items-center rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-foreground text-xs transition-colors hover:bg-muted"
+                  href="/setup"
                 >
-                  <a
-                    className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-card px-3.5 font-medium text-foreground text-xs hover:bg-muted"
-                    href="https://github.com/settings/tokens/new?description=Personal+Assistant+(Read+%26+Draft)&scopes=repo"
-                    rel="noopener noreferrer"
-                    target="_blank"
-                  >
-                    1. Open GitHub (permissions pre-selected)
-                    <ExternalLinkIcon className="size-3.5" />
-                  </a>
-                  <div className="flex gap-2">
-                    <input
-                      autoComplete="off"
-                      className="min-h-11 flex-1 rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
-                      onChange={(e) => setGithubTokenInput(e.target.value)}
-                      placeholder="2. Paste token generated on GitHub"
-                      required
-                      type="password"
-                      value={githubTokenInput}
-                    />
-                    <button
-                      className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs disabled:opacity-50"
-                      disabled={busyProvider === "github"}
-                      type="submit"
-                    >
-                      Save
-                    </button>
-                  </div>
-                </form>
+                  Open setup
+                </Link>
               )}
             </li>
           </ul>

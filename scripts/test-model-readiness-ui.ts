@@ -1166,8 +1166,6 @@ test("owner credentials vault, sticky subpage header, and teammate chat wiring w
     await page
       .getByText("Advanced: custom API key override (optional)")
       .click();
-    const nameInput = page.getByPlaceholder("e.g. GEMINI_API_KEY");
-    await expect(nameInput).toHaveValue("GEMINI_API_KEY");
     await page
       .getByPlaceholder("Paste key or token")
       .fill("AIzaSyTestKey123456789");
@@ -1177,6 +1175,15 @@ test("owner credentials vault, sticky subpage header, and teammate chat wiring w
     await page.getByText("••••6789").waitFor();
     assert.equal(captured.vaultPost?.name, "GEMINI_API_KEY");
     assert.equal(captured.vaultPost?.provider, "gemini");
+
+    // Verify /setup Setup checklist renders plain-English items, status dots, and direct creation links
+    await page.getByRole("link", { name: "Setup", exact: true }).click();
+    await page.waitForURL("**/setup");
+    await page.getByRole("heading", { name: "Setup checklist" }).waitFor();
+    assert.equal(
+      await page.getByPlaceholder("Paste token or key").isVisible(),
+      false
+    );
 
     // 2. Switch to Teammates via sticky top nav, activate Finance Controller, return to chat
     await page.getByRole("link", { name: "Teammates" }).click();

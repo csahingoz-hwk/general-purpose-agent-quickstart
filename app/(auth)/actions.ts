@@ -35,6 +35,24 @@ export async function connectGoogleWorkspace(formData?: FormData) {
   );
 }
 
+export async function connectGithubAccount(formData?: FormData) {
+  const session = await auth();
+  if (
+    !session?.user ||
+    !process.env.AUTH_GITHUB_ID?.trim() ||
+    !process.env.AUTH_GITHUB_SECRET?.trim()
+  ) {
+    redirect("/setup");
+  }
+  const rawReturn =
+    formData?.get("returnTo")?.toString() ?? "/setup?connected=github";
+  const safeReturn =
+    rawReturn.startsWith("/") && !rawReturn.startsWith("//")
+      ? rawReturn
+      : "/setup?connected=github";
+  await signIn("github", { redirectTo: safeReturn });
+}
+
 export type RegisterActionState = {
   status:
     | "idle"

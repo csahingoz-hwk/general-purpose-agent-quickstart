@@ -3,7 +3,6 @@
 import {
   CheckCircle2Icon,
   ClockIcon,
-  ExternalLinkIcon,
   KeyRoundIcon,
   LayersIcon,
   PauseIcon,
@@ -12,6 +11,7 @@ import {
   Trash2Icon,
   XCircleIcon,
 } from "lucide-react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
@@ -150,6 +150,17 @@ function RoutinesPageContent() {
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    try {
+      const detected = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (detected) {
+        setTimezone(detected);
+      }
+    } catch {
+      /* keep default */
+    }
+  }, []);
+
   const [secretProvider, setSecretProvider] = useState("gemini");
   const [secretName, setSecretName] = useState("GEMINI_API_KEY");
   const [secretPlaintext, setSecretPlaintext] = useState("");
@@ -174,7 +185,6 @@ function RoutinesPageContent() {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
   });
-  const [githubTokenInput, setGithubTokenInput] = useState("");
 
   async function handleCreateRoutine(event: React.FormEvent) {
     event.preventDefault();
@@ -431,57 +441,56 @@ function RoutinesPageContent() {
             >
               <h2 className="font-semibold text-[15px]">New routine</h2>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="space-y-1.5 text-sm">
-                  <span className="text-muted-foreground text-xs">
-                    When to run
-                  </span>
-                  <select
-                    className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setScheduleChoice(val);
-                      if (val !== "custom") {
-                        setCronExpression(val);
-                      }
-                    }}
-                    value={scheduleChoice}
-                  >
-                    {SCHEDULE_OPTIONS.map((opt) => (
-                      <option key={opt.label} value={opt.cron}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="space-y-1.5 text-sm">
-                  <span className="text-muted-foreground text-xs">
-                    Time zone
-                  </span>
-                  <input
-                    className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
-                    onChange={(e) => setTimezone(e.target.value)}
-                    placeholder="Europe/London"
-                    required
-                    value={timezone}
-                  />
-                </label>
-              </div>
+              <label className="block space-y-1.5 text-sm">
+                <span className="text-muted-foreground text-xs">
+                  When to run ({timezone})
+                </span>
+                <select
+                  className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setScheduleChoice(val);
+                    if (val !== "custom") {
+                      setCronExpression(val);
+                    }
+                  }}
+                  value={scheduleChoice}
+                >
+                  {SCHEDULE_OPTIONS.map((opt) => (
+                    <option key={opt.label} value={opt.cron}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
               {scheduleChoice === "custom" && (
-                <label className="block space-y-1.5 text-sm">
-                  <span className="text-muted-foreground text-xs">
-                    Custom 5-field cron schedule
-                  </span>
-                  <input
-                    className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 font-mono text-[16px] text-foreground"
-                    onChange={(e) => setCronExpression(e.target.value)}
-                    placeholder="0 8 * * 1-5"
-                    required
-                    value={cronExpression}
-                  />
-                </label>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block space-y-1.5 text-sm">
+                    <span className="text-muted-foreground text-xs">
+                      Custom 5-field cron schedule
+                    </span>
+                    <input
+                      className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 font-mono text-[16px] text-foreground"
+                      onChange={(e) => setCronExpression(e.target.value)}
+                      placeholder="0 8 * * 1-5"
+                      required
+                      value={cronExpression}
+                    />
+                  </label>
+                  <label className="block space-y-1.5 text-sm">
+                    <span className="text-muted-foreground text-xs">
+                      Time zone
+                    </span>
+                    <input
+                      className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                      onChange={(e) => setTimezone(e.target.value)}
+                      placeholder="Europe/London"
+                      required
+                      value={timezone}
+                    />
+                  </label>
+                </div>
               )}
 
               <label className="block space-y-1.5 text-sm">
@@ -731,115 +740,45 @@ function RoutinesPageContent() {
                 )}
               </div>
 
-              <div className="space-y-3 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1 space-y-0.5">
-                    <p className="font-semibold text-[15px] text-foreground">
-                      GitHub Pull Requests{" "}
-                      <span className="font-normal text-muted-foreground text-xs">
-                        (optional)
-                      </span>
-                    </p>
-                    <p className="text-muted-foreground text-xs">
-                      Read PRs &amp; issues and prepare unpublished draft
-                      reviews.
-                    </p>
-                  </div>
-                  {connectorsData?.githubReady && (
-                    <div className="flex items-center gap-2">
-                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300">
-                        <CheckCircle2Icon className="size-3.5" />
-                        Connected
-                      </span>
-                      <button
-                        className="min-h-10 rounded-full border border-[color:var(--hairline)] px-3 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
-                        onClick={async () => {
-                          await fetch(
-                            `${basePath}/api/connectors?provider=github`,
-                            { method: "DELETE" }
-                          );
-                          await Promise.all([
-                            mutateVault(),
-                            mutateConnectors(),
-                          ]);
-                        }}
-                        type="button"
-                      >
-                        Disconnect
-                      </button>
-                    </div>
-                  )}
+              <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <p className="font-semibold text-[15px] text-foreground">
+                    GitHub Pull Requests{" "}
+                    <span className="font-normal text-muted-foreground text-xs">
+                      (optional)
+                    </span>
+                  </p>
+                  <p className="text-muted-foreground text-xs">
+                    Read PRs &amp; issues and prepare unpublished draft reviews.
+                  </p>
                 </div>
-
-                {!connectorsData?.githubReady && (
-                  <form
-                    className="space-y-2.5 rounded-xl bg-muted/50 p-3"
-                    onSubmit={async (event) => {
-                      event.preventDefault();
-                      if (!githubTokenInput.trim()) {
-                        return;
-                      }
-                      setBusy(true);
-                      try {
-                        const res = await fetch(`${basePath}/api/vault`, {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            name: "GITHUB_CONNECTOR_PAT",
-                            provider: "github",
-                            plaintext: githubTokenInput.trim(),
-                          }),
-                        });
-                        if (!res.ok) {
-                          throw new Error("Could not connect GitHub");
-                        }
-                        setGithubTokenInput("");
+                {connectorsData?.githubReady ? (
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300">
+                      <CheckCircle2Icon className="size-3.5" />
+                      Connected
+                    </span>
+                    <button
+                      className="min-h-10 rounded-full border border-[color:var(--hairline)] px-3 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
+                      onClick={async () => {
+                        await fetch(
+                          `${basePath}/api/connectors?provider=github`,
+                          { method: "DELETE" }
+                        );
                         await Promise.all([mutateVault(), mutateConnectors()]);
-                        toast({
-                          type: "success",
-                          description: "GitHub connected.",
-                        });
-                      } catch (err) {
-                        toast({
-                          type: "error",
-                          description:
-                            err instanceof Error
-                              ? err.message
-                              : "Could not connect GitHub",
-                        });
-                      } finally {
-                        setBusy(false);
-                      }
-                    }}
-                  >
-                    <a
-                      className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-card px-3.5 font-medium text-foreground text-xs hover:bg-muted"
-                      href="https://github.com/settings/tokens/new?description=Personal+Assistant+(Read+%26+Draft)&scopes=repo"
-                      rel="noopener noreferrer"
-                      target="_blank"
+                      }}
+                      type="button"
                     >
-                      1. Open GitHub (permissions pre-selected)
-                      <ExternalLinkIcon className="size-3.5" />
-                    </a>
-                    <div className="flex gap-2">
-                      <input
-                        autoComplete="off"
-                        className="min-h-11 flex-1 rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
-                        onChange={(e) => setGithubTokenInput(e.target.value)}
-                        placeholder="2. Paste token generated on GitHub"
-                        required
-                        type="password"
-                        value={githubTokenInput}
-                      />
-                      <button
-                        className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs disabled:opacity-50"
-                        disabled={busy || vaultData?.status !== "ready"}
-                        type="submit"
-                      >
-                        Connect
-                      </button>
-                    </div>
-                  </form>
+                      Disconnect
+                    </button>
+                  </div>
+                ) : (
+                  <Link
+                    className="inline-flex min-h-10 shrink-0 items-center rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-foreground text-xs transition-colors hover:bg-muted"
+                    href="/setup"
+                  >
+                    Setup checklist
+                  </Link>
                 )}
               </div>
             </div>
@@ -889,18 +828,20 @@ function RoutinesPageContent() {
                     </select>
                   </label>
 
-                  <label className="space-y-1.5 text-sm">
-                    <span className="text-muted-foreground text-xs">
-                      Credential name
-                    </span>
-                    <input
-                      className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 font-mono text-[15px] text-foreground"
-                      onChange={(e) => setSecretName(e.target.value)}
-                      placeholder="e.g. GEMINI_API_KEY"
-                      required
-                      value={secretName}
-                    />
-                  </label>
+                  {secretProvider === "custom" && (
+                    <label className="space-y-1.5 text-sm">
+                      <span className="text-muted-foreground text-xs">
+                        Credential name
+                      </span>
+                      <input
+                        className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 font-mono text-[15px] text-foreground"
+                        onChange={(e) => setSecretName(e.target.value)}
+                        placeholder="CUSTOM_KEY_NAME"
+                        required
+                        value={secretName}
+                      />
+                    </label>
+                  )}
                 </div>
 
                 <label className="block space-y-1.5 text-sm">

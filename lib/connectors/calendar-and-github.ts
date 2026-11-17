@@ -248,6 +248,9 @@ async function resolveGithubPatFromVault(
   userId: string,
   vaultStore?: SecretVaultStore
 ): Promise<string | null> {
+  if (!vaultStore && process.env.GITHUB_CONNECTOR_PAT?.trim()) {
+    return process.env.GITHUB_CONNECTOR_PAT.trim();
+  }
   const store = vaultStore ?? createPostgresVaultStore();
   try {
     const token = await store.resolveSecret({

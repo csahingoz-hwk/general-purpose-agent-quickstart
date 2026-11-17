@@ -19,7 +19,6 @@ const ACTIVE_BOT_STORAGE_KEY = "assistant-active-bot";
 export default function TeammatesPage() {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
   const [activeSlug, setActiveSlug] = useState<string>("chief-of-staff");
-  const [slug, setSlug] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [soul, setSoul] = useState("");
@@ -79,13 +78,22 @@ export default function TeammatesPage() {
 
   async function handleSave(event: React.FormEvent) {
     event.preventDefault();
+    const autoSlug = name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 64);
+    if (autoSlug.length < 2) {
+      return;
+    }
     setSaving(true);
     try {
       const res = await fetch(`${basePath}/api/bots`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          slug,
+          slug: autoSlug,
           name,
           description,
           soul,
@@ -98,7 +106,6 @@ export default function TeammatesPage() {
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error ?? "Could not save teammate");
       }
-      setSlug("");
       setName("");
       setDescription("");
       setSoul("");
@@ -212,32 +219,16 @@ export default function TeammatesPage() {
           onSubmit={handleSave}
         >
           <h2 className="font-semibold text-[15px]">New custom teammate</h2>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="space-y-1.5 text-sm">
-              <span className="text-muted-foreground text-xs">
-                Short identifier
-              </span>
-              <input
-                className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
-                onChange={(e) => setSlug(e.target.value)}
-                placeholder="e.g. tax-reviewer"
-                required
-                value={slug}
-              />
-            </label>
-            <label className="space-y-1.5 text-sm">
-              <span className="text-muted-foreground text-xs">
-                Display name
-              </span>
-              <input
-                className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Tax Reviewer"
-                required
-                value={name}
-              />
-            </label>
-          </div>
+          <label className="block space-y-1.5 text-sm">
+            <span className="text-muted-foreground text-xs">Name</span>
+            <input
+              className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. Tax Reviewer"
+              required
+              value={name}
+            />
+          </label>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="space-y-1.5 text-sm">
               <span className="text-muted-foreground text-xs">

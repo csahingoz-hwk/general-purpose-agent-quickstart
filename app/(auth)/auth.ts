@@ -1,7 +1,9 @@
 import NextAuth, { type DefaultSession } from "next-auth";
 import type { DefaultJWT } from "next-auth/jwt";
+import GitHub from "next-auth/providers/github";
 import Google from "next-auth/providers/google";
 import { isOwnerIdentity } from "@/lib/access-policy";
+import { GITHUB_VAULT_SECRET_NAME } from "@/lib/connectors/calendar-and-github";
 import { GOOGLE_VAULT_SECRET_NAMES } from "@/lib/connectors/google-vault-auth";
 import { getOrCreateGoogleOwner } from "@/lib/db/queries";
 import {
@@ -47,20 +49,60 @@ export const {
 } = NextAuth({
   ...authConfig,
   session: { strategy: "jwt" },
-  providers: isGoogleSignInConfigured()
-    ? [
-        Google({
-          clientId: process.env.AUTH_GOOGLE_ID,
-          clientSecret: process.env.AUTH_GOOGLE_SECRET,
-          authorization: {
-            params: { scope: GOOGLE_IDENTITY_SCOPE, prompt: "select_account" },
-          },
-          checks: ["pkce", "state", "nonce"],
-        }),
-      ]
-    : [],
+  providers: [
+    ...(isGoogleSignInConfigured()
+      ? [
+          Google({
+            clientId: process.env.AUTH_GOOGLE_ID,
+            clientSecret: process.env.AUTH_GOOGLE_SECRET,
+            authorization: {
+              params: {
+                scope: GOOGLE_IDENTITY_SCOPE,
+                prompt: "select_account",
+              },
+            },
+            checks: ["pkce", "state", "nonce"],
+          }),
+        ]
+      : []),
+    ...(process.env.AUTH_GITHUB_ID?.trim() &&
+    process.env.AUTH_GITHUB_SECRET?.trim()
+      ? [
+          GitHub({
+            clientId: process.env.AUTH_GITHUB_ID,
+            clientSecret: process.env.AUTH_GITHUB_SECRET,
+            authorization: { params: { scope: "repo read:user" } },
+          }),
+        ]
+      : []),
+  ],
   callbacks: {
     async signIn({ user, account, profile }) {
+      if (account?.provider === "github") {
+        const existingSession = await rawAuth();
+        if (!isOwnerIdentity(existingSession?.user) || !existingSession?.user) {
+          return false;
+        }
+        if (account.access_token?.trim() && isVaultConfigured()) {
+          try {
+            await createPostgresVaultStore().upsertSecret({
+              userId: existingSession.user.id,
+              name: GITHUB_VAULT_SECRET_NAME,
+              provider: "github",
+              plaintext: account.access_token.trim(),
+            });
+          } catch {
+            /* non-fatal */
+          }
+        }
+        Object.assign(user, {
+          id: existingSession.user.id,
+          email: existingSession.user.email,
+          type: "regular" as const,
+        });
+        return true;
+      }
+
       if (account?.provider !== "google") {
         return false;
       }

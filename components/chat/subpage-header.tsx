@@ -29,6 +29,7 @@ function parkPreviewToolbar(slot: HTMLElement) {
 
 const WORKSPACE_SECTIONS = [
   { href: "/usage", label: "Settings" },
+  { href: "/setup", label: "Setup" },
   { href: "/teammates", label: "Teammates" },
   { href: "/memory", label: "Memory" },
   { href: "/routines", label: "Routines" },

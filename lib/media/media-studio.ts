@@ -64,10 +64,14 @@ export function resolveVeoModelName(): string {
 
 async function readGeminiKeyFromVault(
   userId: string,
-  vaultStore: SecretVaultStore
+  vaultStore?: SecretVaultStore
 ): Promise<string | null> {
+  if (!vaultStore && process.env.GEMINI_API_KEY?.trim()) {
+    return process.env.GEMINI_API_KEY.trim();
+  }
+  const store = vaultStore ?? createPostgresVaultStore();
   try {
-    const val = await vaultStore.resolveSecret({
+    const val = await store.resolveSecret({
       userId,
       name: MEDIA_VAULT_SECRET_NAME,
     });
@@ -130,8 +134,7 @@ export async function generateImageWithImagen(opts: {
   }
 
   const model = resolveImagenModelName();
-  const vault = opts.vaultStore ?? createPostgresVaultStore();
-  const geminiKey = await readGeminiKeyFromVault(opts.userId, vault);
+  const geminiKey = await readGeminiKeyFromVault(opts.userId, opts.vaultStore);
   const useGateway = !geminiKey && gatewayEnabled();
   if (!geminiKey && !useGateway) {
     return {
@@ -351,13 +354,12 @@ export async function generateVideoWithVeo(opts: {
   }
 
   const model = resolveVeoModelName();
-  const vault = opts.vaultStore ?? createPostgresVaultStore();
-  const geminiKey = await readGeminiKeyFromVault(opts.userId, vault);
+  const geminiKey = await readGeminiKeyFromVault(opts.userId, opts.vaultStore);
   if (!geminiKey) {
     return {
       status: "setup_required",
       message:
-        "Media Studio requires GEMINI_API_KEY in /routines -> Secret Vault before generating video clips.",
+        "Veo video generation is optional — open /setup to create a key if needed.",
     };
   }
 

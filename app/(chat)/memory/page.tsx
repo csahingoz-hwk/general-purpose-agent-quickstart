@@ -52,7 +52,6 @@ export default function MemoryPage() {
   const [tab, setTab] = useState<"profile" | "journal">("profile");
   const [searchQuery, setSearchQuery] = useState("");
   const [factCategory, setFactCategory] = useState<string>("preference");
-  const [factKey, setFactKey] = useState("");
   const [factValue, setFactValue] = useState("");
   const [sharedAcrossBots, setSharedAcrossBots] = useState(true);
   const [journalTitle, setJournalTitle] = useState("");
@@ -67,9 +66,16 @@ export default function MemoryPage() {
 
   async function handleSaveFact(event: React.FormEvent) {
     event.preventDefault();
-    if (!factKey.trim() || !factValue.trim()) {
+    if (!factValue.trim()) {
       return;
     }
+    const autoKey =
+      factValue
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 48) || "fact";
     setSubmitting(true);
     try {
       const response = await fetch(`${basePath}/api/memory`, {
@@ -78,7 +84,7 @@ export default function MemoryPage() {
         body: JSON.stringify({
           type: "profile",
           category: factCategory,
-          key: factKey.trim(),
+          key: autoKey,
           value: factValue.trim(),
           sharedAcrossBots,
         }),
@@ -87,7 +93,6 @@ export default function MemoryPage() {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error ?? "Could not save profile fact");
       }
-      setFactKey("");
       setFactValue("");
       await mutate();
       toast({ type: "success", description: "Profile fact saved." });
@@ -253,26 +258,18 @@ export default function MemoryPage() {
                   </select>
                 </label>
                 <label className="space-y-1.5 text-sm sm:col-span-2">
-                  <span className="text-muted-foreground text-xs">Topic</span>
+                  <span className="text-muted-foreground text-xs">
+                    What to remember
+                  </span>
                   <input
                     className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
-                    onChange={(e) => setFactKey(e.target.value)}
-                    placeholder="e.g. reporting_currency"
+                    onChange={(e) => setFactValue(e.target.value)}
+                    placeholder="e.g. Prefer concise variance tables in GBP & USD"
                     required
-                    value={factKey}
+                    value={factValue}
                   />
                 </label>
               </div>
-              <label className="block space-y-1.5 text-sm">
-                <span className="text-muted-foreground text-xs">Detail</span>
-                <input
-                  className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
-                  onChange={(e) => setFactValue(e.target.value)}
-                  placeholder="e.g. Prefer concise variance tables in GBP & USD"
-                  required
-                  value={factValue}
-                />
-              </label>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm">
                   <input

@@ -58,6 +58,20 @@ test("secret vault fails closed when both SECRET_VAULT_KEY and AUTH_SECRET are m
       }),
       "AIzaSyExampleKey123456"
     );
+
+    // Adding a dedicated SECRET_VAULT_KEY later still decrypts rows encrypted under AUTH_SECRET
+    process.env.SECRET_VAULT_KEY =
+      "dedicated-rotated-vault-key-at-least-32-bytes";
+    assert.equal(
+      decryptSecretPayload({
+        userId: "user-1",
+        name: "GEMINI_API_KEY",
+        ciphertext: encFromAuth.ciphertext,
+        iv: encFromAuth.iv,
+        authTag: encFromAuth.authTag,
+      }),
+      "AIzaSyExampleKey123456"
+    );
   } finally {
     if (prev !== undefined) {
       process.env.SECRET_VAULT_KEY = prev;
