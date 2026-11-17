@@ -12,6 +12,7 @@ import { budgetModelMessages } from "../../lib/ai/context/budget";
 import { safeModelError } from "../../lib/ai/context/errors";
 import { DEFAULT_CHAT_MODEL } from "../../lib/ai/models";
 import {
+  HYDROGEN,
   LUNA,
   legacyEnabled,
   openAIEnabled,
@@ -114,8 +115,8 @@ const transient = Object.assign(new Error("private upstream body"), {
   statusCode: 503,
 });
 
-test("GPT-6.1 Terra is the default; OpenAI and legacy routing require explicit separate enablement", () => {
-  assert.equal(DEFAULT_CHAT_MODEL, TERRA);
+test("Gemini 4 Hydrogen is the default; OpenAI and legacy routing require explicit separate enablement", () => {
+  assert.equal(DEFAULT_CHAT_MODEL, HYDROGEN);
   const prior = { ...process.env };
   try {
     process.env.OPENAI_API_KEY = undefined;
@@ -152,6 +153,7 @@ test("fallback policy excludes billing, shared rates, cancellation, auth, contex
     "tool",
     "unavailable",
     "spend",
+    "work_boundary",
   ] as const) {
     assert.equal(mayFallback({ ...base, failure }), false);
   }

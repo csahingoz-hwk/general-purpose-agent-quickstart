@@ -1,20 +1,40 @@
-/** Official Standard USD/1M tokens, verified against Vercel AI Gateway catalog. */
+import { isVertexWifConfigured } from "../vertex-auth";
+
+/**
+ * Model pricing & budget catalog.
+ * - `gemini-4-hydrogen` and `gemini-4-argon` execute directly on Google Cloud
+ *   Vertex AI (`project-cd0bc64c-0025-446c-b41`, billing `0140A2-72DEB2-62EDCD`
+ *   covered by the $40/mo Google AI Ultra credit), so they consume $0 of the
+ *   Vercel AI Gateway / OpenAI cash allowance (`input/output = 0` in the
+ *   Gateway spend cap ledger).
+ * - `gpt-6.1-terra` executes on Vercel AI Gateway / OpenAI and is metered
+ *   against `AI_MONTHLY_ALLOWANCE_USD`.
+ */
 export const premiumModels = {
+  "gemini-4-hydrogen": {
+    input: 0,
+    cached: 0,
+    cacheWrite: 0,
+    output: 0,
+    contextWindow: 1_000_000,
+    inferenceBudget: 65_536,
+    outputLimit: 8192,
+  },
+  "gemini-4-argon": {
+    input: 0,
+    cached: 0,
+    cacheWrite: 0,
+    output: 0,
+    contextWindow: 1_000_000,
+    inferenceBudget: 65_536,
+    outputLimit: 8192,
+  },
   "gpt-6.1-terra": {
     input: 1,
     cached: 0.05,
     cacheWrite: 1.25,
     output: 5,
     contextWindow: 1_050_000,
-    inferenceBudget: 65_536,
-    outputLimit: 8192,
-  },
-  "gemini-4-hydrogen": {
-    input: 1.5,
-    cached: 0.075,
-    cacheWrite: 1.5,
-    output: 7.5,
-    contextWindow: 1_000_000,
     inferenceBudget: 65_536,
     outputLimit: 8192,
   },
@@ -28,29 +48,29 @@ export const premiumModels = {
     outputLimit: 4096,
   },
 } as const;
+
 export type PremiumModelId = keyof typeof premiumModels;
+export type VertexModelId = "gemini-4-hydrogen" | "gemini-4-argon";
+
 /**
- * AI Gateway DeepSeek Search: USD 0.75 per 1,000 billable requests (a billable
- * request is a successful call returning a non-empty results array). Source:
- * https://vercel.com/docs/ai-gateway/models-and-providers/web-search, verified
- * 2026-11-10. The price does not depend on the requested result count. Host
- * model tokens (including tool results in context) are charged separately.
+ * AI Gateway DeepSeek Search: USD 0.75 per 1,000 billable requests when routed
+ * through AI Gateway (`gpt-6.1-terra`). Vertex AI models use native Vertex
+ * Google Search grounding billed to `0140A2-72DEB2-62EDCD` Ultra credit.
  */
 export const WEB_SEARCH_COST_USD = 0.000_75;
-/**
- * Hard cap on searches inside one model call. AI Gateway executes the search and
- * lets the model continue inside the same call, so the SDK step budget cannot
- * bound it; the routed model counts tool calls and aborts above this cap.
- */
 export const WEB_SEARCH_MAX_CALLS = 8;
-/** Provider-executed tool id of gateway.tools.deepseekSearch (AI Gateway only). */
 export const WEB_SEARCH_TOOL_ID = "gateway.deepseek_search";
-export const TERRA: PremiumModelId = "gpt-6.1-terra";
-export const HYDROGEN: PremiumModelId = "gemini-4-hydrogen";
-export const LUNA: PremiumModelId = "gpt-6-luna";
+
+export const HYDROGEN = "gemini-4-hydrogen" as const;
+export const ARGON = "gemini-4-argon" as const;
+export const TERRA = "gpt-6.1-terra" as const;
+export const LUNA = "gpt-6-luna" as const;
 
 export function isPremiumModel(id: string): id is PremiumModelId {
   return Object.hasOwn(premiumModels, id);
+}
+export function isVertexModel(id: string): id is VertexModelId {
+  return id === HYDROGEN || id === ARGON;
 }
 export function isOpenAIPremiumModel(
   id: string
@@ -58,13 +78,16 @@ export function isOpenAIPremiumModel(
   return id === TERRA || id === LUNA;
 }
 export function isFloorCompliantModel(id: string): boolean {
-  return id === TERRA || id === HYDROGEN;
+  return id === HYDROGEN || id === ARGON || id === TERRA;
 }
 export function legacyEnabled() {
   return (
     process.env.CHAT_PROVIDER === "groq-legacy" &&
     process.env.ENABLE_LEGACY_GROQ === "true"
   );
+}
+export function vertexEnabled() {
+  return !legacyEnabled() && isVertexWifConfigured();
 }
 export function openAIEnabled() {
   return (
@@ -73,31 +96,27 @@ export function openAIEnabled() {
     Boolean(process.env.OPENAI_API_KEY?.trim())
   );
 }
-/**
- * Opt-in, preview-only AI Gateway lane; Production stays disabled by default.
- *
- * This deliberately checks the explicit opt-in flag ONLY. It must not look for a
- * credential in process.env: on Vercel the OIDC token reaches a deployed
- * function in the `x-vercel-oidc-token` request header, and the AI SDK Gateway
- * provider resolves it (or AI_GATEWAY_API_KEY) itself. Whether authentication
- * actually works is established by the authenticated catalog call in
- * ./gateway.ts, never guessed from environment variables.
- */
 export function gatewayEnabled() {
   return !legacyEnabled() && process.env.AI_GATEWAY_USAGE_ENABLED === "true";
 }
 
 /**
- * Web search exists only when a premium model is actually served through AI
- * Gateway. Direct OpenAI and legacy Groq never offer it.
+ * Web search is available on Vertex AI Gemini 4 models (via Vertex Google Search
+ * grounding on Ultra credit) and on Gateway-served premium models (`gpt-6.1-terra`).
  */
 export function webSearchLane(modelId: string) {
+  if (legacyEnabled()) {
+    return false;
+  }
+  if (isVertexModel(modelId) && vertexEnabled()) {
+    return true;
+  }
   return gatewayEnabled() && isPremiumModel(modelId);
 }
 
-/** Either explicitly enabled paid lane (Gateway or direct OpenAI). */
+/** Any enabled primary/fallback lane (Vertex WIF, Gateway, or direct OpenAI). */
 export function premiumLaneEnabled() {
-  return gatewayEnabled() || openAIEnabled();
+  return vertexEnabled() || gatewayEnabled() || openAIEnabled();
 }
 
 export function monthlyAllowance() {

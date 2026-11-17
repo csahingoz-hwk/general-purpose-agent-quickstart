@@ -1,7 +1,11 @@
 import { generateText } from "ai";
 import type { Session } from "next-auth";
-import { DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
-import { gatewayEnabled } from "@/lib/ai/routing/catalog";
+import {
+  gatewayEnabled,
+  HYDROGEN,
+  TERRA,
+  vertexEnabled,
+} from "@/lib/ai/routing/catalog";
 import { createCalendarAndGithubTools } from "@/lib/ai/tools/calendar-github-connectors";
 import { createCloudComputerTools } from "@/lib/ai/tools/cloud-computer";
 import {
@@ -164,6 +168,7 @@ export async function runServerWebSearch(opts: {
     };
   }
 
+  const canUseVertex = vertexEnabled();
   const hasGatewayCreds =
     gatewayEnabled() &&
     Boolean(
@@ -171,11 +176,15 @@ export async function runServerWebSearch(opts: {
         process.env.VERCEL_OIDC_TOKEN?.trim()
     );
 
-  if (hasGatewayCreds && !opts.fetchImpl) {
+  if ((canUseVertex || hasGatewayCreds) && !opts.fetchImpl) {
     try {
-      const { getLanguageModel } = await import("@/lib/ai/providers");
+      const model = canUseVertex
+        ? (await import("@/lib/ai/vertex-model")).createVertexGeminiAdapter(
+            HYDROGEN
+          )
+        : (await import("@/lib/ai/routing/model")).createGatewayAdapter(TERRA);
       const res = await generateText({
-        model: getLanguageModel(DEFAULT_CHAT_MODEL),
+        model,
         prompt: `Search the web for: ${query}\nGive a concise factual 2-sentence summary.`,
         tools: { webSearch: webSearch() },
         maxOutputTokens: 280,

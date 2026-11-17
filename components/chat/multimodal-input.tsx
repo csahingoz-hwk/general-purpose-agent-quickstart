@@ -756,7 +756,7 @@ function PureModelSelectorCompact({
                 keywords={[model.name, model.description]}
                 onSelect={() => {
                   onModelChange?.(model.id);
-                  setCookie("chat-model-manual", model.id);
+                  setCookie("chat-model-manual-v2", model.id);
                   setOpen(false);
                 }}
                 value={model.id}

@@ -8,7 +8,8 @@ export type Failure =
   | "cancelled"
   | "tool"
   | "unavailable"
-  | "spend";
+  | "spend"
+  | "work_boundary";
 export class ModelFailure extends Error {
   readonly code: Failure;
   constructor(code: Failure) {

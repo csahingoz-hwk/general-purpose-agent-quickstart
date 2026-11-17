@@ -10,6 +10,8 @@ import { selectActiveTools } from "../../lib/ai/context/select-tools";
 import { DEFAULT_CHAT_MODEL } from "../../lib/ai/models";
 import { systemPrompt } from "../../lib/ai/prompts";
 import {
+  ARGON,
+  HYDROGEN,
   LUNA,
   premiumModels,
   TERRA,
@@ -139,19 +141,24 @@ test("webSearch never sits beside state-changing tools; read-only tools may coex
   );
 });
 
-test("Default chat is GPT-6.1 Terra and can search only on the Gateway lane", () => {
+test("Default chat is Gemini 4 Hydrogen and searches via Vertex Google Search grounding on Ultra credit", () => {
   const keys = [
+    "GOOGLE_VERTEX_PROJECT_ID",
+    "GOOGLE_VERTEX_WORKLOAD_AUDIENCE",
     "AI_GATEWAY_USAGE_ENABLED",
     "CHAT_PROVIDER",
     "ENABLE_LEGACY_GROQ",
   ] as const;
   const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   try {
-    assert.equal(DEFAULT_CHAT_MODEL, TERRA);
-    process.env.AI_GATEWAY_USAGE_ENABLED = "true";
+    assert.equal(DEFAULT_CHAT_MODEL, HYDROGEN);
+    process.env.GOOGLE_VERTEX_PROJECT_ID = "project-cd0bc64c-0025-446c-b41";
+    process.env.GOOGLE_VERTEX_WORKLOAD_AUDIENCE =
+      "//iam.googleapis.com/projects/439781161791/locations/global/workloadIdentityPools/vercel-pool/providers/vercel-oidc";
     Reflect.deleteProperty(process.env, "CHAT_PROVIDER");
     Reflect.deleteProperty(process.env, "ENABLE_LEGACY_GROQ");
     assert.equal(webSearchLane(DEFAULT_CHAT_MODEL), true);
+    assert.equal(webSearchLane(ARGON), true);
     assert.equal(webSearchLane("openai/gpt-oss-20b"), false);
   } finally {
     for (const key of keys) {

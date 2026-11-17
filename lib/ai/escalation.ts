@@ -1,31 +1,37 @@
-import { HYDROGEN, LUNA, TERRA } from "./routing/catalog";
+import { ARGON, HYDROGEN, TERRA } from "./routing/catalog";
 
 export type ActiveReasoningEffort = "low" | "medium" | "high";
 
-const DEEP_RESEARCH_PATTERN =
-  /\b(research|compare|comparison|versus|vs\.?|top\s+\d+|highest[- ]paid|top\s+earners?|annual\s+(?:pay|salary|compensation|earnings)|benchmark|analy[sz]e|in[- ]depth|comprehensive|breakdown|ranking|rank|araştır\p{L}*|karşılaştır\p{L}*|kıyasla\p{L}*|en\s+çok\s+kazanan\p{L}*|en\s+yüksek\s+(?:maaş|kazanç|gelir|ücret)\p{L}*|detaylı\s+(?:analiz|incele|rapor)\p{L}*|sıralama\p{L}*|yıllık\s+(?:maaş|kazanç|ücret|gelir)\p{L}*)\b/iu;
+const HARD_OR_RESEARCH_PATTERN =
+  /\b(research|compare|comparison|versus|vs\.?|top\s+\d+|highest[- ]paid|top\s+earners?|annual\s+(?:pay|salary|compensation|earnings)|benchmark|analy[sz]e|analysis|in[- ]depth|comprehensive|breakdown|ranking|rank|prove|theorem|architect(?:ure)?|trade[- ]?offs?|root\s+cause|debug|reconcil\p{L}*|araştır\p{L}*|karşılaştır\p{L}*|kıyasla\p{L}*|en\s+çok\s+kazanan\p{L}*|en\s+yüksek\s+(?:maaş|kazanç|gelir|ücret)\p{L}*|detaylı\s+(?:analiz|incele|rapor)\p{L}*|sıralama\p{L}*|yıllık\s+(?:maaş|kazanç|ücret|gelir)\p{L}*|derinlemesine|kapsamlı|mimari|nedenini\s+bul)\b/iu;
 
-export function isResearchOrMultiSearchTurn(
+export function isResearchOrHardTurn(
   userText: string,
   requestedTools: readonly string[]
-): { research: boolean; deepAnalytical: boolean } {
-  const hasSearchOrDelegation =
+): { escalate: boolean; hardAnalytical: boolean } {
+  const hasResearchOrOperatorTool =
     requestedTools.includes("webSearch") ||
-    requestedTools.includes("delegateTask");
-  const deepAnalytical =
-    DEEP_RESEARCH_PATTERN.test(userText) || userText.trim().length >= 280;
+    requestedTools.includes("delegateTask") ||
+    requestedTools.includes("cloudExec") ||
+    requestedTools.includes("macRunAgentCli");
+  const multiQuestion = (userText.match(/\?/g)?.length ?? 0) >= 2;
+  const hardAnalytical =
+    HARD_OR_RESEARCH_PATTERN.test(userText) ||
+    userText.trim().length >= 240 ||
+    multiQuestion;
   return {
-    research: hasSearchOrDelegation || deepAnalytical,
-    deepAnalytical,
+    escalate: hasResearchOrOperatorTool || hardAnalytical,
+    hardAnalytical,
   };
 }
 
 /**
- * Enforces the owner's research auto-escalation rule:
- * - Research and multi-search questions NEVER run on GPT-6 Luna or low effort,
- *   even if Luna was manually selected in the picker.
- * - Escalates to GPT-6.1 Terra (or Gemini 4 Hydrogen if Terra isn't listed on
- *   the Gateway) with medium or higher reasoning effort.
+ * Owner Vertex + Ultra routing rule:
+ * - Default everyday chat runs on `gemini-4-hydrogen` via Vertex AI (Ultra credit).
+ * - Research, multi-search, and hard questions automatically escalate to
+ *   `gemini-4-argon` via the same zero-key Vertex AI route (or `gpt-6.1-terra`
+ *   if Vertex Argon isn't in `availableModelIds`).
+ * - Never selects or escalates to Luna or Gemini 3.8 Flash.
  */
 export function resolveTurnModelAndEffort(input: {
   selectedModelId: string;
@@ -38,7 +44,7 @@ export function resolveTurnModelAndEffort(input: {
   reasoningEffort: ActiveReasoningEffort;
   escalated: boolean;
 } {
-  const { research, deepAnalytical } = isResearchOrMultiSearchTurn(
+  const { escalate, hardAnalytical } = isResearchOrHardTurn(
     input.userText,
     input.requestedTools
   );
@@ -46,16 +52,15 @@ export function resolveTurnModelAndEffort(input: {
   const normalizedBase: ActiveReasoningEffort =
     input.baseEffort === "high"
       ? "high"
-      : input.baseEffort === "medium"
-        ? "medium"
-        : input.selectedModelId === LUNA
-          ? "low"
-          : "medium";
+      : input.baseEffort === "low"
+        ? "low"
+        : "medium";
 
-  if (!research) {
+  if (!escalate) {
     return {
       modelId: input.selectedModelId,
-      reasoningEffort: normalizedBase,
+      reasoningEffort:
+        input.selectedModelId === ARGON ? "high" : normalizedBase,
       escalated: false,
     };
   }
@@ -63,22 +68,20 @@ export function resolveTurnModelAndEffort(input: {
   let targetModel = input.selectedModelId;
   let escalated = false;
 
-  if (targetModel === LUNA) {
-    if (input.availableModelIds.includes(TERRA)) {
-      targetModel = TERRA;
+  if (targetModel === HYDROGEN) {
+    if (input.availableModelIds.includes(ARGON)) {
+      targetModel = ARGON;
       escalated = true;
-    } else if (input.availableModelIds.includes(HYDROGEN)) {
-      targetModel = HYDROGEN;
+    } else if (input.availableModelIds.includes(TERRA)) {
+      targetModel = TERRA;
       escalated = true;
     }
   }
 
-  // Medium effort on live webSearch loops keeps 4–8 search steps snappy while
-  // meeting the >= medium floor; non-search deep research steps up to high.
   const targetEffort: ActiveReasoningEffort =
-    deepAnalytical && !input.requestedTools.includes("webSearch")
+    hardAnalytical && !input.requestedTools.includes("webSearch")
       ? "high"
-      : normalizedBase === "high"
+      : targetModel === ARGON && hardAnalytical
         ? "high"
         : "medium";
 

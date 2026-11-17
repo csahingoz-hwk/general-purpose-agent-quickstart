@@ -94,25 +94,26 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
       route.fulfill({
         json: {
           status: "ready",
-          defaultModelId: "gpt-6.1-terra",
+          defaultModelId: "gemini-4-hydrogen",
           models: [
-            {
-              id: "gpt-6.1-terra",
-              name: "GPT-6.1 Terra",
-              provider: "openai",
-              description: "Default · deep reasoning, tools & web research",
-            },
             {
               id: "gemini-4-hydrogen",
               name: "Gemini 4 Hydrogen",
               provider: "google",
-              description: "Fast multimodal reasoning · floor tier",
+              description: "Default · Vertex AI on Google AI Ultra credit",
             },
             {
-              id: "gpt-6-luna",
-              name: "GPT-6 Luna",
+              id: "gemini-4-argon",
+              name: "Gemini 4 Argon",
+              provider: "google",
+              description:
+                "Deep research & hard questions · Vertex AI on Ultra credit",
+            },
+            {
+              id: "gpt-6.1-terra",
+              name: "GPT-6.1 Terra",
               provider: "openai",
-              description: "Manual light option · low effort",
+              description: "Fallback & OpenAI option · Vercel AI Gateway",
             },
           ],
           capabilities: {},
@@ -297,10 +298,10 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
     const card = page.getByTestId("openui-card");
     await expect(card).toBeVisible({ timeout: 15_000 });
 
-    // Verify picker chip shows real model name ("GPT-6.1 Terra", not "Everyday chat")
+    // Verify picker chip shows real model name ("Gemini 4 Hydrogen", not "Everyday chat")
     const pickerChip = page.getByTestId("model-selector");
     await expect(pickerChip).toBeVisible();
-    await expect(pickerChip).toContainText("GPT-6.1 Terra");
+    await expect(pickerChip).toContainText("Gemini 4 Hydrogen");
 
     const hero = page.getByTestId("openui-weather-hero");
     await expect(hero).toBeVisible();

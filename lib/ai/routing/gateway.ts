@@ -1,6 +1,7 @@
 import { createGateway } from "ai";
 import { type ChatModel, chatModels } from "../models";
 import {
+  ARGON,
   gatewayEnabled,
   HYDROGEN,
   isPremiumModel,
@@ -8,15 +9,6 @@ import {
   type PremiumModelId,
   TERRA,
 } from "./catalog";
-
-/**
- * AI Gateway readiness, built on the native AI SDK Gateway provider.
- *
- * Authentication is resolved by the provider itself, in this order: an explicit
- * apiKey, AI_GATEWAY_API_KEY, then the Vercel OIDC token (the
- * `x-vercel-oidc-token` request header on Vercel deployments, or
- * VERCEL_OIDC_TOKEN locally). This module never reads or stores a credential.
- */
 
 export type ReadinessReason =
   | "ready"
@@ -30,12 +22,10 @@ export type ReadinessReason =
 export type Readiness = {
   status: "ready" | "setup_required" | "temporarily_unavailable";
   reason: ReadinessReason;
-  /** Safe, actionable text for the owner. Never contains secrets or raw upstream bodies. */
   hint: string | null;
   models: ChatModel[];
   defaultModelId: string | null;
   checkedAt: string | null;
-  /** Public model slugs the catalog did not list (e.g. Terra missing while Luna is ready). */
   unavailableModels: string[];
 };
 
@@ -45,7 +35,7 @@ type CatalogProvider = {
 
 const HINTS: Record<Exclude<ReadinessReason, "ready">, string> = {
   provider_opt_in_missing:
-    "No paid model lane is enabled for this deployment. Set AI_GATEWAY_USAGE_ENABLED=true for this Preview environment and redeploy.",
+    "No model lane is enabled for this deployment. Configure GOOGLE_VERTEX_PROJECT_ID + GOOGLE_VERTEX_WORKLOAD_AUDIENCE or AI_GATEWAY_USAGE_ENABLED=true and redeploy.",
   spend_configuration_invalid:
     "AI_MONTHLY_ALLOWANCE_USD must be a number above 0 and at most 10.",
   gateway_auth_missing:
@@ -55,12 +45,12 @@ const HINTS: Record<Exclude<ReadinessReason, "ready">, string> = {
   catalog_unavailable:
     "The AI Gateway model catalog could not be reached. This is usually temporary; try again shortly.",
   model_unavailable:
-    "Neither openai/gpt-6.1-terra nor google/gemini-4-hydrogen is listed by AI Gateway for this account.",
+    "GPT-6.1 Terra (openai/gpt-6.1-terra) is not listed by AI Gateway for this account.",
 };
 
 /** Exact provider-prefixed slug used by AI Gateway. */
 export function gatewaySlug(model: PremiumModelId | string) {
-  if (model === HYDROGEN) {
+  if (model === HYDROGEN || model === ARGON) {
     return `google/${model}`;
   }
   return `openai/${model}`;
@@ -84,7 +74,6 @@ function notReady(
   };
 }
 
-/** Map a native Gateway/AI SDK failure to a safe reason. Raw messages are never returned. */
 export function classifyGatewayFailure(
   error: unknown
 ): Exclude<
@@ -97,9 +86,6 @@ export function classifyGatewayFailure(
     cause?: { statusCode?: number } | null;
   } | null;
   if (e?.name === "GatewayAuthenticationError") {
-    // The SDK words every catalog 401 as "No authentication provided", so the
-    // message cannot tell the cases apart. A failure raised while resolving the
-    // credential locally has no HTTP status on its cause; a server rejection does.
     return typeof e.cause?.statusCode === "number"
       ? "gateway_auth_rejected"
       : "gateway_auth_missing";
@@ -123,16 +109,16 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 /**
- * Establish readiness for the Gateway lane. Returns "ready" only after an
- * authenticated catalog call succeeded and listed the default model; nothing
- * here is mocked, hardcoded or inferred from environment variables.
+ * Establish readiness for the Gateway fallback lane (`openai/gpt-6.1-terra`).
+ * Note: Google Gemini 4 models (`gemini-4-hydrogen`, `gemini-4-argon`) run on
+ * Vertex AI via WIF (not Gateway) in production so they bill to the Google AI
+ * Ultra Cloud credit (`0140A2-72DEB2-62EDCD`).
  */
 export async function discoverGatewayReadiness({
   provider,
   timeoutMs = 8000,
   now = () => new Date(),
 }: {
-  /** Injectable for tests. Production builds a fresh native provider per check. */
   provider?: CatalogProvider;
   timeoutMs?: number;
   now?: () => Date;
@@ -147,8 +133,6 @@ export async function discoverGatewayReadiness({
   }
   let listed: Set<string>;
   try {
-    // A fresh provider per check avoids the SDK's stale-while-revalidate catalog
-    // cache and any cached failure; successes are cached by the caller.
     const catalog = await withTimeout(
       (provider ?? createGateway()).getAvailableModels(),
       timeoutMs
@@ -157,22 +141,19 @@ export async function discoverGatewayReadiness({
   } catch (error) {
     return notReady(classifyGatewayFailure(error));
   }
-  const models = chatModels.filter(
-    (model) => isPremiumModel(model.id) && listed.has(gatewaySlug(model.id))
+
+  // Only OpenAI Terra is served via Gateway; Google Gemini 4 models run via Vertex WIF.
+  const gatewayCandidates = chatModels.filter(
+    (model) => isPremiumModel(model.id) && model.id === TERRA
   );
-  const unavailableModels = chatModels
-    .filter(
-      (model) => isPremiumModel(model.id) && !listed.has(gatewaySlug(model.id))
-    )
+  const models = gatewayCandidates.filter((model) =>
+    listed.has(gatewaySlug(model.id))
+  );
+  const unavailableModels = gatewayCandidates
+    .filter((model) => !listed.has(gatewaySlug(model.id)))
     .map((model) => gatewaySlug(model.id));
-  // Owner floor: default to GPT-6.1 Terra, or Gemini 4 Hydrogen if Terra is not
-  // listed on the Gateway. Never promote GPT-6 Luna to default.
-  const resolvedDefault = models.some((model) => model.id === TERRA)
-    ? TERRA
-    : models.some((model) => model.id === HYDROGEN)
-      ? HYDROGEN
-      : null;
-  if (!resolvedDefault) {
+
+  if (!models.some((model) => model.id === TERRA)) {
     return notReady("model_unavailable", unavailableModels);
   }
   return {
@@ -180,7 +161,7 @@ export async function discoverGatewayReadiness({
     reason: "ready",
     hint: null,
     models,
-    defaultModelId: resolvedDefault,
+    defaultModelId: TERRA,
     checkedAt: now().toISOString(),
     unavailableModels,
   };

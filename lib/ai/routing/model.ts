@@ -8,7 +8,9 @@ import type {
 import { createGateway } from "ai";
 import { z } from "zod";
 import {
+  ARGON,
   HYDROGEN,
+  isVertexModel,
   LUNA,
   type PremiumModelId,
   premiumModels,
@@ -53,24 +55,31 @@ export function createRoutedModel(
   initial: PremiumModelId,
   session: InferenceSession,
   factory: (id: PremiumModelId) => LanguageModelV4,
-  { gateway = false }: { gateway?: boolean } = {}
+  {
+    gateway = false,
+    vertexSearch = false,
+  }: { gateway?: boolean; vertexSearch?: boolean } = {}
 ): LanguageModelV4 {
   function fallbackTargetFor(model: PremiumModelId): PremiumModelId | null {
-    // Owner model floor: NEVER fall back to Luna.
-    if (model === TERRA) {
-      return gateway && session.available.includes(HYDROGEN) ? HYDROGEN : null;
+    // Owner fallback order: Argon -> Hydrogen -> Terra via Gateway.
+    // NEVER fall back to Luna or Gemini 3.8 Flash.
+    if (model === ARGON) {
+      if (session.available.includes(HYDROGEN)) {
+        return HYDROGEN;
+      }
+      if (session.available.includes(TERRA)) {
+        return TERRA;
+      }
+      return null;
     }
     if (model === HYDROGEN) {
       return session.available.includes(TERRA) ? TERRA : null;
     }
-    // Manual Luna selection may only fall back UP to a floor-compliant model.
-    if (session.available.includes(TERRA)) {
-      return TERRA;
+    if (model === TERRA) {
+      return null;
     }
-    if (gateway && session.available.includes(HYDROGEN)) {
-      return HYDROGEN;
-    }
-    return null;
+    // Unit-test compatibility when createRoutedModel(LUNA, ...) is tested directly:
+    return session.available.includes(TERRA) ? TERRA : null;
   }
   function options(
     model: PremiumModelId,
@@ -90,13 +99,15 @@ export function createRoutedModel(
           ? "medium"
           : model === LUNA
             ? "low"
-            : "medium";
-    if (model === HYDROGEN) {
+            : model === ARGON
+              ? "high"
+              : "medium";
+    if (isVertexModel(model)) {
       return {
         ...params,
         maxOutputTokens,
         providerOptions: {
-          ...(gateway ? { gateway: { only: ["google"] } } : {}),
+          openai: { reasoningEffort: safeEffort },
         },
       };
     }
@@ -141,17 +152,24 @@ export function createRoutedModel(
   function next(
     model: PremiumModelId,
     error: unknown,
-    params: LanguageModelV4CallOptions
+    params: LanguageModelV4CallOptions,
+    visited: Set<PremiumModelId>
   ): { reason: string; target: PremiumModelId } {
     const failure = failureKind(error);
     const target = fallbackTargetFor(model);
+    const allowMultiHopFromArgon =
+      initial === ARGON &&
+      model === HYDROGEN &&
+      target === TERRA &&
+      !visited.has(TERRA);
     if (
       !target ||
+      visited.has(target) ||
       !mayFallback({
         failure,
         exposed: session.exposed,
         toolBoundary: session.toolBoundary,
-        used: session.fallbackUsed,
+        used: allowMultiHopFromArgon ? false : session.fallbackUsed,
         available: true,
         cancelled: params.abortSignal?.aborted ?? false,
       })
@@ -159,6 +177,7 @@ export function createRoutedModel(
       throw new ModelFailure(failure);
     }
     session.fallbackUsed = true;
+    visited.add(target);
     return { reason: failure, target };
   }
   function reserve(
@@ -176,8 +195,8 @@ export function createRoutedModel(
     ) {
       throw new ModelFailure("context");
     }
-    // The only provider-executed tool ever allowed is AI Gateway web search,
-    // and only on the Gateway lane. Anything else (OpenAI hosted tools, etc.) fails.
+    const allowWebSearchOnModel = isVertexModel(model) ? vertexSearch : gateway;
+    const searchChargePerCall = isVertexModel(model) ? 0 : WEB_SEARCH_COST_USD;
     const searchTools =
       params.tools?.filter(
         (tool) => tool.type === "provider" && tool.id === WEB_SEARCH_TOOL_ID
@@ -187,7 +206,7 @@ export function createRoutedModel(
         (tool) =>
           tool.type !== "function" &&
           !(
-            gateway &&
+            allowWebSearchOnModel &&
             tool.type === "provider" &&
             tool.id === WEB_SEARCH_TOOL_ID
           )
@@ -198,8 +217,8 @@ export function createRoutedModel(
     }
     return session.ledger.reserve({
       model,
-      // Search is billed outside token usage: reserve the capped worst case so a
-      // call whose token usage is never reported cannot under-count it.
+      // Search is billed outside token usage on AI Gateway; Vertex AI Google
+      // Search grounding bills to GCP Ultra credit ($0 Gateway allowance).
       reserveUsd:
         reserveCost(
           model,
@@ -210,7 +229,7 @@ export function createRoutedModel(
           },
           params.maxOutputTokens ?? premiumModels[model].outputLimit
         ) +
-        searchTools * WEB_SEARCH_MAX_CALLS * WEB_SEARCH_COST_USD,
+        searchTools * WEB_SEARCH_MAX_CALLS * searchChargePerCall,
       fallbackReason,
     });
   }
@@ -249,6 +268,7 @@ export function createRoutedModel(
     async doGenerate(params) {
       let model = initial;
       let reason: string | undefined;
+      const visited = new Set<PremiumModelId>([initial]);
       for (;;) {
         const opts = options(model, params);
         const id = await reserve(model, opts, reason);
@@ -294,7 +314,7 @@ export function createRoutedModel(
             model,
             "completed",
             usage,
-            searches * WEB_SEARCH_COST_USD
+            searches * (isVertexModel(model) ? 0 : WEB_SEARCH_COST_USD)
           );
           session.exposed = true;
           if (result.content.some((p) => p.type === "tool-call")) {
@@ -307,9 +327,9 @@ export function createRoutedModel(
             model,
             recordedOutcome(model, error),
             usage,
-            searches * WEB_SEARCH_COST_USD
+            searches * (isVertexModel(model) ? 0 : WEB_SEARCH_COST_USD)
           );
-          const fallback = next(model, error, params);
+          const fallback = next(model, error, params, visited);
           reason = fallback.reason;
           model = fallback.target;
         }
@@ -325,6 +345,7 @@ export function createRoutedModel(
           async start(controller) {
             let model = initial;
             let reason: string | undefined;
+            const visited = new Set<PremiumModelId>([initial]);
             for (;;) {
               const opts = options(model, params);
               let id: string | undefined;
@@ -420,7 +441,7 @@ export function createRoutedModel(
                   model,
                   "completed",
                   usage,
-                  searches * WEB_SEARCH_COST_USD
+                  searches * (isVertexModel(model) ? 0 : WEB_SEARCH_COST_USD)
                 );
                 for (const h of held) {
                   controller.enqueue(h);
@@ -437,14 +458,14 @@ export function createRoutedModel(
                     model,
                     recordedOutcome(model, error),
                     usage,
-                    searches * WEB_SEARCH_COST_USD
+                    searches * (isVertexModel(model) ? 0 : WEB_SEARCH_COST_USD)
                   );
                 }
                 if (cancelled) {
                   return;
                 }
                 try {
-                  const fallback = next(model, error, params);
+                  const fallback = next(model, error, params, visited);
                   reason = fallback.reason;
                   model = fallback.target;
                 } catch (safeError) {

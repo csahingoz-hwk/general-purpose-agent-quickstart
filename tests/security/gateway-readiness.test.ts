@@ -85,7 +85,7 @@ test("Vercel deployment with automatic OIDC is ready without any credential in p
   assert.equal(result.reason, "ready");
   assert.deepEqual(
     result.models.map((model) => model.id),
-    [TERRA, HYDROGEN, LUNA]
+    [TERRA]
   );
   assert.equal(result.defaultModelId, TERRA);
   assert.deepEqual(result.unavailableModels, []);
@@ -114,21 +114,19 @@ test("an explicit Gateway API key is also resolved natively and wins over OIDC",
   assert.equal(seen[0].get("ai-gateway-auth-method"), "api-key");
 });
 
-test("Terra missing falls back to Gemini 4 Hydrogen default; Luna alone is below floor and never promoted", async () => {
+test("Gateway lane exposes only GPT-6.1 Terra; Luna and Google Gemini models never route on paid Gateway credits", async () => {
   process.env.AI_GATEWAY_USAGE_ENABLED = "true";
   deployedWithOidc();
-  const hydrogenDefault = await discoverGatewayReadiness({
+  const withoutTerra = await discoverGatewayReadiness({
     provider: createGateway({
       fetch: () => Promise.resolve(catalogResponse(hydrogenEntry, lunaEntry)),
     }),
   });
-  assert.equal(hydrogenDefault.status, "ready");
-  assert.equal(hydrogenDefault.defaultModelId, HYDROGEN);
-  assert.deepEqual(
-    hydrogenDefault.models.map((model) => model.id),
-    [HYDROGEN, LUNA]
-  );
-  assert.deepEqual(hydrogenDefault.unavailableModels, ["openai/gpt-6.1-terra"]);
+  assert.equal(withoutTerra.status, "temporarily_unavailable");
+  assert.equal(withoutTerra.reason, "model_unavailable");
+  assert.deepEqual(withoutTerra.models, []);
+  assert.equal(withoutTerra.defaultModelId, null);
+  assert.deepEqual(withoutTerra.unavailableModels, ["openai/gpt-6.1-terra"]);
 
   const onlyLuna = await discoverGatewayReadiness({
     provider: createGateway({
@@ -294,7 +292,7 @@ test("inference uses the native provider with the exact OpenAI slug, request-sco
     },
   });
   const session = {
-    available: [LUNA, TERRA],
+    available: [TERRA],
     exposed: false,
     toolBoundary: false,
     fallbackUsed: false,
@@ -304,7 +302,7 @@ test("inference uses the native provider with the exact OpenAI slug, request-sco
     },
   } as unknown as InferenceSession;
   const model = createRoutedModel(
-    LUNA,
+    TERRA,
     session,
     (id) => createGatewayAdapter(id, provider),
     { gateway: true }
@@ -320,10 +318,13 @@ test("inference uses the native provider with the exact OpenAI slug, request-sco
     request.url.endsWith("/language-model")
   );
   assert.ok(first, "expected a Gateway language-model request");
-  assert.equal(first.headers.get("ai-language-model-id"), "openai/gpt-6-luna");
+  assert.equal(
+    first.headers.get("ai-language-model-id"),
+    "openai/gpt-6.1-terra"
+  );
   assert.equal(first.headers.get("authorization"), `Bearer ${token}`);
   const body = JSON.parse(first.body);
   assert.deepEqual(body.providerOptions.gateway, { only: ["openai"] });
   assert.equal(body.providerOptions.openai.store, false);
-  assert.equal(body.maxOutputTokens, 4096);
+  assert.equal(body.maxOutputTokens, 8192);
 });

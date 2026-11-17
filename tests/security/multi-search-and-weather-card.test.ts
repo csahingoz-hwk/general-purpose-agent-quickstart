@@ -3,13 +3,20 @@ import test from "node:test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import type { InferUIMessageChunk } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
+import { safeModelError } from "../../lib/ai/context/errors";
 import { resolveTurnModelAndEffort } from "../../lib/ai/escalation";
-import { chatModels, DEFAULT_CHAT_MODEL } from "../../lib/ai/models";
+import {
+  chatModels,
+  DEFAULT_CHAT_MODEL,
+  ESCALATED_RESEARCH_MODEL,
+  FALLBACK_GATEWAY_MODEL,
+} from "../../lib/ai/models";
 import {
   buildPartialAnswerFromSources,
   createMultiSearchRecoveryStream,
 } from "../../lib/ai/multi-search-fallback";
 import {
+  ARGON,
   HYDROGEN,
   LUNA,
   TERRA,
@@ -18,6 +25,11 @@ import {
 } from "../../lib/ai/routing/catalog";
 import { createRoutedModel } from "../../lib/ai/routing/model";
 import type { InferenceSession } from "../../lib/ai/routing/session";
+import {
+  clearVertexTokenCacheForTests,
+  getVertexWifAccessToken,
+} from "../../lib/ai/vertex-auth";
+import { createVertexGeminiAdapter } from "../../lib/ai/vertex-model";
 import { buildOpenUiPayload } from "../../lib/openui/attach";
 import {
   describeWeatherCode,
@@ -25,6 +37,7 @@ import {
 } from "../../lib/openui/snapshot";
 import { validateOpenUiSpec } from "../../lib/openui/validate";
 import type { ChatMessage } from "../../lib/types";
+import { DEFAULT_LIVE_MODEL } from "../../lib/voice/live-protocol";
 
 test("Weather card formats short dates (Wed 18), current conditions icon/description, and High/Low series", () => {
   assert.equal(formatShortDate("2026-11-18"), "Wed 18");
@@ -349,61 +362,270 @@ test("Multi-search recovery stream synthesizes answer with sources and closes da
   );
 });
 
-test("Owner model floor: default is GPT-6.1 Terra, real model names shown, Luna excluded from fallback, and research auto-escalates", async () => {
-  assert.equal(DEFAULT_CHAT_MODEL, TERRA);
+test("Vertex AI Ultra routing: Hydrogen default, Argon research escalation, Hydrogen -> Terra fallback, never Luna/3.8-flash, live voice stays gemini-3.8-live, and Korn Ferry firewall blocks before network", async () => {
+  assert.equal(DEFAULT_CHAT_MODEL, HYDROGEN);
+  assert.equal(ESCALATED_RESEARCH_MODEL, ARGON);
+  assert.equal(FALLBACK_GATEWAY_MODEL, TERRA);
+  assert.equal(DEFAULT_LIVE_MODEL, "gemini-3.8-live");
+
+  const ids = chatModels.map((m) => m.id);
+  assert.ok(!ids.includes("gpt-6-luna"), "Luna must not appear in chatModels");
+  assert.ok(
+    !ids.some((id) => id.includes("3.8-flash")),
+    "Gemini 3.8 Flash must never appear in chatModels"
+  );
   for (const model of chatModels) {
     assert.notEqual(model.name, "Everyday chat");
     assert.notEqual(model.name, "Detailed chat");
   }
-  assert.equal(chatModels.find((m) => m.id === TERRA)?.name, "GPT-6.1 Terra");
   assert.equal(
     chatModels.find((m) => m.id === HYDROGEN)?.name,
     "Gemini 4 Hydrogen"
   );
-  assert.equal(chatModels.find((m) => m.id === LUNA)?.name, "GPT-6 Luna");
+  assert.equal(chatModels.find((m) => m.id === ARGON)?.name, "Gemini 4 Argon");
+  assert.equal(chatModels.find((m) => m.id === TERRA)?.name, "GPT-6.1 Terra");
 
-  // Manual Luna selection stays on Luna ONLY for trivial chat turns
+  // Everyday trivial turn stays on Gemini 4 Hydrogen
   const trivial = resolveTurnModelAndEffort({
-    selectedModelId: LUNA,
-    availableModelIds: [TERRA, HYDROGEN, LUNA],
+    selectedModelId: HYDROGEN,
+    availableModelIds: [HYDROGEN, ARGON, TERRA],
     userText: "Merhaba, nasılsın?",
     requestedTools: [],
-    baseEffort: "low",
+    baseEffort: "medium",
   });
-  assert.equal(trivial.modelId, LUNA);
-  assert.equal(trivial.reasoningEffort, "low");
+  assert.equal(trivial.modelId, HYDROGEN);
   assert.equal(trivial.escalated, false);
 
-  // Manual Luna selection auto-escalates on multi-search / research questions to Terra with >= medium effort
+  // Research / multi-search / hard questions auto-escalate Hydrogen -> Argon
   const escalatedSearch = resolveTurnModelAndEffort({
-    selectedModelId: LUNA,
-    availableModelIds: [TERRA, HYDROGEN, LUNA],
+    selectedModelId: HYDROGEN,
+    availableModelIds: [HYDROGEN, ARGON, TERRA],
     userText: "En çok kazanan CEO'lar ve yıllık kazançları nelerdir?",
     requestedTools: ["webSearch"],
-    baseEffort: "low",
+    baseEffort: "medium",
   });
-  assert.equal(escalatedSearch.modelId, TERRA);
-  assert.ok(
-    escalatedSearch.reasoningEffort === "medium" ||
-      escalatedSearch.reasoningEffort === "high"
-  );
+  assert.equal(escalatedSearch.modelId, ARGON);
+  assert.equal(escalatedSearch.reasoningEffort, "high");
   assert.equal(escalatedSearch.escalated, true);
 
-  // If Terra isn't on the Gateway, research escalates to Gemini 4 Hydrogen
-  const escalatedHydrogen = resolveTurnModelAndEffort({
-    selectedModelId: LUNA,
-    availableModelIds: [HYDROGEN, LUNA],
-    userText: "Compare cloud database benchmarks in depth",
-    requestedTools: [],
-    baseEffort: "low",
-  });
-  assert.equal(escalatedHydrogen.modelId, HYDROGEN);
-  assert.equal(escalatedHydrogen.reasoningEffort, "high");
+  // Zero-key Vertex WIF token exchange uses STS + x-vercel-oidc-token, NEVER GEMINI_API_KEY
+  const REQUEST_CONTEXT = Symbol.for("@vercel/request-context");
+  const priorEnv = { ...process.env };
+  try {
+    process.env.GOOGLE_VERTEX_PROJECT_ID = "project-cd0bc64c-0025-446c-b41";
+    process.env.GOOGLE_VERTEX_WORKLOAD_AUDIENCE =
+      "//iam.googleapis.com/projects/439781161791/locations/global/workloadIdentityPools/vercel-pool/providers/vercel-oidc";
+    process.env.GEMINI_API_KEY = "poison-ai-studio-key-must-not-be-used";
+    clearVertexTokenCacheForTests();
 
-  // Terra transient failure NEVER falls back down to Luna
-  const tried: string[] = [];
-  const session: InferenceSession = {
-    available: [TERRA, LUNA],
+    const headerPart = Buffer.from(JSON.stringify({ alg: "RS256" })).toString(
+      "base64url"
+    );
+    const payloadPart = Buffer.from(
+      JSON.stringify({ iss: "https://oidc.vercel.com/csahingoz-3779" })
+    ).toString("base64url");
+    const fakeOidc = `${headerPart}.${payloadPart}.sig`;
+    (globalThis as Record<symbol, unknown>)[REQUEST_CONTEXT] = {
+      get: () => ({ headers: { "x-vercel-oidc-token": fakeOidc } }),
+    };
+
+    const seenUrls: string[] = [];
+    const seenAuthHeaders: string[] = [];
+    const wifToken = await getVertexWifAccessToken((input, init) => {
+      seenUrls.push(String(input));
+      const bodyText = String(init?.body ?? "");
+      assert.ok(
+        !bodyText.includes("poison-ai-studio-key-must-not-be-used"),
+        "STS must never send GEMINI_API_KEY"
+      );
+      assert.match(bodyText, /vercel-pool%2Fproviders%2Fvercel-oidc/);
+      return Promise.resolve(
+        Response.json({
+          access_token: "ya29.wif-ultra-token",
+          expires_in: 3600,
+        })
+      );
+    });
+    assert.equal(wifToken, "ya29.wif-ultra-token");
+    assert.deepEqual(seenUrls, ["https://sts.googleapis.com/v1/token"]);
+
+    const vertexAdapter = createVertexGeminiAdapter(HYDROGEN, {
+      fetcher: (input, init) => {
+        seenUrls.push(String(input));
+        seenAuthHeaders.push(
+          new Headers(init?.headers).get("authorization") ?? ""
+        );
+        return Promise.resolve(
+          Response.json({
+            candidates: [
+              {
+                content: { parts: [{ text: "Hello from Vertex Ultra" }] },
+                finishReason: "STOP",
+              },
+            ],
+            usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 5 },
+          })
+        );
+      },
+      getAccessToken: () => Promise.resolve(wifToken),
+    });
+
+    const gen = await vertexAdapter.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+    });
+    assert.equal(gen.content[0]?.type, "text");
+    assert.equal(
+      seenUrls[1],
+      "https://aiplatform.googleapis.com/v1/projects/project-cd0bc64c-0025-446c-b41/locations/global/publishers/google/models/gemini-4-hydrogen:generateContent"
+    );
+    assert.equal(seenAuthHeaders[0], "Bearer ya29.wif-ultra-token");
+
+    // Korn Ferry firewall blocks BEFORE any network call AND never falls back
+    let kfNetworkCalls = 0;
+    const kfSession: InferenceSession = {
+      available: [HYDROGEN, ARGON, TERRA],
+      exposed: false,
+      toolBoundary: false,
+      fallbackUsed: false,
+      ledger: {
+        reserve: () => Promise.resolve("inv-kf"),
+        settle: () => Promise.resolve(),
+      },
+    };
+    const kfRouted = createRoutedModel(
+      HYDROGEN,
+      kfSession,
+      (id) =>
+        id === HYDROGEN || id === ARGON
+          ? createVertexGeminiAdapter(id, {
+              fetcher: () => {
+                kfNetworkCalls++;
+                return Promise.reject(new Error("must_not_call_network"));
+              },
+              getAccessToken: () => Promise.resolve(wifToken),
+            })
+          : new MockLanguageModelV4({
+              doGenerate: () => {
+                kfNetworkCalls++;
+                return Promise.reject(new Error("must_not_fallback_on_kf"));
+              },
+            }),
+      { gateway: true, vertexSearch: true }
+    );
+
+    await assert.rejects(async () => {
+      await kfRouted.doGenerate({
+        prompt: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Review Korn Ferry SA90 EOSB accrual GL 239300",
+              },
+            ],
+          },
+        ],
+      });
+    }, /model_work_boundary/);
+    assert.equal(
+      kfNetworkCalls,
+      0,
+      "Zero network calls or fallbacks allowed when Korn Ferry material is detected"
+    );
+    assert.match(
+      safeModelError(new Error("model_work_boundary"), "Korn Ferry SA90"),
+      /Blocked: Korn Ferry/
+    );
+    assert.match(
+      safeModelError(
+        new Error("model_work_boundary"),
+        "Korn Ferry SA90 nedir?"
+      ),
+      /Engellendi: Korn Ferry/
+    );
+  } finally {
+    process.env = priorEnv;
+    (globalThis as Record<symbol, unknown>)[REQUEST_CONTEXT] = undefined;
+    clearVertexTokenCacheForTests();
+  }
+
+  // Fallback chain: Argon -> Hydrogen -> Terra (Gateway); NEVER Luna or 3.8 Flash
+  const hopOrder: string[] = [];
+  const fallbackSession: InferenceSession = {
+    available: [HYDROGEN, ARGON, TERRA, LUNA],
+    exposed: false,
+    toolBoundary: false,
+    fallbackUsed: false,
+    ledger: {
+      reserve: () => Promise.resolve("inv-fallback"),
+      settle: () => Promise.resolve(),
+    },
+  };
+  const chainModel = createRoutedModel(
+    ARGON,
+    fallbackSession,
+    (id) => {
+      hopOrder.push(id);
+      if (id === ARGON || id === HYDROGEN) {
+        return new MockLanguageModelV4({
+          doStream: () =>
+            Promise.reject(
+              Object.assign(new Error("503"), { statusCode: 503 })
+            ),
+        });
+      }
+      return new MockLanguageModelV4({
+        doStream: () =>
+          Promise.resolve({
+            stream: new ReadableStream({
+              start(c) {
+                c.enqueue({ type: "stream-start", warnings: [] });
+                c.enqueue({ type: "text-start", id: "t1" });
+                c.enqueue({ type: "text-delta", id: "t1", delta: "Terra OK" });
+                c.enqueue({ type: "text-end", id: "t1" });
+                c.enqueue({
+                  type: "finish",
+                  finishReason: { unified: "stop", raw: "stop" },
+                  usage: {
+                    inputTokens: {
+                      total: 10,
+                      noCache: 10,
+                      cacheRead: 0,
+                      cacheWrite: 0,
+                    },
+                    outputTokens: { total: 4, text: 4, reasoning: undefined },
+                  },
+                });
+                c.close();
+              },
+            }),
+          }),
+      });
+    },
+    { gateway: true, vertexSearch: true }
+  );
+  const chainRes = await chainModel.doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+  });
+  const chainReader = chainRes.stream.getReader();
+  let chainText = "";
+  for (;;) {
+    const part = await chainReader.read();
+    if (part.done) {
+      break;
+    }
+    if (part.value.type === "text-delta") {
+      chainText += part.value.delta;
+    }
+  }
+  assert.equal(chainText, "Terra OK");
+  assert.deepEqual(hopOrder, [ARGON, HYDROGEN, TERRA]);
+
+  // And if Terra also fails transiently, it NEVER hops to Luna
+  const triedAfterTerra: string[] = [];
+  const terraFailSession: InferenceSession = {
+    available: [HYDROGEN, TERRA, LUNA],
     exposed: false,
     toolBoundary: false,
     fallbackUsed: false,
@@ -413,16 +635,16 @@ test("Owner model floor: default is GPT-6.1 Terra, real model names shown, Luna 
     },
   };
   const noLunaFallback = createRoutedModel(
-    TERRA,
-    session,
+    HYDROGEN,
+    terraFailSession,
     (id) => {
-      tried.push(id);
+      triedAfterTerra.push(id);
       return new MockLanguageModelV4({
         doStream: () =>
           Promise.reject(Object.assign(new Error("503"), { statusCode: 503 })),
       });
     },
-    { gateway: true }
+    { gateway: true, vertexSearch: true }
   );
   await assert.rejects(async () => {
     const res = await noLunaFallback.doStream({
@@ -430,5 +652,9 @@ test("Owner model floor: default is GPT-6.1 Terra, real model names shown, Luna 
     });
     await res.stream.getReader().read();
   }, /model_transient/);
-  assert.deepEqual(tried, [TERRA], "Terra must never fall back down to Luna");
+  assert.deepEqual(
+    triedAfterTerra,
+    [HYDROGEN, TERRA],
+    "Fallback order must be Hydrogen -> Terra and never Luna"
+  );
 });

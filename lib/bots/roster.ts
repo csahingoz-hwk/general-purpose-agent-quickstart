@@ -11,7 +11,7 @@ export type BotTeammate = {
   name: string;
   description: string;
   soul: string;
-  defaultModel: "gpt-6.1-terra" | "gemini-4-hydrogen" | "gpt-6-luna";
+  defaultModel: "gemini-4-hydrogen" | "gemini-4-argon" | "gpt-6.1-terra";
   mascotVariant: MascotVariant;
   skillSlugs: string[];
   builtIn: boolean;
@@ -27,7 +27,7 @@ export const BUILT_IN_TEAMMATES: readonly BotTeammate[] = [
     description:
       "Daily planning, crisp executive synthesis, schedule triage, and bilingual EN/TR follow-ups.",
     soul: "## Role: Chief of Staff\nPrioritize clarity, time-boxed action plans, and proactive risk callouts. Keep summaries structured and concise.",
-    defaultModel: "gpt-6.1-terra",
+    defaultModel: "gemini-4-hydrogen",
     mascotVariant: "blue",
     skillSlugs: [],
     builtIn: true,
@@ -39,7 +39,7 @@ export const BUILT_IN_TEAMMATES: readonly BotTeammate[] = [
     description:
       "Audit-ready close checklists, variance commentary, reconciliations, and exact numerical grounding.",
     soul: "## Role: Finance Controller\nTreat every number as audit evidence: reconcile totals explicitly, separate Material vs. Immaterial drivers, never invent figures, and flag control gaps.",
-    defaultModel: "gpt-6.1-terra",
+    defaultModel: "gemini-4-argon",
     mascotVariant: "green",
     skillSlugs: ["month-end-close", "variance-commentary"],
     builtIn: true,
@@ -51,7 +51,7 @@ export const BUILT_IN_TEAMMATES: readonly BotTeammate[] = [
     description:
       "TypeScript/Next.js architecture, surgical code diffs, security hardening, and automated test design.",
     soul: "## Role: Vibecoder\nFavor simple, verifiable vertical slices, strict TypeScript types, zero unnecessary dependencies, and explicit edge-case tests.",
-    defaultModel: "gpt-6.1-terra",
+    defaultModel: "gemini-4-argon",
     mascotVariant: "purple",
     skillSlugs: ["vibecode-audit"],
     builtIn: true,
@@ -113,7 +113,7 @@ export interface BotRosterStore {
     name: string;
     description: string;
     soul: string;
-    defaultModel?: "gpt-6.1-terra" | "gemini-4-hydrogen" | "gpt-6-luna";
+    defaultModel?: "gemini-4-hydrogen" | "gemini-4-argon" | "gpt-6.1-terra";
     mascotVariant?: MascotVariant;
     skillSlugs?: string[];
   }) => Promise<BotTeammate>;
@@ -150,7 +150,7 @@ export function createInMemoryBotRosterStore(): BotRosterStore {
       name,
       description,
       soul,
-      defaultModel = "gpt-6.1-terra",
+      defaultModel = "gemini-4-hydrogen",
       mascotVariant = "blue",
       skillSlugs = [],
     }) {
@@ -164,9 +164,9 @@ export function createInMemoryBotRosterStore(): BotRosterStore {
         ? mascotVariant
         : "blue";
       const safeModel =
-        defaultModel === "gemini-4-hydrogen" || defaultModel === "gpt-6-luna"
+        defaultModel === "gemini-4-argon" || defaultModel === "gpt-6.1-terra"
           ? defaultModel
-          : "gpt-6.1-terra";
+          : "gemini-4-hydrogen";
 
       let userMap = customByUser.get(userId);
       if (!userMap) {
@@ -253,10 +253,10 @@ export function createPostgresBotRosterStore(): BotRosterStore {
             description: String(r.description ?? ""),
             soul: String(r.soul),
             defaultModel:
-              r.defaultModel === "gemini-4-hydrogen" ||
-              r.defaultModel === "gpt-6-luna"
+              r.defaultModel === "gemini-4-argon" ||
+              r.defaultModel === "gpt-6.1-terra"
                 ? r.defaultModel
-                : "gpt-6.1-terra",
+                : "gemini-4-hydrogen",
             mascotVariant: isMascotVariant(mv) ? mv : "blue",
             skillSlugs: Array.isArray(r.skillSlugs)
               ? r.skillSlugs.map(String)
@@ -284,7 +284,7 @@ export function createPostgresBotRosterStore(): BotRosterStore {
       name,
       description,
       soul,
-      defaultModel = "gpt-6.1-terra",
+      defaultModel = "gemini-4-hydrogen",
       mascotVariant = "blue",
       skillSlugs = [],
     }) {
@@ -298,9 +298,9 @@ export function createPostgresBotRosterStore(): BotRosterStore {
         ? mascotVariant
         : "blue";
       const safeModel =
-        defaultModel === "gemini-4-hydrogen" || defaultModel === "gpt-6-luna"
+        defaultModel === "gemini-4-argon" || defaultModel === "gpt-6.1-terra"
           ? defaultModel
-          : "gpt-6.1-terra";
+          : "gemini-4-hydrogen";
       const id = randomUUID();
       const cleanedSkills = skillSlugs
         .map((s) => s.trim())

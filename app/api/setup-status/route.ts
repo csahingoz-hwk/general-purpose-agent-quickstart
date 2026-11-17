@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/app/(auth)/auth";
-import { gatewayEnabled, openAIEnabled } from "@/lib/ai/routing/catalog";
+import {
+  gatewayEnabled,
+  openAIEnabled,
+  vertexEnabled,
+} from "@/lib/ai/routing/catalog";
 import { isCloudComputerConfigured } from "@/lib/cloud-computer/client";
 import { GITHUB_VAULT_SECRET_NAME } from "@/lib/connectors/calendar-and-github";
 import { GOOGLE_VAULT_SECRET_NAMES } from "@/lib/connectors/google-vault-auth";
@@ -30,7 +34,8 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const aiReady = gatewayEnabled() || openAIEnabled();
+  const vertexReady = vertexEnabled();
+  const aiReady = vertexReady || gatewayEnabled() || openAIEnabled();
   const dbReady = Boolean(process.env.POSTGRES_URL?.trim());
   const vaultReady = isVaultConfigured();
   const googleSignInReady = isGoogleSignInConfigured();
@@ -76,9 +81,11 @@ export async function GET() {
     {
       id: "core_ai",
       label: "Chat, web search, voice & images",
-      summary: aiReady
-        ? "Active automatically via Vercel AI Gateway."
-        : "Turn on AI Gateway in your Vercel project settings.",
+      summary: vertexReady
+        ? "Active via Google Cloud Vertex AI (Gemini 4 Hydrogen & Argon on Ultra credit, with GPT-6.1 Terra Gateway fallback)."
+        : aiReady
+          ? "Active automatically via Vercel AI Gateway."
+          : "Turn on Vertex AI WIF or AI Gateway in your Vercel project settings.",
       status: aiReady ? "ready" : "action_needed",
       actionKind: aiReady ? "none" : "external_link",
       externalUrl: aiReady ? undefined : "https://vercel.com/dashboard",

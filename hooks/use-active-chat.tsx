@@ -236,7 +236,7 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
     if (modelAvailability?.status === "ready") {
       const cookieModel = document.cookie
         .split("; ")
-        .find((row) => row.startsWith("chat-model-manual="))
+        .find((row) => row.startsWith("chat-model-manual-v2="))
         ?.split("=")[1];
       if (cookieModel) {
         const candidate = decodeURIComponent(cookieModel);

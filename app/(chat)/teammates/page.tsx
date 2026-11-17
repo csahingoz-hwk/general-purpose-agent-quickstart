@@ -23,8 +23,8 @@ export default function TeammatesPage() {
   const [description, setDescription] = useState("");
   const [soul, setSoul] = useState("");
   const [defaultModel, setDefaultModel] = useState<
-    "gpt-6.1-terra" | "gemini-4-hydrogen" | "gpt-6-luna"
-  >("gpt-6.1-terra");
+    "gemini-4-hydrogen" | "gemini-4-argon" | "gpt-6.1-terra"
+  >("gemini-4-hydrogen");
   const [mascotVariant, setMascotVariant] = useState<MascotVariant>("teal");
   const [saving, setSaving] = useState(false);
 
@@ -56,7 +56,7 @@ export default function TeammatesPage() {
       document.documentElement.dataset.botTheme = bot.mascotVariant;
       const maxAge = 60 * 60 * 24 * 365;
       // biome-ignore lint/suspicious/noDocumentCookie: sync active teammate default model cookie
-      document.cookie = `chat-model=${encodeURIComponent(bot.defaultModel)}; path=/; max-age=${maxAge}`;
+      document.cookie = `chat-model-manual-v2=${encodeURIComponent(bot.defaultModel)}; path=/; max-age=${maxAge}`;
       window.dispatchEvent(
         new CustomEvent("assistant-mascot-change", {
           detail: bot.mascotVariant,
@@ -237,16 +237,22 @@ export default function TeammatesPage() {
                 onChange={(e) =>
                   setDefaultModel(
                     e.target.value as
-                      | "gpt-6.1-terra"
                       | "gemini-4-hydrogen"
-                      | "gpt-6-luna"
+                      | "gemini-4-argon"
+                      | "gpt-6.1-terra"
                   )
                 }
                 value={defaultModel}
               >
-                <option value="gpt-6.1-terra">GPT-6.1 Terra (Default)</option>
-                <option value="gemini-4-hydrogen">Gemini 4 Hydrogen</option>
-                <option value="gpt-6-luna">GPT-6 Luna (Manual light)</option>
+                <option value="gemini-4-hydrogen">
+                  Gemini 4 Hydrogen (Default · Ultra credit)
+                </option>
+                <option value="gemini-4-argon">
+                  Gemini 4 Argon (Research · Ultra credit)
+                </option>
+                <option value="gpt-6.1-terra">
+                  GPT-6.1 Terra (Gateway fallback)
+                </option>
               </select>
             </label>
             <label className="space-y-1.5 text-sm">

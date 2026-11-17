@@ -35,7 +35,7 @@ export function isTurkishMessage(text: string): boolean {
   if (/[çğıöşüÇĞİÖŞÜ]/.test(text)) {
     return true;
   }
-  return /\b(merhaba|nasıl|neden|şu anda|istiyorum|lütfen|göster|cevap|mısın|misin|hakkında)\b/i.test(
+  return /\b(merhaba|nasıl|neden|nedir|nelerdir|şu anda|istiyorum|lütfen|göster|cevap|mısın|misin|hakkında)\b/i.test(
     text
   );
 }
@@ -48,6 +48,11 @@ export function safeModelError(error: unknown, userText: string): string {
         ? error
         : "";
   const tr = isTurkishMessage(userText);
+  if (/model_work_boundary|Korn Ferry/i.test(raw)) {
+    return tr
+      ? "Engellendi: Korn Ferry veya işveren gizli verileri kişisel Google AI modellerine gönderilemez."
+      : "Blocked: Korn Ferry or employer confidential material cannot be sent to personal Google AI models.";
+  }
   if (
     /model_(billing|spend)|spend_configuration|spending allowance or account credit limit|Kullanım bütçesi veya hesap kredisi/.test(
       raw
