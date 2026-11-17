@@ -72,6 +72,7 @@ export function buildCoreSharedTools(opts: {
   hasUntrustedContext?: boolean;
   vaultStore?: SecretVaultStore;
   memoryStore?: MemoryStore;
+  memorySource?: "chat" | "voice";
   taskStore?: BackgroundTaskStore;
   fetchImpl?: typeof fetch;
 }) {
@@ -119,6 +120,7 @@ export function buildCoreSharedTools(opts: {
       ? createMemoryTools({
           userId,
           store: resolveMemoryStore(opts.memoryStore),
+          defaultSource: opts.memorySource ?? "chat",
         })
       : {}),
     ...(isGoogleConnectorsEnabled()
@@ -311,6 +313,7 @@ export async function executeSharedVoiceToolCall(opts: {
   args: Record<string, unknown>;
   vaultStore?: SecretVaultStore;
   memoryStore?: MemoryStore;
+  memorySource?: "chat" | "voice";
   taskStore?: BackgroundTaskStore;
   fetchImpl?: typeof fetch;
 }): Promise<ExecutedVoiceToolOutcome> {
@@ -396,6 +399,7 @@ export async function executeSharedVoiceToolCall(opts: {
     defaultTimeZone: opts.timeZone || "Europe/London",
     vaultStore: opts.vaultStore,
     memoryStore: opts.memoryStore,
+    memorySource: "voice",
     taskStore: resolveTaskStore(opts.taskStore),
     fetchImpl: opts.fetchImpl,
   });

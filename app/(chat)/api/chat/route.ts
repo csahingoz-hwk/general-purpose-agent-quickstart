@@ -99,8 +99,8 @@ import { ChatbotError } from "@/lib/errors";
 import { prepareMessagesWithAttachments } from "@/lib/files/parse-attachment";
 import { isMediaStudioEnabled } from "@/lib/media/media-studio";
 import {
+  buildGroupedMemoryPromptBlock,
   extractExplicitRememberFact,
-  selectRelevantFactsForPrompt,
 } from "@/lib/memory/bulk-import";
 import {
   createPostgresMemoryStore,
@@ -375,13 +375,15 @@ export async function POST(request: Request) {
             .getBotBySlug(session.user.id, requestedBotSlug)
             .catch(() => null)
         : Promise.resolve(null),
-      explicitRemember
+      explicitRemember?.kind === "ok"
         ? createPostgresMemoryStore()
             .upsertProfileFact({
               userId: session.user.id,
               category: explicitRemember.category,
               key: explicitRemember.key,
               value: explicitRemember.value,
+              source: "chat",
+              pinned: explicitRemember.pinned,
               sharedAcrossBots: true,
             })
             .catch((): ProfileFact | null => null)
@@ -416,18 +418,11 @@ export async function POST(request: Request) {
       mergedFacts,
       activeTeammate?.slug ?? "chief-of-staff"
     ).filter((f) => !containsRestrictedWorkData(`${f.key} ${f.value}`));
-    const scopedFacts = selectRelevantFactsForPrompt(
+    const memoryContextBlock = buildGroupedMemoryPromptBlock(
       safeBotFacts,
       finalUserText,
-      80,
-      6000
+      { maxFacts: 80, maxChars: 6000 }
     );
-    const memoryContextBlock =
-      scopedFacts.length > 0
-        ? `Owner profile facts (durable memory — apply naturally in every session):\n${scopedFacts
-            .map((f) => `- [${f.category}] ${f.value}`)
-            .join("\n")}`
-        : "";
     const ownerDisplayName =
       session.user.type !== "guest"
         ? session.user.name?.trim() ||
@@ -532,6 +527,27 @@ export async function POST(request: Request) {
               output: {
                 saved: true,
                 fact: explicitSavedFact,
+              },
+              providerExecuted: true,
+            });
+          } else if (explicitRemember?.kind === "sensitive_blocked") {
+            const warnCallId = `mem-warn-${generateId().slice(0, 8)}`;
+            dataStream.write({
+              type: "tool-input-available",
+              toolCallId: warnCallId,
+              toolName: "saveProfileFact",
+              input: { category: "rules", key: "blocked", value: "" },
+              providerExecuted: true,
+            });
+            dataStream.write({
+              type: "tool-output-available",
+              toolCallId: warnCallId,
+              output: {
+                saved: false,
+                skippedSensitive: true,
+                reason: explicitRemember.reason,
+                warning:
+                  "Passwords, card numbers, and street addresses are never stored in memory.",
               },
               providerExecuted: true,
             });
@@ -662,12 +678,16 @@ export async function POST(request: Request) {
 
           // Only reviewed local tools are available. External integrations stay disconnected.
           const tools = localTools;
-          // If explicit "remember this: ..." was already saved deterministically above,
+          // If explicit "remember this: ..." was already handled deterministically above,
           // remove saveProfileFact from activeTools on this turn so we don't render two cards.
           const activeTools = requestedTools.filter(
             (name) =>
               name in tools &&
-              !(explicitSavedFact && name === "saveProfileFact")
+              !(
+                (explicitSavedFact ||
+                  explicitRemember?.kind === "sensitive_blocked") &&
+                name === "saveProfileFact"
+              )
           ) as Array<keyof typeof tools>;
           const toolSchemaTokens = await estimateToolSchemaTokens(
             tools,

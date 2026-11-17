@@ -1,14 +1,55 @@
 import type {
+  CanonicalMemoryCategory,
   JournalEntry,
-  MemoryCategory,
+  MemorySource,
   ProfileFact,
 } from "@/lib/memory/store";
+
+export const ORDERED_MEMORY_CATEGORIES: readonly CanonicalMemoryCategory[] = [
+  "rules",
+  "preferences",
+  "about_me",
+  "family",
+  "work",
+  "projects",
+] as const;
+
+export const MEMORY_CATEGORY_LABELS: Record<
+  "en" | "tr",
+  Record<CanonicalMemoryCategory, string>
+> = {
+  en: {
+    rules: "Rules",
+    preferences: "Preferences",
+    about_me: "About me",
+    family: "Family",
+    work: "Work",
+    projects: "Projects",
+  },
+  tr: {
+    rules: "Kurallar",
+    preferences: "Tercihler",
+    about_me: "Hakkımda",
+    family: "Aile",
+    work: "İş",
+    projects: "Projeler",
+  },
+};
+
+export type SensitiveMemoryReason = "password" | "card_number" | "address";
+
+export type SkippedSensitiveLine = {
+  id: string;
+  preview: string;
+  reason: SensitiveMemoryReason;
+};
 
 export type ParsedMemoryCandidate = {
   id: string;
   key: string;
   value: string;
-  category: MemoryCategory;
+  category: CanonicalMemoryCategory;
+  pinned: boolean;
 };
 
 export type MemoryImportPreviewItem = ParsedMemoryCandidate & {
@@ -17,11 +58,44 @@ export type MemoryImportPreviewItem = ParsedMemoryCandidate & {
   checked: boolean;
 };
 
+export type MemoryImportPreviewResult = {
+  items: MemoryImportPreviewItem[];
+  skippedSensitive: SkippedSensitiveLine[];
+};
+
 const BULLET_PREFIX_RE =
   /^\s*(?:[-*•◦▪‣⁃–—➤→]+|\[\s*[xX ]?\s*\]|\(?\d{1,3}[.)]|\(?[a-zA-Z][.)])\s+/u;
 
 const HEADING_RE = /^\s*#{1,6}\s+(.+?)\s*$/;
 const DIVIDER_RE = /^\s*(?:[-*_]\s*){3,}$/;
+
+export function normalizeMemoryCategory(
+  raw?: string | null
+): CanonicalMemoryCategory {
+  const c = (raw ?? "").trim().toLowerCase();
+  if (c === "rules" || c === "rule") {
+    return "rules";
+  }
+  if (c === "preferences" || c === "preference") {
+    return "preferences";
+  }
+  if (c === "family") {
+    return "family";
+  }
+  if (c === "work") {
+    return "work";
+  }
+  if (c === "projects" || c === "project") {
+    return "projects";
+  }
+  return "about_me";
+}
+
+export function defaultPinnedForCategory(
+  category: CanonicalMemoryCategory
+): boolean {
+  return category === "rules" || category === "preferences";
+}
 
 export function normalizeMemoryComparisonText(raw: string): string {
   return raw
@@ -44,8 +118,6 @@ function fnv1aHex(input: string): string {
 
 /**
  * Generates a deterministic, collision-safe key for a memory fact.
- * - Identical normalized facts produce the exact same key (idempotent upsert).
- * - Distinct facts sharing the first 50 characters still get distinct keys.
  */
 export function deriveFactKey(value: string): string {
   const normalized = normalizeMemoryComparisonText(value);
@@ -60,96 +132,235 @@ export function deriveFactKey(value: string): string {
   return asciiPrefix ? `${asciiPrefix}_${hash}` : `fact_${hash}`;
 }
 
-function parseHeadingCategory(heading: string): MemoryCategory | null {
+function passesLuhn(digits: string): boolean {
+  let sum = 0;
+  let shouldDouble = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let d = Number(digits[i]);
+    if (shouldDouble) {
+      d *= 2;
+      if (d > 9) {
+        d -= 9;
+      }
+    }
+    sum += d;
+    shouldDouble = !shouldDouble;
+  }
+  return sum % 10 === 0;
+}
+
+/**
+ * Detects passwords/secrets, payment card numbers, or physical street/postal
+ * addresses so they are NEVER stored in assistant memory.
+ * Ordinary city/country/timezone facts (e.g. "I live in London") pass cleanly.
+ */
+export function detectSensitiveMemoryContent(
+  raw: string
+): SensitiveMemoryReason | null {
+  const text = raw.trim();
+  if (!text) {
+    return null;
+  }
+
+  // 1. Passwords, PINs, recovery phrases, or raw API secret tokens
+  if (
+    /\b(?:my\s+)?(?:password|passcode|passphrase|pin\s*(?:code|number)|secret\s*key|api\s*key|private\s*key|recovery\s*(?:code|phrase)|seed\s*phrase)\b\s*(?:is|are|=|:|-|->|\bfor\b)/iu.test(
+      text
+    ) ||
+    /(?<![\p{L}])(?:password|passcode|şifre\p{L}*|parola\p{L}*)\s*(?:is|=|:)\s*\S+/iu.test(
+      text
+    ) ||
+    /(?<![\p{L}])(?:şifrem|parolam|pin\s*kodum)(?![\p{L}])/iu.test(text) ||
+    /\b(?:sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{25,}|xox[baprs]-[A-Za-z0-9-]{15,})\b/.test(
+      text
+    )
+  ) {
+    return "password";
+  }
+
+  // 2. Payment card numbers (13–19 digits with Luhn or card context) or CVV/CVC
+  if (/\b(?:cvv|cvc)\s*[:=]?\s*\d{3,4}\b/i.test(text)) {
+    return "card_number";
+  }
+  const candidateCardMatches = text.match(/(?:\d[ -]?){13,19}/g) ?? [];
+  for (const candidate of candidateCardMatches) {
+    const digits = candidate.replace(/\D/g, "");
+    if (digits.length >= 13 && digits.length <= 19) {
+      const hasCardKeyword =
+        /\b(?:card|visa|mastercard|amex|debit|credit|pan|kart|kredi)\b/iu.test(
+          text
+        );
+      if (passesLuhn(digits) || hasCardKeyword) {
+        return "card_number";
+      }
+    }
+  }
+
+  // 3. Physical street / home / postal addresses (excluding general city/timezone)
+  // UK postcode (e.g. SW1A 1AA, EC2M 7PP, NW1 6XE)
+  if (/\b[A-Z]{1,2}\d[A-Z\d]?\s+\d[A-Z]{2}\b/i.test(text)) {
+    return "address";
+  }
+  // Explicit address declaration
+  if (
+    /\b(?:my\s+(?:home\s+|street\s+|billing\s+|shipping\s+|postal\s+)?address\s*(?:is|:)|(?:home|street|delivery|billing|postal)\s+address\s*:|ev\s+adres\p{L}*|açık\s+adres\p{L}*)/iu.test(
+      text
+    )
+  ) {
+    return "address";
+  }
+  // Street number + street name + suffix (EN) or Flat/Apt + number
+  if (
+    /\b\d{1,5}[A-Za-z]?\s+[A-Z][\p{L}'-]+(?:\s+[A-Z][\p{L}'-]+){0,3}\s+(?:Street|St\.?|Road|Rd\.?|Avenue|Ave\.?|Lane|Ln\.?|Close|Drive|Dr\.?|Boulevard|Blvd\.?|Court|Ct\.?|Terrace|Crescent)\b/u.test(
+      text
+    ) ||
+    /\b(?:Flat|Apt\.?|Apartment|Unit)\s+\d+[A-Za-z]?\s*,/i.test(text) ||
+    /\b(?:mahallesi|mah\.|sokağı|sokak|sok\.|caddesi|cadde|cad\.)\b.*\b(?:no\s*[:.]?\s*\d+|daire\s*[:.]?\s*\d+)/iu.test(
+      text
+    )
+  ) {
+    return "address";
+  }
+
+  return null;
+}
+
+export function maskSensitivePreview(raw: string): string {
+  const cleaned = raw.trim().replace(BULLET_PREFIX_RE, "");
+  const maskedSecrets = cleaned
+    .replace(
+      /((?:password|passcode|passphrase|pin(?:\s*(?:code|number))?|secret\s*key|api\s*key|private\s*key|şifre\p{L}*|parola\p{L}*)\s*(?:is|are|=|:|-|->)\s*)\S+/giu,
+      "$1••••••••"
+    )
+    .replace(
+      /\b(?:sk-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{8,}|AIza[0-9A-Za-z_-]{8,}|xox[baprs]-[A-Za-z0-9-]{8,})\b/g,
+      "••••••••"
+    )
+    .replace(/(?:\d[ -]?){6,}/g, "•••• ");
+  return maskedSecrets.length > 64
+    ? `${maskedSecrets.slice(0, 61)}…`
+    : maskedSecrets;
+}
+
+/**
+ * Ensures each extracted fact reads as one clean, self-contained sentence.
+ */
+export function toSelfContainedSentence(raw: string): string {
+  const cleaned = raw.replace(BULLET_PREFIX_RE, "").replace(/\s+/g, " ").trim();
+  if (!cleaned) {
+    return "";
+  }
+  const firstChar = cleaned[0] ?? "";
+  const capitalized =
+    firstChar === firstChar.toLowerCase() &&
+    firstChar !== firstChar.toUpperCase()
+      ? `${firstChar.toUpperCase()}${cleaned.slice(1)}`
+      : cleaned;
+  if (/[.!?…]$/.test(capitalized)) {
+    return capitalized;
+  }
+  return `${capitalized}.`;
+}
+
+function parseHeadingCategory(heading: string): CanonicalMemoryCategory | null {
   const h = heading.toLowerCase();
-  if (/identity|personal|about me|family|kimlik|kişisel|aile/.test(h)) {
-    return "identity";
+  if (/rule|policy|never|always|guardrail|kural|ilke|yasak/.test(h)) {
+    return "rules";
   }
   if (/prefer|style|tone|format|tercih|üslup|tarz/.test(h)) {
-    return "preference";
+    return "preferences";
   }
-  if (/finance|money|tax|budget|finans|bütçe|vergi|maaş/.test(h)) {
-    return "finance";
+  if (/family|kids|children|wife|husband|daughter|son|aile|çocuk|eş/.test(h)) {
+    return "family";
   }
-  if (/project|code|tech|app|proje|kod|uygulama/.test(h)) {
-    return "project";
-  }
-  if (/work|role|career|iş|kariyer|görev/.test(h)) {
+  if (/work|role|career|office|job|iş|kariyer|görev|şirket/.test(h)) {
     return "work";
+  }
+  if (/project|code|tech|app|repo|proje|kod|uygulama/.test(h)) {
+    return "projects";
+  }
+  if (/about|identity|personal|me|hakkımda|kimlik|kişisel/.test(h)) {
+    return "about_me";
   }
   return null;
 }
 
 export function inferMemoryCategory(
   value: string,
-  headingHint?: MemoryCategory | null
-): MemoryCategory {
+  headingHint?: CanonicalMemoryCategory | null
+): CanonicalMemoryCategory {
   if (headingHint) {
     return headingHint;
   }
   const text = value.toLowerCase();
   if (
-    /\b(prefer|always|never|concise|brief|tone|format|bullet|dark mode|light mode|language|english|turkish)\b|tercih|her zaman|asla|kısa|özet|üslup|dil|türkçe|ingilizce/u.test(
+    /\b(never|must not|do not|don't ever|strictly|standing rule|rule:|always ask before|only on request)\b|asla|kesinlikle|kural:|onay almadan|ücretli model/u.test(
       text
     )
   ) {
-    return "preference";
+    return "rules";
   }
   if (
-    /\b(my name|i live|based in|home|timezone|time zone|daughter|son|wife|husband|partner|birthday|passport|citizen|allergic|coffee)\b|adım|yaşıyorum|evim|saat dilimi|kızım|oğlum|eşim|doğum|kahve|alerji/u.test(
+    /\b(daughter|son|wife|husband|partner|spouse|child|children|kids|mother|father|sister|brother|family|gcse)\b|kızım\p{L}*|oğlum\p{L}*|eşim\p{L}*|annem|babam|kardeşim|aile\p{L}*/u.test(
       text
     )
   ) {
-    return "identity";
+    return "family";
   }
   if (
-    /\b(gbp|usd|eur|try|budget|tax|hmrc|isa|salary|invoice|currency|bank|mortgage|dividend)\b|£|\$|bütçe|vergi|kur|para birimi|fatura|banka|yatırım/u.test(
+    /\b(repo|github|vercel|nextjs|next\.js|typescript|tailscale|mac mini|cloud vm|gcp|vertex|deploy|branch|streamvault|tizen|project)\b|proje\p{L}*|uygulama\p{L}*|sunucu\p{L}*/u.test(
       text
     )
   ) {
-    return "finance";
+    return "projects";
   }
   if (
-    /\b(repo|github|vercel|nextjs|next\.js|typescript|tailscale|mac mini|vm|gcp|vertex|deploy|branch|cursor|copilot)\b|proje|sunucu|uygulama/u.test(
+    /\b(prefer|concise|brief|tone|format|bullet|dark mode|light mode|aisle seat|window seat|coffee|tea|sugar)\b|tercih|kısa ve net|özet|üslup|tarz|kahve\p{L}*|çay\p{L}*|şekersiz/u.test(
       text
     )
   ) {
-    return "project";
+    return "preferences";
   }
   if (
-    /\b(office|meeting|colleague|manager|team)\b|toplantı|ekip|ofis/u.test(text)
+    /\b(finance controller|colleague|stakeholder|board|audit|month-end|quarter-end|workplace|career|role|office|salary|reporting currency)\b|iş\b|ofis|toplantı|ekip|denetim|kapanış/u.test(
+      text
+    )
   ) {
     return "work";
   }
-  return "general";
+  return "about_me";
 }
 
-function splitParagraphIntoSentences(paragraph: string): string[] {
-  const trimmed = paragraph.trim();
-  if (trimmed.length <= 220) {
+function splitIntoSentences(line: string): string[] {
+  const trimmed = line.trim();
+  if (trimmed.length <= 140) {
     return [trimmed];
   }
   const parts = trimmed
-    .split(/(?<=[.!?])\s+(?=[\p{Lu}\p{N}])/u)
+    .split(/(?<=[.!?])\s+(?=[\p{Lu}])/u)
     .map((s) => s.trim())
     .filter((s) => s.length >= 4);
-  if (parts.length <= 1 || parts.some((p) => p.length < 12)) {
+  if (parts.length <= 1 || parts.some((p) => p.length < 10)) {
     return [trimmed];
   }
   return parts;
 }
 
 /**
- * Splits a pasted list (bullets, numbered items, plain lines, or paragraphs)
- * into clean individual memory facts.
+ * Splits a pasted list (bullets, numbered lines, plain lines, or paragraphs)
+ * into clean single-sentence facts while skipping & flagging sensitive lines.
  */
-export function splitPastedMemoryList(
+export function parsePastedMemoryInput(
   raw: string,
   maxItems = 250
-): ParsedMemoryCandidate[] {
+): {
+  candidates: ParsedMemoryCandidate[];
+  skippedSensitive: SkippedSensitiveLine[];
+} {
   const lines = raw.split(/\r?\n/);
-  const results: ParsedMemoryCandidate[] = [];
-  let activeHeadingCategory: MemoryCategory | null = null;
+  const candidates: ParsedMemoryCandidate[] = [];
+  const skippedSensitive: SkippedSensitiveLine[] = [];
+  let activeHeadingCategory: CanonicalMemoryCategory | null = null;
 
   for (const rawLine of lines) {
     const trimmed = rawLine.trim();
@@ -162,46 +373,60 @@ export function splitPastedMemoryList(
       continue;
     }
 
-    const hadBullet = BULLET_PREFIX_RE.test(trimmed);
     const cleaned = trimmed.replace(BULLET_PREFIX_RE, "").trim();
     if (cleaned.length < 2) {
       continue;
     }
 
-    const segments = hadBullet
-      ? [cleaned]
-      : splitParagraphIntoSentences(cleaned);
-
+    const segments = splitIntoSentences(cleaned);
     for (const seg of segments) {
-      const value = seg.slice(0, 1500).trim();
-      if (value.length < 2) {
+      const sensitive = detectSensitiveMemoryContent(seg);
+      if (sensitive) {
+        skippedSensitive.push({
+          id: `sens_${skippedSensitive.length}`,
+          preview: maskSensitivePreview(seg),
+          reason: sensitive,
+        });
         continue;
       }
-      const key = deriveFactKey(value);
-      const category = inferMemoryCategory(value, activeHeadingCategory);
-      results.push({
-        id: `${key}_${results.length}`,
+
+      const sentence = toSelfContainedSentence(seg).slice(0, 1500);
+      if (sentence.length < 3) {
+        continue;
+      }
+      const key = deriveFactKey(sentence);
+      const category = inferMemoryCategory(sentence, activeHeadingCategory);
+      candidates.push({
+        id: `${key}_${candidates.length}`,
         key,
-        value,
+        value: sentence,
         category,
+        pinned: defaultPinnedForCategory(category),
       });
-      if (results.length >= maxItems) {
-        return results;
+      if (candidates.length >= maxItems) {
+        return { candidates, skippedSensitive };
       }
     }
   }
 
-  return results;
+  return { candidates, skippedSensitive };
+}
+
+export function splitPastedMemoryList(
+  raw: string,
+  maxItems = 250
+): ParsedMemoryCandidate[] {
+  return parsePastedMemoryInput(raw, maxItems).candidates;
 }
 
 /**
- * Splits pasted text into individual facts and marks duplicates against both
- * existing saved memories and earlier lines within the same paste.
+ * Splits pasted text into self-contained facts, strips sensitive lines with
+ * warnings, and marks duplicates against existing saved memories.
  */
 export function prepareMemoryImportPreview(
   raw: string,
   existingFacts: readonly Pick<ProfileFact, "key" | "value">[]
-): MemoryImportPreviewItem[] {
+): MemoryImportPreviewResult {
   const existingKeys = new Set(existingFacts.map((f) => f.key.toLowerCase()));
   const existingNormalized = new Set(
     existingFacts
@@ -210,9 +435,9 @@ export function prepareMemoryImportPreview(
   );
 
   const seenInPaste = new Set<string>();
-  const parsed = splitPastedMemoryList(raw);
+  const { candidates, skippedSensitive } = parsePastedMemoryInput(raw);
 
-  return parsed.map((item) => {
+  const items = candidates.map((item) => {
     const norm = normalizeMemoryComparisonText(item.value);
     const inExisting =
       existingKeys.has(item.key.toLowerCase()) ||
@@ -226,13 +451,15 @@ export function prepareMemoryImportPreview(
       ...item,
       isDuplicate,
       duplicateReason: inExisting
-        ? "existing"
+        ? ("existing" as const)
         : inPaste
-          ? "paste_repeat"
+          ? ("paste_repeat" as const)
           : undefined,
       checked: !isDuplicate,
     };
   });
+
+  return { items, skippedSensitive };
 }
 
 const EXPLICIT_REMEMBER_PATTERNS: readonly RegExp[] = [
@@ -247,15 +474,27 @@ const EXPLICIT_REMEMBER_PATTERNS: readonly RegExp[] = [
   /^\s*(?:lütfen\s+)?(?:belleğe|belleğime|hafızaya|hafızama)\s+kaydet\s*[:\-–—]\s*(.+)$/isu,
 ];
 
+export type ExplicitRememberParseResult =
+  | {
+      kind: "ok";
+      key: string;
+      value: string;
+      category: CanonicalMemoryCategory;
+      pinned: boolean;
+    }
+  | {
+      kind: "sensitive_blocked";
+      reason: SensitiveMemoryReason;
+    }
+  | null;
+
 /**
  * Extracts an explicit single-turn `"remember this: …"` / `"bunu hatırla: …"`
- * directive from chat or voice transcripts. Questions are ignored.
+ * directive from chat or voice transcripts, blocking passwords/cards/addresses.
  */
-export function extractExplicitRememberFact(text: string): {
-  key: string;
-  value: string;
-  category: MemoryCategory;
-} | null {
+export function extractExplicitRememberFact(
+  text: string
+): ExplicitRememberParseResult {
   const trimmed = text.trim();
   if (!trimmed || trimmed.endsWith("?")) {
     return null;
@@ -267,67 +506,190 @@ export function extractExplicitRememberFact(text: string): {
       .replace(/^["“”']+|["“”']+$/g, "")
       .trim();
     if (captured && captured.length >= 2 && captured.length <= 1500) {
+      const sensitive = detectSensitiveMemoryContent(captured);
+      if (sensitive) {
+        return { kind: "sensitive_blocked", reason: sensitive };
+      }
+      const sentence = toSelfContainedSentence(captured);
+      const category = inferMemoryCategory(sentence);
       return {
-        key: deriveFactKey(captured),
-        value: captured,
-        category: inferMemoryCategory(captured),
+        kind: "ok",
+        key: deriveFactKey(sentence),
+        value: sentence,
+        category,
+        pinned: defaultPinnedForCategory(category),
       };
     }
   }
   return null;
 }
 
+const CATEGORY_QUERY_HINTS: Record<CanonicalMemoryCategory, RegExp> = {
+  rules: /\b(rule|rules|policy|allowed|never|always)\b|kural|ilke/iu,
+  preferences:
+    /\b(prefer|preference|style|format|like|coffee|flight|seat)\b|tercih|üslup|tarz/iu,
+  about_me:
+    /\b(who am i|about me|where do i live|my city|timezone|remember about me)\b|hakkımda|nerede yaşıyorum|kimim/iu,
+  family:
+    /\b(family|daughter|son|wife|husband|partner|kids|children|ece)\b|aile|kızım|oğlum|eşim/iu,
+  work: /\b(work|job|role|office|team|audit|close)\b|işim|görevim|ofis/iu,
+  projects:
+    /\b(project|projects|repo|app|deploy|tailscale|mac mini|vm|streamvault)\b|proje|uygulama|sunucu/iu,
+};
+
 /**
- * Ranks owner profile facts for prompt injection: facts sharing keywords with
- * the active user turn come first, followed by newest facts, up to `maxFacts`
- * and `maxChars` so 50+ saved memories are available in every chat and voice session.
+ * Selects facts for a session prompt:
+ * 1. ALL `pinned === true` facts are ALWAYS included.
+ * 2. `pinned === false` ("Searchable") facts are pulled in when relevant to
+ *    `queryText` (keyword overlap or category intent; or when queryText is empty
+ *    such as Live Voice session startup, top recent searchable facts up to budget).
  */
 export function selectRelevantFactsForPrompt(
   facts: readonly ProfileFact[],
   queryText = "",
-  maxFacts = 80,
+  maxTotalFacts = 80,
   maxChars = 6000
 ): ProfileFact[] {
   if (facts.length === 0) {
     return [];
   }
+
+  const chosen: ProfileFact[] = [];
+  const chosenIds = new Set<string>();
+  let usedChars = 0;
+
+  const tryAdd = (fact: ProfileFact): boolean => {
+    if (chosenIds.has(fact.id) || chosen.length >= maxTotalFacts) {
+      return false;
+    }
+    const cost = fact.value.length + 12;
+    if (usedChars + cost > maxChars && chosen.length > 0) {
+      return false;
+    }
+    chosen.push(fact);
+    chosenIds.add(fact.id);
+    usedChars += cost;
+    return true;
+  };
+
+  // 1. Always include pinned facts first (in category priority order)
+  const categoryRank = (cat: CanonicalMemoryCategory) =>
+    ORDERED_MEMORY_CATEGORIES.indexOf(normalizeMemoryCategory(cat));
+
+  const pinnedFacts = facts
+    .filter((f) => f.pinned)
+    .sort((a, b) => categoryRank(a.category) - categoryRank(b.category));
+  for (const pf of pinnedFacts) {
+    tryAdd(pf);
+  }
+
+  // 2. Pull in relevant searchable (`!pinned`) facts
+  const searchable = facts.filter((f) => !f.pinned);
+  if (searchable.length === 0) {
+    return chosen;
+  }
+
+  const trimmedQuery = queryText.trim();
+  const asksBroadPersonalRecall =
+    !trimmedQuery ||
+    /\b(what do you (?:know|remember)|about me|my profile|my memories)\b|hakkımda ne|belleğimde ne/iu.test(
+      trimmedQuery
+    );
+
   const queryWords = new Set(
-    normalizeMemoryComparisonText(queryText)
+    normalizeMemoryComparisonText(trimmedQuery)
       .split(" ")
       .filter((w) => w.length >= 3)
   );
 
-  const scored = facts.map((fact, idx) => {
-    let score = 0;
-    if (queryWords.size > 0) {
-      const words = normalizeMemoryComparisonText(
-        `${fact.key} ${fact.value}`
-      ).split(" ");
-      for (const w of words) {
-        if (queryWords.has(w)) {
-          score += 1;
+  const scoredSearchable = searchable
+    .map((fact, idx) => {
+      let score = 0;
+      if (queryWords.size > 0) {
+        const factWords = normalizeMemoryComparisonText(
+          `${fact.key} ${fact.value}`
+        ).split(" ");
+        for (const fw of factWords) {
+          if (queryWords.has(fw)) {
+            score += 2;
+          }
         }
       }
-    }
-    return { fact, score, idx };
-  });
+      const normCat = normalizeMemoryCategory(fact.category);
+      if (trimmedQuery && CATEGORY_QUERY_HINTS[normCat]?.test(trimmedQuery)) {
+        score += 1;
+      }
+      if (asksBroadPersonalRecall) {
+        score += 1;
+      }
+      return { fact, score, idx };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || a.idx - b.idx);
 
-  scored.sort((a, b) => b.score - a.score || a.idx - b.idx);
-
-  const chosen: ProfileFact[] = [];
-  let usedChars = 0;
-  for (const { fact } of scored) {
-    if (chosen.length >= maxFacts) {
-      break;
-    }
-    const lineCost = fact.value.length + fact.category.length + 8;
-    if (usedChars + lineCost > maxChars && chosen.length > 0) {
-      break;
-    }
-    chosen.push(fact);
-    usedChars += lineCost;
+  for (const { fact } of scoredSearchable) {
+    tryAdd(fact);
   }
+
   return chosen;
+}
+
+/**
+ * Formats selected owner facts grouped by category with Rules and Preferences
+ * strictly first, for injection into chat and voice session system prompts.
+ */
+export function buildGroupedMemoryPromptBlock(
+  facts: readonly ProfileFact[],
+  queryText = "",
+  opts?: { maxFacts?: number; maxChars?: number }
+): string {
+  const selected = selectRelevantFactsForPrompt(
+    facts,
+    queryText,
+    opts?.maxFacts ?? 80,
+    opts?.maxChars ?? 6000
+  );
+  if (selected.length === 0) {
+    return "";
+  }
+
+  const grouped = new Map<CanonicalMemoryCategory, ProfileFact[]>();
+  for (const cat of ORDERED_MEMORY_CATEGORIES) {
+    grouped.set(cat, []);
+  }
+  for (const fact of selected) {
+    const cat = normalizeMemoryCategory(fact.category);
+    grouped.get(cat)?.push(fact);
+  }
+
+  const sections: string[] = [
+    "Owner durable memory (self-contained facts; Rules and Preferences take priority):",
+  ];
+  for (const cat of ORDERED_MEMORY_CATEGORIES) {
+    const items = grouped.get(cat) ?? [];
+    if (items.length === 0) {
+      continue;
+    }
+    sections.push(`### ${MEMORY_CATEGORY_LABELS.en[cat]}`);
+    for (const item of items) {
+      sections.push(`- ${item.value}`);
+    }
+  }
+  return sections.join("\n");
+}
+
+export function formatMemorySourceLabel(
+  source: MemorySource,
+  lang: "en" | "tr" = "en"
+): string {
+  if (lang === "tr") {
+    return source === "pasted"
+      ? "Yapıştırıldı"
+      : source === "voice"
+        ? "Ses"
+        : "Sohbet";
+  }
+  return source === "pasted" ? "Pasted" : source === "voice" ? "Voice" : "Chat";
 }
 
 export function buildMemoriesExportMarkdown(
@@ -341,22 +703,26 @@ export function buildMemoriesExportMarkdown(
   ];
 
   if (facts.length > 0) {
-    lines.push(`## Saved Memories (${facts.length})`, "");
-    const byCategory = new Map<string, ProfileFact[]>();
-    for (const fact of facts) {
-      const list = byCategory.get(fact.category) ?? [];
-      list.push(fact);
-      byCategory.set(fact.category, list);
-    }
-    for (const [cat, items] of byCategory.entries()) {
-      lines.push(`### ${cat.charAt(0).toUpperCase() + cat.slice(1)}`);
+    lines.push(`## Durable Facts (${facts.length})`, "");
+    for (const cat of ORDERED_MEMORY_CATEGORIES) {
+      const items = facts.filter(
+        (f) => normalizeMemoryCategory(f.category) === cat
+      );
+      if (items.length === 0) {
+        continue;
+      }
+      lines.push(`### ${MEMORY_CATEGORY_LABELS.en[cat]}`);
       for (const item of items) {
-        lines.push(`- ${item.value}`);
+        const learnedDate = item.learnedAt.slice(0, 10);
+        const mode = item.pinned ? "pinned" : "searchable";
+        lines.push(
+          `- ${item.value} _(source: ${item.source}, learned: ${learnedDate}, ${mode})_`
+        );
       }
       lines.push("");
     }
   } else {
-    lines.push("## Saved Memories (0)", "", "_No saved memories yet._", "");
+    lines.push("## Durable Facts (0)", "", "_No saved memories yet._", "");
   }
 
   if (journalEntries.length > 0) {

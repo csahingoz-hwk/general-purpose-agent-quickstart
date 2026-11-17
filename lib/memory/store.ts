@@ -2,24 +2,52 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { ensureParitySchema } from "@/lib/db/ensure-parity-schema";
 import {
+  defaultPinnedForCategory,
   deriveFactKey,
+  detectSensitiveMemoryContent,
+  normalizeMemoryCategory,
   normalizeMemoryComparisonText,
+  type SensitiveMemoryReason,
 } from "@/lib/memory/bulk-import";
 
-export type MemoryCategory =
+export type CanonicalMemoryCategory =
+  | "rules"
+  | "preferences"
+  | "about_me"
+  | "family"
+  | "work"
+  | "projects";
+
+export type LegacyMemoryCategory =
   | "identity"
   | "preference"
-  | "work"
   | "finance"
   | "project"
   | "general";
 
+export type MemoryCategory = CanonicalMemoryCategory | LegacyMemoryCategory;
+
+export type MemorySource = "pasted" | "chat" | "voice";
+
+export class SensitiveMemoryBlockedError extends Error {
+  readonly reason: SensitiveMemoryReason;
+  constructor(reason: SensitiveMemoryReason) {
+    super(
+      `Blocked sensitive memory (${reason}): passwords, card numbers, and street addresses are never stored in memory.`
+    );
+    this.reason = reason;
+  }
+}
+
 export type ProfileFact = {
   id: string;
   userId: string;
-  category: MemoryCategory;
+  category: CanonicalMemoryCategory;
   key: string;
   value: string;
+  source: MemorySource;
+  pinned: boolean;
+  learnedAt: string;
   sharedAcrossBots: boolean;
   botSlug?: string | null;
   updatedAt: string;
@@ -41,27 +69,35 @@ export interface MemoryStore {
     category?: MemoryCategory;
     key: string;
     value: string;
+    source?: MemorySource;
+    pinned?: boolean;
+    learnedAt?: string;
     sharedAcrossBots?: boolean;
     botSlug?: string | null;
   }) => Promise<ProfileFact>;
   upsertProfileFactsBatch: (input: {
     userId: string;
+    source?: MemorySource;
     items: ReadonlyArray<{
       category?: MemoryCategory;
       key?: string;
       value: string;
+      source?: MemorySource;
+      pinned?: boolean;
       sharedAcrossBots?: boolean;
       botSlug?: string | null;
     }>;
   }) => Promise<{
     saved: ProfileFact[];
     skippedDuplicates: number;
+    skippedSensitive: number;
   }>;
   updateProfileFact: (input: {
     userId: string;
     id: string;
     category?: MemoryCategory;
-    value: string;
+    value?: string;
+    pinned?: boolean;
     sharedAcrossBots?: boolean;
   }) => Promise<ProfileFact | null>;
   listProfileFacts: (opts: {
@@ -105,6 +141,13 @@ function normalizeFactKey(key: string): string {
   return key.trim().toLowerCase().replace(/\s+/g, "_");
 }
 
+function normalizeSource(raw?: string | null): MemorySource {
+  if (raw === "pasted" || raw === "voice" || raw === "chat") {
+    return raw;
+  }
+  return "chat";
+}
+
 export function createInMemoryMemoryStore(): MemoryStore {
   const facts = new Map<string, ProfileFact>();
   const journal: JournalEntry[] = [];
@@ -113,12 +156,21 @@ export function createInMemoryMemoryStore(): MemoryStore {
   return {
     upsertProfileFact({
       userId,
-      category = "general",
+      category = "about_me",
       key,
       value,
+      source = "chat",
+      pinned,
+      learnedAt,
       sharedAcrossBots = true,
       botSlug = null,
     }) {
+      const trimmed = value.trim();
+      const sensitive = detectSensitiveMemoryContent(trimmed);
+      if (sensitive) {
+        return Promise.reject(new SensitiveMemoryBlockedError(sensitive));
+      }
+      const canonicalCategory = normalizeMemoryCategory(category);
       const normalizedKey = normalizeFactKey(key);
       const scopeSuffix = sharedAcrossBots ? "shared" : (botSlug ?? "private");
       const mapKey = `${userId}:${scopeSuffix}:${normalizedKey}`;
@@ -127,9 +179,15 @@ export function createInMemoryMemoryStore(): MemoryStore {
       const saved: ProfileFact = {
         id: existing?.id ?? randomUUID(),
         userId,
-        category,
+        category: canonicalCategory,
         key: normalizedKey,
-        value: value.trim(),
+        value: trimmed,
+        source: normalizeSource(source),
+        pinned:
+          pinned ??
+          existing?.pinned ??
+          defaultPinnedForCategory(canonicalCategory),
+        learnedAt: existing?.learnedAt ?? learnedAt ?? now,
         sharedAcrossBots,
         botSlug,
         updatedAt: now,
@@ -137,7 +195,7 @@ export function createInMemoryMemoryStore(): MemoryStore {
       facts.set(mapKey, saved);
       return Promise.resolve({ ...saved });
     },
-    async upsertProfileFactsBatch({ userId, items }) {
+    async upsertProfileFactsBatch({ userId, source = "pasted", items }) {
       const existing = await this.listProfileFacts({ userId });
       const seenNorm = new Set(
         existing
@@ -146,10 +204,18 @@ export function createInMemoryMemoryStore(): MemoryStore {
       );
       const saved: ProfileFact[] = [];
       let skippedDuplicates = 0;
+      let skippedSensitive = 0;
       for (const item of items) {
         const trimmed = item.value.trim();
+        if (!trimmed) {
+          continue;
+        }
+        if (detectSensitiveMemoryContent(trimmed)) {
+          skippedSensitive += 1;
+          continue;
+        }
         const norm = normalizeMemoryComparisonText(trimmed);
-        if (!trimmed || !norm) {
+        if (!norm) {
           continue;
         }
         if (seenNorm.has(norm)) {
@@ -157,25 +223,44 @@ export function createInMemoryMemoryStore(): MemoryStore {
           continue;
         }
         seenNorm.add(norm);
+        const canonicalCategory = normalizeMemoryCategory(item.category);
         const created = await this.upsertProfileFact({
           userId,
-          category: item.category ?? "general",
+          category: canonicalCategory,
           key: item.key?.trim() || deriveFactKey(trimmed),
           value: trimmed,
+          source: item.source ?? source,
+          pinned: item.pinned ?? defaultPinnedForCategory(canonicalCategory),
           sharedAcrossBots: item.sharedAcrossBots ?? true,
           botSlug: item.botSlug ?? null,
         });
         saved.push(created);
       }
-      return { saved, skippedDuplicates };
+      return { saved, skippedDuplicates, skippedSensitive };
     },
-    updateProfileFact({ userId, id, category, value, sharedAcrossBots }) {
+    updateProfileFact({
+      userId,
+      id,
+      category,
+      value,
+      pinned,
+      sharedAcrossBots,
+    }) {
       for (const [mapKey, item] of facts.entries()) {
         if (item.userId === userId && item.id === id) {
-          const trimmed = value.trim();
-          const nextCategory = category ?? item.category;
+          const nextValue =
+            value !== undefined ? value.trim() : item.value.trim();
+          const sensitive = detectSensitiveMemoryContent(nextValue);
+          if (sensitive) {
+            return Promise.reject(new SensitiveMemoryBlockedError(sensitive));
+          }
+          const nextCategory = category
+            ? normalizeMemoryCategory(category)
+            : item.category;
+          const nextPinned = pinned ?? item.pinned;
           const nextShared = sharedAcrossBots ?? item.sharedAcrossBots;
-          const candidateKey = deriveFactKey(trimmed);
+          const candidateKey =
+            value !== undefined ? deriveFactKey(nextValue) : item.key;
           const nextScope = nextShared ? "shared" : (item.botSlug ?? "private");
           const candidateMapKey = `${userId}:${nextScope}:${candidateKey}`;
           const collision = facts.get(candidateMapKey);
@@ -186,7 +271,8 @@ export function createInMemoryMemoryStore(): MemoryStore {
             ...item,
             category: nextCategory,
             key: finalKey,
-            value: trimmed,
+            value: nextValue,
+            pinned: nextPinned,
             sharedAcrossBots: nextShared,
             updatedAt: new Date(Date.now() + sequence++).toISOString(),
           };
@@ -219,6 +305,10 @@ export function createInMemoryMemoryStore(): MemoryStore {
       return Promise.resolve(false);
     },
     addJournalEntry({ userId, title, body, tags = [], source = "chat" }) {
+      const sensitive = detectSensitiveMemoryContent(`${title}\n${body}`);
+      if (sensitive) {
+        return Promise.reject(new SensitiveMemoryBlockedError(sensitive));
+      }
       const cleanTags = [
         ...new Set(
           tags
@@ -240,6 +330,10 @@ export function createInMemoryMemoryStore(): MemoryStore {
       return Promise.resolve({ ...entry, tags: [...entry.tags] });
     },
     updateJournalEntry({ userId, id, title, body, tags }) {
+      const sensitive = detectSensitiveMemoryContent(`${title}\n${body}`);
+      if (sensitive) {
+        return Promise.reject(new SensitiveMemoryBlockedError(sensitive));
+      }
       const idx = journal.findIndex(
         (entry) => entry.userId === userId && entry.id === id
       );
@@ -333,42 +427,72 @@ async function readySql() {
   return sql;
 }
 
+function mapProfileRow(row: Record<string, unknown>): ProfileFact {
+  const updatedAtIso = new Date(
+    row.updatedAt as string | number | Date
+  ).toISOString();
+  const learnedAtIso = row.learnedAt
+    ? new Date(row.learnedAt as string | number | Date).toISOString()
+    : updatedAtIso;
+  return {
+    id: String(row.id),
+    userId: String(row.userId),
+    category: normalizeMemoryCategory(String(row.category ?? "about_me")),
+    key: String(row.key),
+    value: String(row.value),
+    source: normalizeSource(row.source ? String(row.source) : "chat"),
+    pinned: Boolean(row.pinned),
+    learnedAt: learnedAtIso,
+    sharedAcrossBots: Boolean(row.sharedAcrossBots),
+    botSlug: row.botSlug ? String(row.botSlug) : null,
+    updatedAt: updatedAtIso,
+  };
+}
+
 export function createPostgresMemoryStore(): MemoryStore {
   return {
     async upsertProfileFact({
       userId,
-      category = "general",
+      category = "about_me",
       key,
       value,
+      source = "chat",
+      pinned,
       sharedAcrossBots = true,
       botSlug = null,
     }) {
+      const trimmed = value.trim();
+      const sensitive = detectSensitiveMemoryContent(trimmed);
+      if (sensitive) {
+        throw new SensitiveMemoryBlockedError(sensitive);
+      }
+      const canonicalCategory = normalizeMemoryCategory(category);
+      const effectivePinned =
+        pinned ?? defaultPinnedForCategory(canonicalCategory);
       const normalizedKey = normalizeFactKey(key);
       const id = randomUUID();
       try {
         const sql = await readySql();
         const [row] = await sql`
-          INSERT INTO "MemoryProfileFact" ("id", "userId", "category", "key", "value", "sharedAcrossBots", "botSlug")
-          VALUES (${id}, ${userId}, ${category}, ${normalizedKey}, ${value.trim()}, ${sharedAcrossBots}, ${botSlug})
+          INSERT INTO "MemoryProfileFact" (
+            "id", "userId", "category", "key", "value", "source", "pinned", "learnedAt", "sharedAcrossBots", "botSlug"
+          )
+          VALUES (
+            ${id}, ${userId}, ${canonicalCategory}, ${normalizedKey}, ${trimmed},
+            ${normalizeSource(source)}, ${effectivePinned}, now(), ${sharedAcrossBots}, ${botSlug}
+          )
           ON CONFLICT ("userId", "key")
           DO UPDATE SET
             "category" = EXCLUDED."category",
             "value" = EXCLUDED."value",
+            "source" = EXCLUDED."source",
+            "pinned" = EXCLUDED."pinned",
             "sharedAcrossBots" = EXCLUDED."sharedAcrossBots",
             "botSlug" = EXCLUDED."botSlug",
             "updatedAt" = now()
-          RETURNING "id", "userId", "category", "key", "value", "sharedAcrossBots", "botSlug", "updatedAt"
+          RETURNING "id", "userId", "category", "key", "value", "source", "pinned", "learnedAt", "sharedAcrossBots", "botSlug", "updatedAt"
         `;
-        return {
-          id: String(row.id),
-          userId: String(row.userId),
-          category: row.category as MemoryCategory,
-          key: String(row.key),
-          value: String(row.value),
-          sharedAcrossBots: Boolean(row.sharedAcrossBots),
-          botSlug: row.botSlug ? String(row.botSlug) : null,
-          updatedAt: new Date(row.updatedAt).toISOString(),
-        };
+        return mapProfileRow(row as Record<string, unknown>);
       } catch (error) {
         if (isMissingTable(error)) {
           throw new MemoryStoreUnavailableError("Memory tables missing");
@@ -376,7 +500,7 @@ export function createPostgresMemoryStore(): MemoryStore {
         throw error;
       }
     },
-    async upsertProfileFactsBatch({ userId, items }) {
+    async upsertProfileFactsBatch({ userId, source = "pasted", items }) {
       try {
         const existing = await this.listProfileFacts({ userId });
         const seenNorm = new Set(
@@ -386,10 +510,18 @@ export function createPostgresMemoryStore(): MemoryStore {
         );
         const saved: ProfileFact[] = [];
         let skippedDuplicates = 0;
+        let skippedSensitive = 0;
         for (const item of items) {
           const trimmed = item.value.trim();
+          if (!trimmed) {
+            continue;
+          }
+          if (detectSensitiveMemoryContent(trimmed)) {
+            skippedSensitive += 1;
+            continue;
+          }
           const norm = normalizeMemoryComparisonText(trimmed);
-          if (!trimmed || !norm) {
+          if (!norm) {
             continue;
           }
           if (seenNorm.has(norm)) {
@@ -397,17 +529,20 @@ export function createPostgresMemoryStore(): MemoryStore {
             continue;
           }
           seenNorm.add(norm);
+          const canonicalCategory = normalizeMemoryCategory(item.category);
           const created = await this.upsertProfileFact({
             userId,
-            category: item.category ?? "general",
+            category: canonicalCategory,
             key: item.key?.trim() || deriveFactKey(trimmed),
             value: trimmed,
+            source: item.source ?? source,
+            pinned: item.pinned ?? defaultPinnedForCategory(canonicalCategory),
             sharedAcrossBots: item.sharedAcrossBots ?? true,
             botSlug: item.botSlug ?? null,
           });
           saved.push(created);
         }
-        return { saved, skippedDuplicates };
+        return { saved, skippedDuplicates, skippedSensitive };
       } catch (error) {
         if (isMissingTable(error)) {
           throw new MemoryStoreUnavailableError("Memory tables missing");
@@ -415,18 +550,35 @@ export function createPostgresMemoryStore(): MemoryStore {
         throw error;
       }
     },
-    async updateProfileFact({ userId, id, category, value, sharedAcrossBots }) {
-      const trimmed = value.trim();
-      const nextKey = deriveFactKey(trimmed);
+    async updateProfileFact({
+      userId,
+      id,
+      category,
+      value,
+      pinned,
+      sharedAcrossBots,
+    }) {
+      if (value !== undefined) {
+        const sensitive = detectSensitiveMemoryContent(value.trim());
+        if (sensitive) {
+          throw new SensitiveMemoryBlockedError(sensitive);
+        }
+      }
+      const nextCategory = category ? normalizeMemoryCategory(category) : null;
+      const trimmedValue = value !== undefined ? value.trim() : null;
+      const nextKey =
+        trimmedValue !== null ? deriveFactKey(trimmedValue) : null;
       try {
         const sql = await readySql();
         const rows = await sql`
           UPDATE "MemoryProfileFact" AS m
           SET
-            "category" = COALESCE(${category ?? null}, m."category"),
-            "value" = ${trimmed},
+            "category" = COALESCE(${nextCategory}, m."category"),
+            "value" = COALESCE(${trimmedValue}, m."value"),
+            "pinned" = COALESCE(${pinned ?? null}, m."pinned"),
             "sharedAcrossBots" = COALESCE(${sharedAcrossBots ?? null}, m."sharedAcrossBots"),
             "key" = CASE
+              WHEN ${nextKey}::varchar IS NULL THEN m."key"
               WHEN EXISTS (
                 SELECT 1 FROM "MemoryProfileFact" AS m2
                 WHERE m2."userId" = ${userId} AND m2."key" = ${nextKey} AND m2."id" <> ${id}
@@ -435,22 +587,13 @@ export function createPostgresMemoryStore(): MemoryStore {
             END,
             "updatedAt" = now()
           WHERE m."userId" = ${userId} AND m."id" = ${id}
-          RETURNING "id", "userId", "category", "key", "value", "sharedAcrossBots", "botSlug", "updatedAt"
+          RETURNING "id", "userId", "category", "key", "value", "source", "pinned", "learnedAt", "sharedAcrossBots", "botSlug", "updatedAt"
         `;
         const row = rows[0];
         if (!row) {
           return null;
         }
-        return {
-          id: String(row.id),
-          userId: String(row.userId),
-          category: row.category as MemoryCategory,
-          key: String(row.key),
-          value: String(row.value),
-          sharedAcrossBots: Boolean(row.sharedAcrossBots),
-          botSlug: row.botSlug ? String(row.botSlug) : null,
-          updatedAt: new Date(row.updatedAt).toISOString(),
-        };
+        return mapProfileRow(row as Record<string, unknown>);
       } catch (error) {
         if (isMissingTable(error)) {
           throw new MemoryStoreUnavailableError("Memory tables missing");
@@ -463,27 +606,18 @@ export function createPostgresMemoryStore(): MemoryStore {
         const sql = await readySql();
         const rows = sharedOnly
           ? await sql`
-              SELECT "id", "userId", "category", "key", "value", "sharedAcrossBots", "botSlug", "updatedAt"
+              SELECT "id", "userId", "category", "key", "value", "source", "pinned", "learnedAt", "sharedAcrossBots", "botSlug", "updatedAt"
               FROM "MemoryProfileFact"
               WHERE "userId" = ${userId} AND "sharedAcrossBots" = true
               ORDER BY "updatedAt" DESC
             `
           : await sql`
-              SELECT "id", "userId", "category", "key", "value", "sharedAcrossBots", "botSlug", "updatedAt"
+              SELECT "id", "userId", "category", "key", "value", "source", "pinned", "learnedAt", "sharedAcrossBots", "botSlug", "updatedAt"
               FROM "MemoryProfileFact"
               WHERE "userId" = ${userId}
               ORDER BY "updatedAt" DESC
             `;
-        return rows.map((row) => ({
-          id: String(row.id),
-          userId: String(row.userId),
-          category: row.category as MemoryCategory,
-          key: String(row.key),
-          value: String(row.value),
-          sharedAcrossBots: Boolean(row.sharedAcrossBots),
-          botSlug: row.botSlug ? String(row.botSlug) : null,
-          updatedAt: new Date(row.updatedAt).toISOString(),
-        }));
+        return rows.map((row) => mapProfileRow(row as Record<string, unknown>));
       } catch (error) {
         if (isMissingTable(error)) {
           throw new MemoryStoreUnavailableError("Memory tables missing");
@@ -508,6 +642,10 @@ export function createPostgresMemoryStore(): MemoryStore {
       }
     },
     async addJournalEntry({ userId, title, body, tags = [], source = "chat" }) {
+      const sensitive = detectSensitiveMemoryContent(`${title}\n${body}`);
+      if (sensitive) {
+        throw new SensitiveMemoryBlockedError(sensitive);
+      }
       const cleanTags = [
         ...new Set(
           tags
@@ -541,6 +679,10 @@ export function createPostgresMemoryStore(): MemoryStore {
       }
     },
     async updateJournalEntry({ userId, id, title, body, tags }) {
+      const sensitive = detectSensitiveMemoryContent(`${title}\n${body}`);
+      if (sensitive) {
+        throw new SensitiveMemoryBlockedError(sensitive);
+      }
       const cleanTags = tags
         ? [
             ...new Set(

@@ -8,7 +8,7 @@ import {
 } from "@/lib/bots/roster";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import { getChatById, getMessagesByChatId } from "@/lib/db/queries";
-import { selectRelevantFactsForPrompt } from "@/lib/memory/bulk-import";
+import { buildGroupedMemoryPromptBlock } from "@/lib/memory/bulk-import";
 import { createPostgresMemoryStore } from "@/lib/memory/store";
 import {
   buildVoiceSystemInstruction,
@@ -129,12 +129,11 @@ export async function POST(request: Request) {
     facts,
     teammate?.slug ?? "chief-of-staff"
   ).filter((f) => !containsRestrictedWorkData(`${f.key} ${f.value}`));
-  const scopedFacts = selectRelevantFactsForPrompt(
+  const groupedMemoryBlock = buildGroupedMemoryPromptBlock(
     safeVoiceFacts,
     latestRecentText,
-    80,
-    6000
-  ).map((f) => `[${f.category}] ${f.value}`);
+    { maxFacts: 80, maxChars: 6000 }
+  );
 
   const systemInstruction = buildVoiceSystemInstruction({
     ownerName:
@@ -143,7 +142,7 @@ export async function POST(request: Request) {
       "Çağlar",
     timeZone: validTimeZone(body.timeZone),
     teammate: teammate ? { name: teammate.name, soul: teammate.soul } : null,
-    facts: scopedFacts,
+    groupedMemoryBlock,
     recentTurns,
   });
 

@@ -6,33 +6,47 @@ import {
   createPostgresMemoryStore,
   isMemoryToolsEnabled,
   MemoryStoreUnavailableError,
+  SensitiveMemoryBlockedError,
 } from "@/lib/memory/store";
 
 const categoryEnum = z.enum([
+  "rules",
+  "preferences",
+  "about_me",
+  "family",
+  "work",
+  "projects",
+  // Legacy compatibility aliases
   "identity",
   "preference",
-  "work",
   "finance",
   "project",
   "general",
 ]);
 
+const sourceEnum = z.enum(["pasted", "chat", "voice"]);
+
 const profileBodySchema = z.object({
   type: z.literal("profile"),
-  category: categoryEnum.default("general"),
+  category: categoryEnum.default("about_me"),
   key: z.string().trim().min(1).max(120).optional(),
   value: z.string().trim().min(1).max(2000),
+  source: sourceEnum.default("pasted"),
+  pinned: z.boolean().optional(),
   sharedAcrossBots: z.boolean().default(true),
 });
 
 const profileBatchBodySchema = z.object({
   type: z.literal("profile_batch"),
+  source: sourceEnum.default("pasted"),
   items: z
     .array(
       z.object({
-        category: categoryEnum.default("general"),
+        category: categoryEnum.default("about_me"),
         key: z.string().trim().min(1).max(120).optional(),
         value: z.string().trim().min(1).max(2000),
+        source: sourceEnum.optional(),
+        pinned: z.boolean().optional(),
         sharedAcrossBots: z.boolean().default(true),
       })
     )
@@ -58,7 +72,8 @@ const updateMemorySchema = z.discriminatedUnion("type", [
     type: z.literal("profile"),
     id: z.string().uuid(),
     category: categoryEnum.optional(),
-    value: z.string().trim().min(1).max(2000),
+    value: z.string().trim().min(1).max(2000).optional(),
+    pinned: z.boolean().optional(),
     sharedAcrossBots: z.boolean().optional(),
   }),
   z.object({
@@ -145,6 +160,8 @@ export async function POST(request: Request) {
         category: body.category,
         key: body.key || deriveFactKey(body.value),
         value: body.value,
+        source: body.source,
+        pinned: body.pinned,
         sharedAcrossBots: body.sharedAcrossBots,
       });
       return Response.json({ fact }, { status: 201 });
@@ -152,12 +169,14 @@ export async function POST(request: Request) {
     if (body.type === "profile_batch") {
       const result = await store.upsertProfileFactsBatch({
         userId: session.user.id,
+        source: body.source,
         items: body.items,
       });
       return Response.json(
         {
           savedCount: result.saved.length,
           skippedDuplicates: result.skippedDuplicates,
+          skippedSensitive: result.skippedSensitive,
           facts: result.saved,
         },
         { status: 201 }
@@ -172,6 +191,16 @@ export async function POST(request: Request) {
     });
     return Response.json({ entry }, { status: 201 });
   } catch (error) {
+    if (error instanceof SensitiveMemoryBlockedError) {
+      return Response.json(
+        {
+          error:
+            "Passwords, card numbers, and street addresses are never stored in memory.",
+          reason: error.reason,
+        },
+        { status: 422 }
+      );
+    }
     if (error instanceof MemoryStoreUnavailableError) {
       return Response.json(
         { error: "Memory tables require parity-schema.sql setup" },
@@ -206,6 +235,7 @@ export async function PATCH(request: Request) {
         id: body.id,
         category: body.category,
         value: body.value,
+        pinned: body.pinned,
         sharedAcrossBots: body.sharedAcrossBots,
       });
       if (!updated) {
@@ -224,7 +254,17 @@ export async function PATCH(request: Request) {
       return Response.json({ error: "Not found" }, { status: 404 });
     }
     return Response.json({ entry: updatedEntry });
-  } catch {
+  } catch (error) {
+    if (error instanceof SensitiveMemoryBlockedError) {
+      return Response.json(
+        {
+          error:
+            "Passwords, card numbers, and street addresses are never stored in memory.",
+          reason: error.reason,
+        },
+        { status: 422 }
+      );
+    }
     return Response.json({ error: "Could not update memory" }, { status: 503 });
   }
 }

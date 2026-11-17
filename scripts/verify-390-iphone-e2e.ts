@@ -718,33 +718,45 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
       category: string;
       key: string;
       value: string;
+      source: string;
+      pinned: boolean;
+      learnedAt: string;
       sharedAcrossBots: boolean;
       updatedAt: string;
     }> = [
       {
         id: "50000000-0000-4000-8000-000000000001",
         userId,
-        category: "identity",
+        category: "about_me",
         key: "i_live_in_london",
-        value: "I live in London (Europe/London)",
+        value: "I live in London (Europe/London).",
+        source: "chat",
+        pinned: true,
+        learnedAt: "2026-11-17T20:00:00.000Z",
         sharedAcrossBots: true,
         updatedAt: "2026-11-17T20:00:00.000Z",
       },
       {
         id: "50000000-0000-4000-8000-000000000002",
         userId,
-        category: "identity",
+        category: "family",
         key: "daughter_ece",
-        value: "Daughter's name is Ece",
+        value: "Daughter's name is Ece.",
+        source: "voice",
+        pinned: false,
+        learnedAt: "2026-11-17T20:01:00.000Z",
         sharedAcrossBots: true,
         updatedAt: "2026-11-17T20:01:00.000Z",
       },
       {
         id: "50000000-0000-4000-8000-000000000003",
         userId,
-        category: "preference",
+        category: "preferences",
         key: "coffee_black",
-        value: "Kahvemi sade ve şekersiz içerim",
+        value: "Kahvemi sade ve şekersiz içerim.",
+        source: "chat",
+        pinned: true,
+        learnedAt: "2026-11-17T20:02:00.000Z",
         sharedAcrossBots: true,
         updatedAt: "2026-11-17T20:02:00.000Z",
       },
@@ -806,19 +818,30 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
       if (method === "POST") {
         const body = JSON.parse(req.postData() ?? "{}") as {
           type?: string;
-          items?: Array<{ category?: string; key?: string; value?: string }>;
+          source?: string;
+          items?: Array<{
+            category?: string;
+            key?: string;
+            value?: string;
+            source?: string;
+            pinned?: boolean;
+          }>;
         };
         if (body.type === "profile_batch" && Array.isArray(body.items)) {
           const created = body.items.map((item) => {
             nextMemSeq += 1;
+            const nowIso = "2026-11-17T22:15:00.000Z";
             const row = {
               id: `50000000-0000-4000-8000-${String(nextMemSeq).padStart(12, "0")}`,
               userId,
-              category: item.category ?? "general",
+              category: item.category ?? "about_me",
               key: item.key ?? `fact_${nextMemSeq}`,
               value: item.value ?? "",
+              source: item.source ?? body.source ?? "pasted",
+              pinned: Boolean(item.pinned),
+              learnedAt: nowIso,
               sharedAcrossBots: true,
-              updatedAt: new Date().toISOString(),
+              updatedAt: nowIso,
             };
             memoryState.unshift(row);
             return row;
@@ -828,6 +851,7 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
             json: {
               savedCount: created.length,
               skippedDuplicates: 0,
+              skippedSensitive: 0,
               facts: created,
             },
           });
@@ -838,12 +862,18 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
           id?: string;
           value?: string;
           category?: string;
+          pinned?: boolean;
         };
         const target = memoryState.find((m) => m.id === body.id);
-        if (target && body.value) {
-          target.value = body.value;
+        if (target) {
+          if (body.value !== undefined) {
+            target.value = body.value;
+          }
           if (body.category) {
             target.category = body.category;
+          }
+          if (typeof body.pinned === "boolean") {
+            target.pinned = body.pinned;
           }
           return route.fulfill({ status: 200, json: { fact: target } });
         }
@@ -876,15 +906,19 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
       timeout: 15_000,
     });
 
-    // Paste a 50-line list (3 existing duplicates + 47 brand-new facts)
+    // Paste a 53-line list: 3 sensitive lines (password, card, street address) + 3 existing duplicates + 47 brand-new facts
     const fiftyLines: string[] = [
+      "- Never use pay-per-use API models without asking first",
+      "- My WiFi password is SuperSecretPassword123!",
+      "- Visa card 4532 0151 1283 0366",
+      "- My home address is 221B Baker Street, London NW1 6XE",
       "- I live in London (Europe/London)",
       "• Daughter's name is Ece",
       "1. Kahvemi sade ve şekersiz içerim",
     ];
-    for (let i = 1; i <= 47; i++) {
+    for (let i = 1; i <= 46; i++) {
       fiftyLines.push(
-        `${i + 1}. Memory fact #${i}: concise bilingual EN/TR note (${i})`
+        `${i + 1}. Project fact #${i}: concise bilingual EN/TR note (${i})`
       );
     }
     await page.getByTestId("memory-bulk-textarea").fill(fiftyLines.join("\n"));
@@ -892,10 +926,22 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
 
     const previewBox = page.getByTestId("memory-import-preview");
     await expect(previewBox).toBeVisible({ timeout: 10_000 });
+    const sensitiveWarning = page.getByTestId("memory-sensitive-warning");
+    await expect(sensitiveWarning).toBeVisible();
+    await expect(sensitiveWarning).toContainText("(3)");
+    await expect(sensitiveWarning).toContainText("Password / secret");
+    await expect(sensitiveWarning).toContainText("Card number");
+    await expect(sensitiveWarning).toContainText("Street / postal address");
     await expect(page.getByTestId("memory-preview-summary")).toContainText(
       "47 new selected · 3 already saved"
     );
     await expect(page.getByTestId("memory-duplicate-badge")).toHaveCount(3);
+
+    // Edit category in preview dropdown
+    await page
+      .getByTestId("memory-preview-category")
+      .nth(4)
+      .selectOption("projects");
 
     const previewOverflow = await page.evaluate(
       () => document.documentElement.scrollWidth
@@ -916,16 +962,23 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
       timeout: 10_000,
     });
 
+    // Verify Rules & Preferences appear first, with Pinned/Searchable, Source, and Learned date visible
+    const firstRow = page.getByTestId("memory-fact-row").first();
+    await expect(firstRow).toContainText("Rules");
+    await expect(firstRow).toContainText("Pinned");
+    await expect(firstRow).toContainText("Pasted");
+    await expect(firstRow).toContainText("Learned");
+
     // Test Search, Inline Edit, Delete, and Export buttons
-    await page.getByTestId("memory-search-input").fill("Memory fact #47:");
+    await page.getByTestId("memory-search-input").fill("Project fact #46:");
     await expect(page.getByTestId("memory-fact-row")).toHaveCount(1);
     await page.getByTestId("memory-edit-button").first().click();
     await page
       .getByTestId("memory-edit-textarea")
-      .fill("Memory fact #47: edited cleanly on iPhone 390px");
+      .fill("Project fact #46: edited cleanly on iPhone 390px.");
     await page.getByTestId("memory-edit-save").click();
     await expect(
-      page.getByText("Memory fact #47: edited cleanly on iPhone 390px")
+      page.getByText("Project fact #46: edited cleanly on iPhone 390px.")
     ).toBeVisible();
 
     // Clear search -> all 50 rows visible, delete 1 row -> 49 rows, verify Download trigger
@@ -939,6 +992,8 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
     const download = await downloadPromise;
     assert.match(download.suggestedFilename(), /^assistant-memories-.*\.md$/);
 
+    await page.getByTestId("memory-saved-list").scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
     const savedOverflow = await page.evaluate(
       () => document.documentElement.scrollWidth
     );

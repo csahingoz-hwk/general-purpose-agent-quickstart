@@ -49,9 +49,12 @@ export async function ensureParitySchema(
       CREATE TABLE IF NOT EXISTS "MemoryProfileFact" (
         "id" uuid PRIMARY KEY,
         "userId" uuid NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
-        "category" varchar(48) NOT NULL DEFAULT 'general',
+        "category" varchar(48) NOT NULL DEFAULT 'about_me',
         "key" varchar(120) NOT NULL,
         "value" text NOT NULL,
+        "source" varchar(24) NOT NULL DEFAULT 'chat',
+        "pinned" boolean NOT NULL DEFAULT false,
+        "learnedAt" timestamptz NOT NULL DEFAULT now(),
         "sharedAcrossBots" boolean NOT NULL DEFAULT true,
         "botSlug" varchar(80),
         "updatedAt" timestamptz NOT NULL DEFAULT now(),
@@ -59,6 +62,12 @@ export async function ensureParitySchema(
       );
       ALTER TABLE "MemoryProfileFact"
         ADD COLUMN IF NOT EXISTS "botSlug" varchar(80);
+      ALTER TABLE "MemoryProfileFact"
+        ADD COLUMN IF NOT EXISTS "source" varchar(24) NOT NULL DEFAULT 'chat';
+      ALTER TABLE "MemoryProfileFact"
+        ADD COLUMN IF NOT EXISTS "pinned" boolean NOT NULL DEFAULT false;
+      ALTER TABLE "MemoryProfileFact"
+        ADD COLUMN IF NOT EXISTS "learnedAt" timestamptz NOT NULL DEFAULT now();
       CREATE INDEX IF NOT EXISTS "MemoryProfileFact_user_updated"
         ON "MemoryProfileFact" ("userId", "updatedAt" DESC);
 

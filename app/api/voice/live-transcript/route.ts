@@ -68,17 +68,20 @@ export async function POST(request: Request) {
       isMemoryToolsEnabled() && userText
         ? extractExplicitRememberFact(userText)
         : null;
-    const savedFact = explicitRemember
-      ? await createPostgresMemoryStore()
-          .upsertProfileFact({
-            userId: session.user.id,
-            category: explicitRemember.category,
-            key: explicitRemember.key,
-            value: explicitRemember.value,
-            sharedAcrossBots: true,
-          })
-          .catch(() => null)
-      : null;
+    const savedFact =
+      explicitRemember?.kind === "ok"
+        ? await createPostgresMemoryStore()
+            .upsertProfileFact({
+              userId: session.user.id,
+              category: explicitRemember.category,
+              key: explicitRemember.key,
+              value: explicitRemember.value,
+              source: "voice",
+              pinned: explicitRemember.pinned,
+              sharedAcrossBots: true,
+            })
+            .catch(() => null)
+        : null;
     const savedMemoryPart = savedFact
       ? {
           type: "tool-saveProfileFact" as const,
@@ -94,7 +97,21 @@ export async function POST(request: Request) {
             fact: savedFact,
           },
         }
-      : null;
+      : explicitRemember?.kind === "sensitive_blocked"
+        ? {
+            type: "tool-saveProfileFact" as const,
+            toolCallId: `voice-mem-warn-${Date.now()}`,
+            state: "output-available" as const,
+            input: { category: "rules", key: "blocked", value: "" },
+            output: {
+              saved: false,
+              skippedSensitive: true,
+              reason: explicitRemember.reason,
+              warning:
+                "Passwords, card numbers, and street addresses are never stored in memory.",
+            },
+          }
+        : null;
 
     const now = Date.now();
     const assistantParts: Record<string, unknown>[] = [];

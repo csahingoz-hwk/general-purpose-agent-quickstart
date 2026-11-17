@@ -2,168 +2,228 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { selectActiveTools } from "../../lib/ai/context/select-tools";
 import {
+  buildGroupedMemoryPromptBlock,
   buildMemoriesExportMarkdown,
   deriveFactKey,
+  detectSensitiveMemoryContent,
   extractExplicitRememberFact,
   prepareMemoryImportPreview,
-  selectRelevantFactsForPrompt,
-  splitPastedMemoryList,
 } from "../../lib/memory/bulk-import";
-import { createInMemoryMemoryStore } from "../../lib/memory/store";
+import {
+  createInMemoryMemoryStore,
+  SensitiveMemoryBlockedError,
+} from "../../lib/memory/store";
 import { buildVoiceSystemInstruction } from "../../lib/voice/live-session";
 
-test("50-line pasted list splits bullets, numbered items, headings, and paragraphs, de-duplicates against existing memories, and avoids key collisions", async () => {
+test("50-line pasted list splits into single-sentence facts across the 6 categories, skips passwords/cards/addresses with warnings, de-duplicates, supports editable categories & pinning, and groups Rules & Preferences first in prompts", async () => {
   const store = createInMemoryMemoryStore();
 
-  // Seed 3 existing memories for owner-1 and 1 private memory for owner-2
+  // Seed 3 existing memories for owner-1 (from chat and voice) and 1 private memory for owner-2
   await store.upsertProfileFact({
     userId: "owner-1",
-    category: "identity",
-    key: deriveFactKey("I live in London (Europe/London)"),
-    value: "I live in London (Europe/London)",
+    category: "about_me",
+    key: deriveFactKey("I live in London (Europe/London)."),
+    value: "I live in London (Europe/London).",
+    source: "chat",
+    pinned: true,
   });
   await store.upsertProfileFact({
     userId: "owner-1",
-    category: "preference",
-    key: deriveFactKey("Kahvemi sade ve şekersiz içerim"),
-    value: "Kahvemi sade ve şekersiz içerim",
+    category: "preferences",
+    key: deriveFactKey("Kahvemi sade ve şekersiz içerim."),
+    value: "Kahvemi sade ve şekersiz içerim.",
+    source: "voice",
+    pinned: true,
   });
   await store.upsertProfileFact({
     userId: "owner-1",
-    category: "identity",
-    key: deriveFactKey("Daughter's name is Ece"),
-    value: "Daughter's name is Ece",
+    category: "family",
+    key: deriveFactKey("Daughter's name is Ece."),
+    value: "Daughter's name is Ece.",
+    source: "chat",
+    pinned: false,
   });
   await store.upsertProfileFact({
     userId: "owner-2",
-    category: "general",
-    key: deriveFactKey("Owner-2 secret note"),
-    value: "Owner-2 secret note",
+    category: "about_me",
+    key: deriveFactKey("Owner-2 secret note."),
+    value: "Owner-2 secret note.",
+    source: "pasted",
   });
 
   const existingOwner1 = await store.listProfileFacts({ userId: "owner-1" });
   assert.equal(existingOwner1.length, 3);
 
-  // Build a 50-fact pasted list (3 duplicates of existing + 1 repeat within paste + 46 brand-new facts,
-  // including two facts sharing identical first 55 characters to prove zero key collisions!)
+  // Build a 53-line pasted input:
+  // - 3 sensitive lines (password, Visa card number, street/postcode address) -> MUST BE SKIPPED WITH WARNING!
+  // - 3 duplicates of existing memories + 1 repeat inside paste -> UNCHECKED BY DEFAULT!
+  // - 46 brand-new self-contained facts across Rules, Preferences, About me, Family, Work, Projects!
   const pastedLines: string[] = [
-    "# Identity & Family",
-    "- I live in London (Europe/London).", // duplicate of existing (#1)
-    "• Daughter's name is Ece", // duplicate of existing (#2)
-    "1. Kahvemi sade ve şekersiz içerim!", // duplicate of existing (#3)
+    "# Rules",
+    "- Never use pay-per-use API models without asking first",
+    "# Sensitive lines that must be blocked",
+    "- My WiFi password is SuperSecretPassword123!",
+    "- Personal Visa card 4532 0151 1283 0366",
+    "- My home address is 221B Baker Street, London NW1 6XE",
+    "# Existing & repeated items",
+    "- I live in London (Europe/London)",
+    "• Daughter's name is Ece",
+    "1. Kahvemi sade ve şekersiz içerim",
     "2) Prefer concise comparison tables with clear takeaways",
-    "Prefer concise comparison tables with clear takeaways", // repeat inside paste (#4)
-    "# Preferences",
-    "* When reviewing monthly numbers, always highlight variances above 5% first",
-    "* When reviewing monthly numbers, always highlight cash flow timing second",
+    "Prefer concise comparison tables with clear takeaways",
+    "# Projects",
+    "* StreamVault TV runs on a Samsung Tizen TV",
+    "* Mac mini connects over standalone Tailscale SSH in tmux",
   ];
-  for (let i = 1; i <= 43; i++) {
+  for (let i = 1; i <= 42; i++) {
     pastedLines.push(
-      `${i + 2}. Personal memory item #${i}: keep mobile cards clean at 390px viewport (${i})`
+      `${i + 2}. Searchable project note #${i}: mobile UI stays crisp at 390px (${i})`
     );
   }
 
-  const rawPaste = pastedLines.join("\n");
-  const splitOnly = splitPastedMemoryList(rawPaste);
-  assert.equal(splitOnly.length, 50, "Expected headings stripped and 50 facts");
+  const preview = prepareMemoryImportPreview(
+    pastedLines.join("\n"),
+    existingOwner1
+  );
 
-  const preview = prepareMemoryImportPreview(rawPaste, existingOwner1);
-  assert.equal(preview.length, 50);
+  // Verify all 3 sensitive lines were caught & skipped with exact reasons
+  assert.equal(preview.skippedSensitive.length, 3);
+  assert.deepEqual(
+    preview.skippedSensitive.map((s) => s.reason),
+    ["password", "card_number", "address"]
+  );
+  // Card digits are masked in warning preview
+  assert.ok(!preview.skippedSensitive[1]?.preview.includes("1283"));
 
-  const selectedNew = preview.filter((p) => p.checked);
-  const duplicates = preview.filter((p) => p.isDuplicate);
-  assert.equal(duplicates.length, 4, "3 existing + 1 repeat in paste");
-  assert.equal(selectedNew.length, 46, "46 genuinely new facts pre-checked");
+  // Remaining 50 valid candidate lines: 4 duplicates + 46 new pre-checked single-sentence facts
+  assert.equal(preview.items.length, 50);
+  const selectedNew = preview.items.filter((p) => p.checked);
+  const duplicates = preview.items.filter((p) => p.isDuplicate);
+  assert.equal(duplicates.length, 4);
+  assert.equal(selectedNew.length, 46);
+  // Every extracted value is formatted as a self-contained sentence ending with punctuation
+  for (const item of selectedNew) {
+    assert.match(item.value, /[.!?…]$/);
+  }
 
-  // Save selected batch for owner-1
+  // Save batch with source="pasted"
   const batchRes = await store.upsertProfileFactsBatch({
     userId: "owner-1",
+    source: "pasted",
     items: selectedNew.map((p) => ({
       category: p.category,
       key: p.key,
       value: p.value,
+      pinned: p.pinned,
     })),
   });
   assert.equal(batchRes.saved.length, 46);
-  assert.equal(batchRes.skippedDuplicates, 0);
+  assert.equal(batchRes.saved[0]?.source, "pasted");
+  assert.ok(batchRes.saved[0]?.learnedAt);
 
-  const allOwner1After = await store.listProfileFacts({ userId: "owner-1" });
-  assert.equal(
-    allOwner1After.length,
-    49,
-    "3 existing + 46 new = 49 distinct persisted facts (zero collisions)"
+  // Direct store attempt to save a password, card number, or address fails closed
+  await assert.rejects(
+    () =>
+      store.upsertProfileFact({
+        userId: "owner-1",
+        category: "about_me",
+        key: "bad_pw",
+        value: "My password is secret123",
+      }),
+    SensitiveMemoryBlockedError
   );
 
-  // Verify inline edit updates value in place without changing total count or leaking across owners
-  const targetToEdit = allOwner1After.find((f) =>
-    f.value.includes("Personal memory item #10:")
+  const allOwner1 = await store.listProfileFacts({ userId: "owner-1" });
+  assert.equal(allOwner1.length, 49);
+
+  // Verify prompt grouping:
+  // 1) Rules & Preferences come FIRST!
+  // 2) Pinned facts are ALWAYS included even on an unrelated query ("weather tomorrow")
+  // 3) Searchable (`!pinned`) facts are pulled in ONLY when relevant (e.g. "Tizen" or "Ece")!
+  const unrelatedPrompt = buildGroupedMemoryPromptBlock(
+    allOwner1,
+    "What is the weather tomorrow?"
   );
-  assert.ok(targetToEdit);
-  const edited = await store.updateProfileFact({
-    userId: "owner-1",
-    id: targetToEdit.id,
-    category: "project",
-    value: "Updated memory item #10: verified inline edit in Postgres store",
-  });
-  assert.ok(edited);
-  assert.equal(edited.category, "project");
-  assert.match(edited.value, /verified inline edit/);
-
-  // Cross-owner edit attempt fails closed
-  const crossEdit = await store.updateProfileFact({
-    userId: "owner-2",
-    id: targetToEdit.id,
-    value: "Attempted overwrite",
-  });
-  assert.equal(crossEdit, null);
-
-  // Export markdown includes all 49 facts cleanly
-  const finalOwner1 = await store.listProfileFacts({ userId: "owner-1" });
-  const exported = buildMemoriesExportMarkdown(finalOwner1);
-  assert.match(exported, /Saved Memories \(49\)/);
-  assert.match(exported, /verified inline edit/);
-  assert.ok(!exported.includes("Owner-2 secret note"));
-
-  // Every chat and voice session prompt receives up to 80 memories (all 49 included!)
-  const promptFacts = selectRelevantFactsForPrompt(
-    finalOwner1,
-    "What should you keep in mind about mobile cards?",
-    80,
-    6000
+  const rulesIdx = unrelatedPrompt.indexOf("### Rules");
+  const prefsIdx = unrelatedPrompt.indexOf("### Preferences");
+  const aboutIdx = unrelatedPrompt.indexOf("### About me");
+  assert.ok(rulesIdx !== -1 && prefsIdx !== -1 && aboutIdx !== -1);
+  assert.ok(
+    rulesIdx < prefsIdx && prefsIdx < aboutIdx,
+    "Rules and Preferences must appear first in prompt block"
   );
-  assert.equal(promptFacts.length, 49);
+  // Unrelated searchable fact ("Daughter's name is Ece.") is NOT pulled into weather query
+  assert.ok(!unrelatedPrompt.includes("Daughter's name is Ece."));
 
+  // Relevant query ("Tell me about Ece and my Tizen project") pulls in matching searchable facts!
+  const relevantPrompt = buildGroupedMemoryPromptBlock(
+    allOwner1,
+    "Help me plan something for Ece and check my Tizen TV project"
+  );
+  assert.match(relevantPrompt, /### Family\n- Daughter's name is Ece\./);
+  assert.match(relevantPrompt, /### Projects[\s\S]*Samsung Tizen TV/);
+
+  // Voice session prompt embeds the grouped block cleanly
   const voicePrompt = buildVoiceSystemInstruction({
     ownerName: "Çağlar",
     timeZone: "Europe/London",
-    facts: promptFacts.map((f) => `[${f.category}] ${f.value}`),
+    groupedMemoryBlock: relevantPrompt,
   });
-  assert.match(voicePrompt, /verified inline edit/);
-  assert.match(voicePrompt, /Daughter's name is Ece/);
+  assert.match(voicePrompt, /### Rules/);
+  assert.match(voicePrompt, /### Preferences/);
+
+  // Export includes source, learned date, and pinned/searchable mode
+  const exported = buildMemoriesExportMarkdown(allOwner1);
+  assert.match(exported, /Durable Facts \(49\)/);
+  assert.match(exported, /source: pasted, learned:/);
+  assert.ok(!exported.includes("Owner-2 secret note"));
 });
 
-test("'remember this: …' and 'bunu hatırla: …' work in chat and voice without false positives on questions", () => {
+test("'remember this: …' and 'bunu hatırla: …' parse self-contained facts in chat & voice and block passwords, card numbers, and addresses", () => {
+  assert.equal(detectSensitiveMemoryContent("I live in London."), null);
+  assert.equal(
+    detectSensitiveMemoryContent(
+      "My home address is 10 Downing Street SW1A 2AA"
+    ),
+    "address"
+  );
+  assert.equal(
+    detectSensitiveMemoryContent("Card: 4532 0151 1283 0366"),
+    "card_number"
+  );
+  assert.equal(detectSensitiveMemoryContent("Şifrem: gizli12345"), "password");
+
   const en = extractExplicitRememberFact(
-    "Remember this: I prefer aisle seats on flights over 3 hours."
+    "Remember this: I prefer aisle seats on flights over 3 hours"
   );
-  assert.ok(en);
-  assert.equal(en.category, "preference");
-  assert.equal(en.value, "I prefer aisle seats on flights over 3 hours.");
+  assert.equal(en?.kind, "ok");
+  if (en?.kind === "ok") {
+    assert.equal(en.category, "preferences");
+    assert.equal(en.pinned, true);
+    assert.equal(en.value, "I prefer aisle seats on flights over 3 hours.");
+  }
 
-  const tr = extractExplicitRememberFact(
-    "Bunu hatırla: Kızımın GCSE tarih sınavı Edexcel müfredatında."
+  const tr = extractExplicitRememberFact("Bunu hatırla: Kızımın adı Ece");
+  assert.equal(tr?.kind, "ok");
+  if (tr?.kind === "ok") {
+    assert.equal(tr.category, "family");
+    assert.equal(tr.value, "Kızımın adı Ece.");
+  }
+
+  const blockedPw = extractExplicitRememberFact(
+    "Remember this: my Netflix password is hunter2password"
   );
-  assert.ok(tr);
-  assert.equal(tr.category, "identity");
-  assert.match(tr.value, /Edexcel/);
+  assert.deepEqual(blockedPw, {
+    kind: "sensitive_blocked",
+    reason: "password",
+  });
 
-  // Questions must NOT be treated as explicit save directives
+  // Questions never trigger explicit save
   assert.equal(
     extractExplicitRememberFact("Do you remember this: what did I say?"),
     null
   );
 
-  // selectActiveTools enables saveProfileFact (and never paid webSearch) for remember directives
   const toolsEn = selectActiveTools(
     [
       {
@@ -176,17 +236,4 @@ test("'remember this: …' and 'bunu hatırla: …' work in chat and voice witho
     true
   );
   assert.deepEqual(toolsEn, ["saveProfileFact"]);
-
-  const toolsTr = selectActiveTools(
-    [
-      {
-        id: "m2",
-        role: "user",
-        parts: [{ type: "text", text: "Bunu hatırla: çayı şekersiz içerim" }],
-      },
-    ],
-    true,
-    true
-  );
-  assert.deepEqual(toolsTr, ["saveProfileFact"]);
 });

@@ -181,13 +181,21 @@ export const LIVE_VOICE_TOOL_DECLARATIONS: readonly LiveToolDeclaration[] = [
   {
     type: "function",
     name: "saveProfileFact",
-    description: "Save a durable fact or preference to the owner's profile.",
+    description:
+      "Save one self-contained durable fact sentence to the owner's memory (never store passwords, card numbers, or street addresses).",
     parameters: {
       type: "object",
       properties: {
         category: {
           type: "string",
-          enum: ["identity", "preference", "finance", "project", "general"],
+          enum: [
+            "rules",
+            "preferences",
+            "about_me",
+            "family",
+            "work",
+            "projects",
+          ],
         },
         key: { type: "string" },
         value: { type: "string" },

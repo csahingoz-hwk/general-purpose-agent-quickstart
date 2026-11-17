@@ -1,54 +1,93 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { deriveFactKey } from "@/lib/memory/bulk-import";
-import type { MemoryStore } from "@/lib/memory/store";
+import {
+  deriveFactKey,
+  toSelfContainedSentence,
+} from "@/lib/memory/bulk-import";
+import {
+  type MemorySource,
+  type MemoryStore,
+  SensitiveMemoryBlockedError,
+} from "@/lib/memory/store";
 
 export function createMemoryTools({
   userId,
   store,
+  defaultSource = "chat",
 }: {
   userId: string;
   store: MemoryStore;
+  defaultSource?: MemorySource;
 }) {
   const saveProfileFact = tool({
     description:
-      "Save or update a durable fact about the user in their structured Profile memory (e.g. role, reporting currency, communication preferences). Only call when the user states a lasting preference or fact.",
+      "Save or update one self-contained durable sentence about the user in their memory (categories: rules, preferences, about_me, family, work, projects). Never store passwords, payment card numbers, or physical street addresses.",
     inputSchema: z.object({
       category: z
         .enum([
+          "rules",
+          "preferences",
+          "about_me",
+          "family",
+          "work",
+          "projects",
           "identity",
           "preference",
-          "work",
           "finance",
           "project",
           "general",
         ])
-        .default("general"),
+        .default("about_me"),
       key: z.string().trim().min(2).max(120),
       value: z.string().trim().min(1).max(1500),
+      pinned: z.boolean().optional(),
       sharedAcrossBots: z.boolean().default(true),
     }),
-    execute: async ({ category, key, value, sharedAcrossBots }) => {
-      const saved = await store.upsertProfileFact({
-        userId,
-        category,
-        key: key.trim().length >= 2 ? key : deriveFactKey(value),
-        value,
-        sharedAcrossBots,
-      });
-      return {
-        saved: true as const,
-        fact: saved,
-      };
+    execute: async ({ category, key, value, pinned, sharedAcrossBots }) => {
+      try {
+        const sentence = toSelfContainedSentence(value);
+        const saved = await store.upsertProfileFact({
+          userId,
+          category,
+          key: key.trim().length >= 2 ? key : deriveFactKey(sentence),
+          value: sentence,
+          source: defaultSource,
+          pinned,
+          sharedAcrossBots,
+        });
+        return {
+          saved: true as const,
+          fact: saved,
+        };
+      } catch (err) {
+        if (err instanceof SensitiveMemoryBlockedError) {
+          return {
+            saved: false as const,
+            skippedSensitive: true as const,
+            reason: err.reason,
+            warning:
+              "Passwords, card numbers, and street addresses are never stored in memory.",
+          };
+        }
+        throw err;
+      }
     },
     toModelOutput: ({ output }) => ({
       type: "json" as const,
-      value: {
-        saved: output.saved,
-        key: output.fact.key,
-        category: output.fact.category,
-        sharedAcrossBots: output.fact.sharedAcrossBots,
-      },
+      value: output.saved
+        ? {
+            saved: true,
+            key: output.fact.key,
+            category: output.fact.category,
+            source: output.fact.source,
+            pinned: output.fact.pinned,
+          }
+        : {
+            saved: false,
+            skippedSensitive: true,
+            reason: output.reason,
+            warning: output.warning,
+          },
     }),
   });
 
@@ -61,32 +100,51 @@ export function createMemoryTools({
       tags: z.array(z.string().trim().min(1).max(40)).max(8).default([]),
     }),
     execute: async ({ title, body, tags }) => {
-      const entry = await store.addJournalEntry({
-        userId,
-        title,
-        body,
-        tags,
-        source: "chat",
-      });
-      return {
-        logged: true as const,
-        entry,
-      };
+      try {
+        const entry = await store.addJournalEntry({
+          userId,
+          title,
+          body,
+          tags,
+          source: defaultSource === "voice" ? "chat" : "chat",
+        });
+        return {
+          logged: true as const,
+          entry,
+        };
+      } catch (err) {
+        if (err instanceof SensitiveMemoryBlockedError) {
+          return {
+            logged: false as const,
+            skippedSensitive: true as const,
+            reason: err.reason,
+            warning:
+              "Passwords, card numbers, and street addresses are never stored in memory.",
+          };
+        }
+        throw err;
+      }
     },
     toModelOutput: ({ output }) => ({
       type: "json" as const,
-      value: {
-        logged: output.logged,
-        id: output.entry.id,
-        title: output.entry.title,
-        tags: output.entry.tags,
-      },
+      value: output.logged
+        ? {
+            logged: true,
+            id: output.entry.id,
+            title: output.entry.title,
+            tags: output.entry.tags,
+          }
+        : {
+            logged: false,
+            skippedSensitive: true,
+            reason: output.reason,
+          },
     }),
   });
 
   const recallMemories = tool({
     description:
-      "Search the user's durable Profile facts and chronological Journal entries before answering questions about their preferences, prior decisions, or ongoing work.",
+      "Search the user's durable facts and chronological Journal entries before answering questions about their preferences, rules, family, projects, or ongoing work.",
     inputSchema: z.object({
       query: z.string().trim().max(200).optional(),
       tag: z.string().trim().max(40).optional(),
@@ -107,7 +165,7 @@ export function createMemoryTools({
                 item.category.toLowerCase().includes(q)
             )
           : allFacts
-      ).slice(0, 15);
+      ).slice(0, 20);
 
       return {
         profileFacts,
@@ -119,8 +177,10 @@ export function createMemoryTools({
       value: {
         profileFacts: output.profileFacts.map((f) => ({
           category: f.category,
-          key: f.key,
           value: f.value,
+          source: f.source,
+          pinned: f.pinned,
+          learnedAt: f.learnedAt,
         })),
         journalEntries: output.journalEntries.map((j) => ({
           title: j.title,
