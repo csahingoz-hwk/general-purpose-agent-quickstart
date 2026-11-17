@@ -5,6 +5,7 @@ import {
   createLiveVoiceSessionDescriptor,
   MAX_VOICE_MEMO_BYTES,
   resolveLiveVoiceModelName,
+  splitCompletedSentence,
   transcribeVoiceMemo,
   VOICE_STT_GEMINI_MODEL,
   VOICE_VAULT_SECRET_NAMES,
@@ -136,6 +137,13 @@ test("voice service enforces 10MB audio limit, blocks 3.x model slugs, uses gemi
       JSON.stringify(liveDesc).includes("AIzaSy-test-vault-gemini-key"),
       false
     );
+
+    // Sentence splitter emits completed sentences immediately for low-latency streaming TTS
+    const split1 = splitCompletedSentence(
+      "Good afternoon! What would you like to focus on first?"
+    );
+    assert.equal(split1.sentence, "Good afternoon!");
+    assert.equal(split1.rest, "What would you like to focus on first?");
   } finally {
     if (prevEnabled === undefined) {
       Reflect.deleteProperty(process.env, "VOICE_ENABLED");

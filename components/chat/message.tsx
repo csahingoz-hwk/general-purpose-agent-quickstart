@@ -595,7 +595,7 @@ const PurePreviewMessage = ({
         ) : null}
         <div
           className={cn(
-            "flex min-w-0 flex-col gap-2",
+            "flex min-w-0 flex-1 flex-col gap-2",
             isUser ? "items-end" : "items-start"
           )}
         >

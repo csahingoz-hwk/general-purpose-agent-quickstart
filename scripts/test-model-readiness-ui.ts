@@ -1098,6 +1098,22 @@ test("owner credentials vault, sticky subpage header, and teammate chat wiring w
         },
       })
     );
+    await page.route("**/api/voice/turn", (route) =>
+      route.fulfill({
+        status: 200,
+        headers: { "content-type": "application/x-ndjson; charset=utf-8" },
+        body: `${[
+          JSON.stringify({
+            type: "text-delta",
+            delta: "Good morning! Ready to plan your day.",
+          }),
+          JSON.stringify({
+            type: "done",
+            fullText: "Good morning! Ready to plan your day.",
+          }),
+        ].join("\n")}\n`,
+      })
+    );
     await page.route("**/api/models", (route) =>
       route.fulfill({
         json: {
@@ -1197,7 +1213,7 @@ test("owner credentials vault, sticky subpage header, and teammate chat wiring w
     await page.getByRole("link", { name: /Back to chat/i }).click();
     await page.waitForURL(`${origin}/`);
 
-    // 3. Verify header displays active teammate + right-hand Live Speech button when empty + bottom sheet clears top safe area
+    // 3. Verify header displays active teammate + one-tap full-screen Live Voice Mode (zero "Tap to speak" extra tap!)
     await page.getByText("Finance Controller").first().waitFor();
     const liveVoiceBtn = page.getByTestId("live-voice-button");
     await expect(liveVoiceBtn).toBeVisible();
@@ -1209,23 +1225,32 @@ test("owner credentials vault, sticky subpage header, and teammate chat wiring w
     );
 
     await liveVoiceBtn.click();
-    await page.getByText("Live speech").waitFor();
-    const sheetTop = await page
-      .locator('[data-slot="sheet-content"]')
-      .evaluate((el) => Math.round(el.getBoundingClientRect().top));
-    assert.ok(
-      sheetTop > 200,
-      `bottom live speech sheet stays well clear of iOS top status bar (top=${sheetTop})`
+    const overlay = page.getByTestId("live-voice-overlay");
+    await expect(overlay).toBeVisible();
+    assert.equal(
+      await page.getByRole("button", { name: /Tap to speak/i }).count(),
+      0,
+      "no extra Tap to speak selection button inside live voice mode"
     );
-    await page.keyboard.press("Escape");
+    await page.getByTestId("live-voice-close").click();
+    await expect(overlay).toHaveCount(0);
 
-    // 4. Typing switches right-hand slot to Send arrow and delivers selectedBotSlug
+    // 4. Typing a short 4-letter word ("Huge") switches right-hand slot to Send arrow, sends selectedBotSlug, and renders on one line (never "Hug\ne")
     const composer = page.getByTestId("multimodal-input").last();
-    await composer.fill("Prepare close checklist");
+    await composer.fill("Huge");
     await expect(page.getByTestId("send-button")).toBeVisible();
     await page.getByTestId("send-button").click();
     await page.getByText("Ready to reconcile.").waitFor();
     assert.equal(captured.chatBody?.selectedBotSlug, "finance-controller");
+    const userBubbleBox = await page
+      .getByTestId("message-user")
+      .last()
+      .getByTestId("message-content")
+      .boundingBox();
+    assert.ok(
+      userBubbleBox && userBubbleBox.height < 52,
+      `short 4-letter user bubble stays single-line (height=${userBubbleBox?.height})`
+    );
 
     console.log(
       "PASS: owner vault save, sticky header, mobile live voice button, and teammate -> /api/chat wiring verified"

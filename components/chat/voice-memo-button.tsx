@@ -1,40 +1,27 @@
 "use client";
 
+import type { UseChatHelpers } from "@ai-sdk/react";
+import type { UIMessage } from "ai";
 import {
   AudioLinesIcon,
   MicIcon,
+  MicOffIcon,
   SquareIcon,
-  Volume2Icon,
-  VolumeXIcon,
+  XIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
-import { cn, fetcher } from "@/lib/utils";
+import type { ChatMessage } from "@/lib/types";
+import { cn, fetcher, generateUUID } from "@/lib/utils";
+import { AgentMascot } from "./agent-mascot";
+import { useMascotPreference } from "./mascot-preference";
 
 export type VoiceReadiness = {
   serverSttReady: boolean;
   liveReady: boolean;
-};
-
-type LiveSessionInfo = {
-  status: "ready" | "setup_required" | "error";
-  sessionId?: string;
-  model?: string;
-  billingNotice?: string;
-  dataBoundaryNotice?: string;
-  estimatedTokensPerMinute?: number;
-  expiresAt?: string;
-  message?: string;
 };
 
 type BrowserSpeechResultItem = {
@@ -65,6 +52,10 @@ type BrowserSpeechRecognition = {
 
 type SpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
 
+// 1-sample silent WAV used to unlock iOS Safari HTMLAudioElement synchronously inside tap gesture
+const SILENT_WAV_DATA_URI =
+  "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+
 function getSpeechRecognitionCtor(): SpeechRecognitionConstructor | null {
   if (typeof window === "undefined") {
     return null;
@@ -74,6 +65,24 @@ function getSpeechRecognitionCtor(): SpeechRecognitionConstructor | null {
     webkitSpeechRecognition?: SpeechRecognitionConstructor;
   };
   return win.SpeechRecognition ?? win.webkitSpeechRecognition ?? null;
+}
+
+function setIosAudioSessionType(
+  mode: "play-and-record" | "playback" | "auto"
+): void {
+  if (typeof navigator === "undefined") {
+    return;
+  }
+  const nav = navigator as unknown as {
+    audioSession?: { type?: string };
+  };
+  if (nav.audioSession) {
+    try {
+      nav.audioSession.type = mode;
+    } catch {
+      /* ignore unsupported browsers */
+    }
+  }
 }
 
 function pickSupportedRecorderMime(): string {
@@ -111,6 +120,15 @@ function extensionForAudioMime(mime: string): string {
   return "webm";
 }
 
+function base64ToUint8Array(base64: string): Uint8Array {
+  const binary = window.atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
 export function useVoiceReadiness(): VoiceReadiness {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
   const { data } = useSWR<VoiceReadiness>(
@@ -127,20 +145,25 @@ export function useVoiceReadiness(): VoiceReadiness {
   };
 }
 
-function useSpeechCapture({
-  serverSttReady,
-  onResult,
+/**
+ * Left-hand Mic button: dictates text into the message composer before sending.
+ */
+export function VoiceMemoControls({
+  disabled,
+  onTranscript,
 }: {
-  serverSttReady: boolean;
-  onResult: (text: string) => void;
+  disabled: boolean;
+  onTranscript: (text: string) => void;
 }) {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+  const { serverSttReady } = useVoiceReadiness();
   const [hasSpeechApi, setHasSpeechApi] = useState(false);
   const [recording, setRecording] = useState(false);
   const [transcribing, setTranscribing] = useState(false);
 
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
-  const uncommittedInterimRef = useRef<string>("");
+  const latestTranscriptRef = useRef<string>("");
+  const deliveredRef = useRef<boolean>(false);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
@@ -149,7 +172,7 @@ function useSpeechCapture({
     setHasSpeechApi(Boolean(getSpeechRecognitionCtor()));
   }, []);
 
-  const cleanupMediaStream = useCallback(() => {
+  const cleanupMedia = useCallback(() => {
     if (streamRef.current) {
       for (const track of streamRef.current.getTracks()) {
         track.stop();
@@ -159,31 +182,12 @@ function useSpeechCapture({
     recorderRef.current = null;
   }, []);
 
-  const cleanupRecognition = useCallback(() => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.abort();
-      } catch {
-        /* ignore */
-      }
-      recognitionRef.current = null;
-    }
-    uncommittedInterimRef.current = "";
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      cleanupMediaStream();
-      cleanupRecognition();
-    };
-  }, [cleanupMediaStream, cleanupRecognition]);
-
   const stopCapture = useCallback(() => {
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
       } catch {
-        cleanupRecognition();
+        recognitionRef.current = null;
       }
     }
     const recorder = recorderRef.current;
@@ -191,9 +195,9 @@ function useSpeechCapture({
       recorder.stop();
     }
     setRecording(false);
-  }, [cleanupRecognition]);
+  }, []);
 
-  const startServerAudioMemo = useCallback(async () => {
+  const startServerMemo = useCallback(async () => {
     if (
       typeof navigator === "undefined" ||
       !navigator.mediaDevices?.getUserMedia ||
@@ -202,12 +206,10 @@ function useSpeechCapture({
       toast.error("Voice input isn't supported in this browser.");
       return;
     }
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       chunksRef.current = [];
-
       const mimeType = pickSupportedRecorderMime();
       const recorder = mimeType
         ? new MediaRecorder(stream, { mimeType })
@@ -223,12 +225,10 @@ function useSpeechCapture({
         const effectiveType = recorder.mimeType || mimeType || "audio/webm";
         const blob = new Blob(chunksRef.current, { type: effectiveType });
         chunksRef.current = [];
-        cleanupMediaStream();
-
+        cleanupMedia();
         if (blob.size === 0) {
           return;
         }
-
         setTranscribing(true);
         try {
           const ext = extensionForAudioMime(effectiveType);
@@ -241,15 +241,12 @@ function useSpeechCapture({
           const data = (await res.json()) as {
             transcript?: string;
             message?: string;
-            error?: string;
           };
           if (res.ok && data.transcript?.trim()) {
-            onResult(data.transcript.trim());
+            onTranscript(data.transcript.trim());
           } else {
             toast.error(
-              data.message ??
-                data.error ??
-                "Could not transcribe that voice clip."
+              data.message ?? "Could not transcribe that voice clip."
             );
           }
         } catch {
@@ -263,129 +260,89 @@ function useSpeechCapture({
       recorder.start();
       setRecording(true);
     } catch {
-      cleanupMediaStream();
+      cleanupMedia();
       setRecording(false);
-      toast.error(
-        "Microphone access is turned off. Allow microphone access in browser settings or type your message."
-      );
+      toast.error("Allow microphone access in browser settings to dictate.");
     }
-  }, [basePath, cleanupMediaStream, onResult]);
+  }, [basePath, cleanupMedia, onTranscript]);
 
-  const startBrowserSpeechDictation = useCallback(
-    (Ctor: SpeechRecognitionConstructor) => {
-      try {
-        const recognition = new Ctor();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang =
-          (typeof navigator !== "undefined" && navigator.language) || "en-GB";
-
-        uncommittedInterimRef.current = "";
-
-        recognition.onresult = (event) => {
-          let finalChunk = "";
-          let interimChunk = "";
-          for (let i = event.resultIndex; i < event.results.length; i += 1) {
-            const res = event.results[i];
-            const piece = res?.[0]?.transcript ?? "";
-            if (res?.isFinal) {
-              finalChunk += piece;
-            } else {
-              interimChunk += piece;
-            }
-          }
-          if (finalChunk.trim()) {
-            uncommittedInterimRef.current = "";
-            onResult(finalChunk.trim());
-          } else {
-            uncommittedInterimRef.current = interimChunk.trim();
-          }
-        };
-
-        recognition.onerror = (event) => {
-          const code = event.error ?? "";
-          uncommittedInterimRef.current = "";
-          setRecording(false);
-          recognitionRef.current = null;
-          if (code === "not-allowed") {
-            toast.error(
-              "Microphone access is turned off. Allow microphone access in browser settings or type your message."
-            );
-          } else if (
-            (code === "service-not-allowed" || code === "network") &&
-            serverSttReady
-          ) {
-            startServerAudioMemo().catch(() => null);
-          } else if (code && code !== "aborted" && code !== "no-speech") {
-            toast.error(
-              "Voice dictation stopped unexpectedly. Try again or type your message."
-            );
-          }
-        };
-
-        recognition.onend = () => {
-          const leftover = uncommittedInterimRef.current.trim();
-          uncommittedInterimRef.current = "";
-          recognitionRef.current = null;
-          setRecording(false);
-          if (leftover) {
-            onResult(leftover);
-          }
-        };
-
-        recognitionRef.current = recognition;
-        recognition.start();
-        setRecording(true);
-      } catch {
-        cleanupRecognition();
-        setRecording(false);
-        if (serverSttReady) {
-          startServerAudioMemo().catch(() => null);
-        } else {
-          toast.error(
-            "Voice dictation could not start in this browser; please type your message."
-          );
-        }
+  const startDictation = useCallback(() => {
+    const Ctor = getSpeechRecognitionCtor();
+    if (!Ctor) {
+      if (serverSttReady) {
+        startServerMemo().catch(() => null);
       }
-    },
-    [cleanupRecognition, onResult, serverSttReady, startServerAudioMemo]
-  );
-
-  const startCapture = useCallback(() => {
-    const SpeechCtor = getSpeechRecognitionCtor();
-    if (SpeechCtor) {
-      startBrowserSpeechDictation(SpeechCtor);
       return;
     }
-    if (serverSttReady) {
-      startServerAudioMemo().catch(() => null);
+
+    try {
+      const recognition = new Ctor();
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang =
+        (typeof navigator !== "undefined" && navigator.language) || "en-GB";
+
+      latestTranscriptRef.current = "";
+      deliveredRef.current = false;
+
+      recognition.onresult = (event) => {
+        let full = "";
+        for (const item of Array.from(event.results)) {
+          full += item?.[0]?.transcript ?? "";
+        }
+        latestTranscriptRef.current = full.trim();
+      };
+
+      recognition.onerror = (event) => {
+        const code = event.error ?? "";
+        setRecording(false);
+        recognitionRef.current = null;
+        if (
+          (code === "service-not-allowed" || code === "network") &&
+          serverSttReady
+        ) {
+          startServerMemo().catch(() => null);
+        } else if (code === "not-allowed") {
+          toast.error(
+            "Allow microphone access in browser settings to dictate."
+          );
+        }
+      };
+
+      recognition.onend = () => {
+        const finalText = latestTranscriptRef.current.trim();
+        latestTranscriptRef.current = "";
+        recognitionRef.current = null;
+        setRecording(false);
+        if (finalText && !deliveredRef.current) {
+          deliveredRef.current = true;
+          onTranscript(finalText);
+        }
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+      setRecording(true);
+    } catch {
+      setRecording(false);
+      if (serverSttReady) {
+        startServerMemo().catch(() => null);
+      }
     }
-  }, [serverSttReady, startBrowserSpeechDictation, startServerAudioMemo]);
+  }, [onTranscript, serverSttReady, startServerMemo]);
 
-  return {
-    canCapture: hasSpeechApi || serverSttReady,
-    recording,
-    transcribing,
-    startCapture,
-    stopCapture,
-  };
-}
+  useEffect(() => {
+    return () => {
+      cleanupMedia();
+      try {
+        recognitionRef.current?.abort();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [cleanupMedia]);
 
-export function VoiceMemoControls({
-  disabled,
-  onTranscript,
-}: {
-  disabled: boolean;
-  onTranscript: (text: string) => void;
-}) {
-  const { serverSttReady } = useVoiceReadiness();
-  const { canCapture, recording, transcribing, startCapture, stopCapture } =
-    useSpeechCapture({
-      serverSttReady,
-      onResult: onTranscript,
-    });
-
-  if (!canCapture) {
+  if (!hasSpeechApi && !serverSttReady) {
     return null;
   }
 
@@ -407,16 +364,10 @@ export function VoiceMemoControls({
         if (recording) {
           stopCapture();
         } else {
-          startCapture();
+          startDictation();
         }
       }}
-      title={
-        recording
-          ? "Tap to finish dictation"
-          : transcribing
-            ? "Transcribing…"
-            : "Dictate into message box"
-      }
+      title={recording ? "Tap to finish dictation" : "Dictate into message box"}
       type="button"
       variant="ghost"
     >
@@ -429,232 +380,971 @@ export function VoiceMemoControls({
   );
 }
 
+type LivePhase = "listening" | "thinking" | "speaking" | "muted";
+
+type AudioQueueItem =
+  | { kind: "mp3"; base64: string }
+  | { kind: "tts-fallback"; text: string };
+
+/**
+ * Right-hand Waveform button: ONE tap enters full-screen hands-free Live Voice Mode
+ * (like Gemini Live / ChatGPT Voice) — immediately listening, streaming fast spoken
+ * replies with real neural TTS audio, and automatically looping turn-by-turn.
+ */
 export function LiveVoiceButton({
   disabled,
-  onSendVoiceTurn,
-  latestAssistantSpeech,
+  chatId,
+  messages,
+  setMessages,
 }: {
   disabled: boolean;
-  onSendVoiceTurn: (text: string) => void;
-  latestAssistantSpeech?: string | null;
+  chatId: string;
+  messages: UIMessage[];
+  setMessages: UseChatHelpers<ChatMessage>["setMessages"];
 }) {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
-  const { serverSttReady } = useVoiceReadiness();
-  const [liveOpen, setLiveOpen] = useState(false);
-  const [liveLoading, setLiveLoading] = useState(false);
-  const [liveSession, setLiveSession] = useState<LiveSessionInfo | null>(null);
-  const [lastSpokenTurn, setLastSpokenTurn] = useState<string>("");
-  const [autoSpeakReplies, setAutoSpeakReplies] = useState(true);
-  const lastReadAssistantRef = useRef<string>("");
+  const { variant } = useMascotPreference();
+  const [open, setOpen] = useState(false);
+  const [phase, setPhase] = useState<LivePhase>("listening");
+  const [muted, setMuted] = useState(false);
+  const [userCaption, setUserCaption] = useState("");
+  const [assistantCaption, setAssistantCaption] = useState("");
 
-  const handleSpokenTurn = useCallback(
-    (spoken: string) => {
-      const cleaned = spoken.trim();
-      if (!cleaned) {
-        return;
+  const openRef = useRef(false);
+  const mutedRef = useRef(false);
+  const phaseRef = useRef<LivePhase>("listening");
+  const messagesRef = useRef<UIMessage[]>(messages);
+  messagesRef.current = messages;
+
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const activeSourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const turnTextRef = useRef<string>("");
+  const committedTurnRef = useRef<boolean>(false);
+  const abortTurnRef = useRef<AbortController | null>(null);
+
+  // MediaRecorder + AnalyserNode VAD fallback for browsers without SpeechRecognition
+  const vadStreamRef = useRef<MediaStream | null>(null);
+  const vadRecorderRef = useRef<MediaRecorder | null>(null);
+  const vadRafRef = useRef<number | null>(null);
+
+  const audioQueueRef = useRef<AudioQueueItem[]>([]);
+  const playingQueueRef = useRef(false);
+  const streamDoneRef = useRef(false);
+
+  const updatePhase = useCallback((next: LivePhase) => {
+    phaseRef.current = next;
+    setPhase(next);
+  }, []);
+
+  const clearSilenceTimer = useCallback(() => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+  }, []);
+
+  const stopListeningHardware = useCallback(() => {
+    clearSilenceTimer();
+    if (recognitionRef.current) {
+      const rec = recognitionRef.current;
+      recognitionRef.current = null;
+      rec.onresult = null;
+      rec.onend = null;
+      rec.onerror = null;
+      try {
+        rec.abort();
+      } catch {
+        /* ignore */
       }
-      setLastSpokenTurn(cleaned);
-      onSendVoiceTurn(cleaned);
-    },
-    [onSendVoiceTurn]
-  );
-
-  const { recording, transcribing, startCapture, stopCapture } =
-    useSpeechCapture({
-      serverSttReady,
-      onResult: handleSpokenTurn,
-    });
-
-  const initializeLiveSession = useCallback(async () => {
-    setLiveLoading(true);
-    try {
-      const res = await fetch(`${basePath}/api/voice/live-session`, {
-        method: "POST",
-      });
-      const data = (await res.json()) as LiveSessionInfo;
-      setLiveSession(data);
-    } catch {
-      setLiveSession({
-        status: "error",
-        message: "Live speech could not connect right now.",
-      });
-    } finally {
-      setLiveLoading(false);
     }
-  }, [basePath]);
-
-  useEffect(() => {
-    if (!liveOpen) {
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
-        window.speechSynthesis.cancel();
+    if (vadRafRef.current !== null) {
+      cancelAnimationFrame(vadRafRef.current);
+      vadRafRef.current = null;
+    }
+    if (vadRecorderRef.current && vadRecorderRef.current.state !== "inactive") {
+      vadRecorderRef.current.onstop = null;
+      try {
+        vadRecorderRef.current.stop();
+      } catch {
+        /* ignore */
       }
-      return;
     }
-    const text = latestAssistantSpeech?.trim() ?? "";
-    if (!text || !autoSpeakReplies || text === lastReadAssistantRef.current) {
-      return;
+    vadRecorderRef.current = null;
+    if (vadStreamRef.current) {
+      for (const track of vadStreamRef.current.getTracks()) {
+        track.stop();
+      }
+      vadStreamRef.current = null;
     }
-    lastReadAssistantRef.current = text;
+  }, [clearSilenceTimer]);
+
+  const stopPlaybackAndAbortTurn = useCallback(() => {
+    if (abortTurnRef.current) {
+      abortTurnRef.current.abort();
+      abortTurnRef.current = null;
+    }
+    audioQueueRef.current = [];
+    playingQueueRef.current = false;
+    streamDoneRef.current = true;
+
+    if (activeSourceRef.current) {
+      try {
+        activeSourceRef.current.stop();
+      } catch {
+        /* ignore */
+      }
+      activeSourceRef.current = null;
+    }
+    if (audioElRef.current) {
+      try {
+        audioElRef.current.pause();
+        audioElRef.current.removeAttribute("src");
+      } catch {
+        /* ignore */
+      }
+    }
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       try {
         window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text.slice(0, 1200));
-        window.speechSynthesis.speak(utterance);
       } catch {
-        /* ignore browser TTS errors */
+        /* ignore */
       }
     }
-  }, [autoSpeakReplies, latestAssistantSpeech, liveOpen]);
+  }, []);
+
+  const playSingleQueueItem = useCallback(
+    async (item: AudioQueueItem): Promise<void> => {
+      if (!openRef.current) {
+        return;
+      }
+      updatePhase("speaking");
+      setIosAudioSessionType("playback");
+
+      if (item.kind === "mp3") {
+        const bytes = base64ToUint8Array(item.base64);
+        const ab = bytes.buffer.slice(
+          bytes.byteOffset,
+          bytes.byteOffset + bytes.byteLength
+        ) as ArrayBuffer;
+
+        // Primary on iOS Safari & desktop: tap-unlocked HTMLAudioElement (plays through loud main speaker even on silent switch)
+        const el = audioElRef.current;
+        if (el) {
+          const blob = new Blob([ab], { type: "audio/mpeg" });
+          const url = URL.createObjectURL(blob);
+          const playedViaElement = await new Promise<boolean>((resolve) => {
+            const cleanup = () => {
+              el.onended = null;
+              el.onerror = null;
+              URL.revokeObjectURL(url);
+            };
+            el.onended = () => {
+              cleanup();
+              resolve(true);
+            };
+            el.onerror = () => {
+              cleanup();
+              resolve(false);
+            };
+            el.src = url;
+            el.volume = 1;
+            el.play().catch(() => {
+              cleanup();
+              resolve(false);
+            });
+          });
+          if (playedViaElement) {
+            return;
+          }
+        }
+
+        // Secondary fallback: tap-unlocked Web AudioContext
+        const ctx = audioCtxRef.current;
+        if (ctx) {
+          try {
+            if (ctx.state === "suspended") {
+              await ctx.resume();
+            }
+            const decoded = await ctx.decodeAudioData(ab.slice(0));
+            await new Promise<void>((resolve) => {
+              const source = ctx.createBufferSource();
+              source.buffer = decoded;
+              source.connect(ctx.destination);
+              activeSourceRef.current = source;
+              source.onended = () => {
+                if (activeSourceRef.current === source) {
+                  activeSourceRef.current = null;
+                }
+                resolve();
+              };
+              source.start(0);
+            });
+            return;
+          } catch {
+            /* fall through to speechSynthesis */
+          }
+        }
+      }
+
+      if (
+        item.kind === "tts-fallback" &&
+        item.text &&
+        typeof window !== "undefined" &&
+        "speechSynthesis" in window
+      ) {
+        await new Promise<void>((resolve) => {
+          try {
+            const u = new SpeechSynthesisUtterance(item.text);
+            u.onend = () => resolve();
+            u.onerror = () => resolve();
+            window.speechSynthesis.speak(u);
+          } catch {
+            resolve();
+          }
+        });
+      }
+    },
+    [updatePhase]
+  );
+
+  // Forward reference for mutual recursion between playback drain and listening restart
+  const beginListeningRef = useRef<() => void>(() => undefined);
+
+  const drainAudioQueue = useCallback(async () => {
+    if (playingQueueRef.current) {
+      return;
+    }
+    playingQueueRef.current = true;
+    try {
+      while (openRef.current && audioQueueRef.current.length > 0) {
+        const next = audioQueueRef.current.shift();
+        if (!next) {
+          break;
+        }
+        await playSingleQueueItem(next);
+      }
+    } finally {
+      playingQueueRef.current = false;
+      if (
+        openRef.current &&
+        streamDoneRef.current &&
+        audioQueueRef.current.length === 0
+      ) {
+        if (mutedRef.current) {
+          updatePhase("muted");
+        } else {
+          beginListeningRef.current();
+        }
+      }
+    }
+  }, [playSingleQueueItem, updatePhase]);
+
+  const sendVoiceTurn = useCallback(
+    async (spokenText: string) => {
+      const cleaned = spokenText.trim();
+      if (!cleaned || !openRef.current) {
+        return;
+      }
+
+      stopListeningHardware();
+      stopPlaybackAndAbortTurn();
+      updatePhase("thinking");
+      setUserCaption(cleaned);
+      setAssistantCaption("");
+
+      const userMsgId = generateUUID();
+      const assistantMsgId = generateUUID();
+      const nowIso = new Date().toISOString();
+
+      window.history.pushState({}, "", `${basePath}/chat/${chatId}`);
+
+      const priorTurns = messagesRef.current
+        .slice(-8)
+        .map((m) => {
+          const text = m.parts
+            .filter(
+              (p): p is { type: "text"; text: string } =>
+                p.type === "text" && "text" in p
+            )
+            .map((p) => p.text)
+            .join(" ")
+            .trim();
+          return text
+            ? {
+                role:
+                  m.role === "assistant"
+                    ? ("assistant" as const)
+                    : ("user" as const),
+                text,
+              }
+            : null;
+        })
+        .filter(
+          (item): item is { role: "user" | "assistant"; text: string } =>
+            item !== null
+        );
+
+      // Optimistically show the user's spoken turn in chat history immediately
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: userMsgId,
+          role: "user",
+          parts: [{ type: "text", text: cleaned }],
+          metadata: { createdAt: nowIso },
+        } as ChatMessage,
+      ]);
+
+      let activeBotSlug: string | undefined;
+      try {
+        activeBotSlug =
+          window.localStorage.getItem("assistant-active-bot")?.trim() ||
+          undefined;
+      } catch {
+        activeBotSlug = undefined;
+      }
+
+      let timeZone = "Europe/London";
+      try {
+        timeZone =
+          Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/London";
+      } catch {
+        /* default */
+      }
+
+      const controller = new AbortController();
+      abortTurnRef.current = controller;
+      streamDoneRef.current = false;
+      audioQueueRef.current = [];
+
+      try {
+        const res = await fetch(`${basePath}/api/voice/turn`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chatId,
+            userMessageId: userMsgId,
+            assistantMessageId: assistantMsgId,
+            selectedBotSlug: activeBotSlug,
+            timeZone,
+            turns: [...priorTurns, { role: "user", text: cleaned }],
+          }),
+          signal: controller.signal,
+        });
+
+        if (!res.ok || !res.body) {
+          throw new Error("Voice turn failed");
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let lineBuf = "";
+        let replyAcc = "";
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) {
+            break;
+          }
+          lineBuf += decoder.decode(value, { stream: true });
+          const lines = lineBuf.split("\n");
+          lineBuf = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (!line.trim()) {
+              continue;
+            }
+            const evt = JSON.parse(line) as {
+              type: string;
+              delta?: string;
+              base64?: string;
+              text?: string;
+              fullText?: string;
+            };
+
+            if (evt.type === "text-delta" && evt.delta) {
+              replyAcc += evt.delta;
+              setAssistantCaption(replyAcc);
+              const snapshot = replyAcc;
+              setMessages((prev) => {
+                const exists = prev.some((m) => m.id === assistantMsgId);
+                if (exists) {
+                  return prev.map((m) =>
+                    m.id === assistantMsgId
+                      ? ({
+                          ...m,
+                          parts: [{ type: "text", text: snapshot }],
+                        } as ChatMessage)
+                      : m
+                  );
+                }
+                return [
+                  ...prev,
+                  {
+                    id: assistantMsgId,
+                    role: "assistant",
+                    parts: [{ type: "text", text: snapshot }],
+                    metadata: { createdAt: new Date().toISOString() },
+                  } as ChatMessage,
+                ];
+              });
+            } else if (evt.type === "audio" && evt.base64) {
+              audioQueueRef.current.push({ kind: "mp3", base64: evt.base64 });
+              drainAudioQueue().catch(() => null);
+            } else if (evt.type === "tts-fallback" && evt.text) {
+              audioQueueRef.current.push({
+                kind: "tts-fallback",
+                text: evt.text,
+              });
+              drainAudioQueue().catch(() => null);
+            }
+          }
+        }
+
+        streamDoneRef.current = true;
+        if (!playingQueueRef.current && audioQueueRef.current.length === 0) {
+          if (openRef.current && !mutedRef.current) {
+            beginListeningRef.current();
+          } else if (openRef.current) {
+            updatePhase("muted");
+          }
+        }
+      } catch {
+        if (!controller.signal.aborted && openRef.current) {
+          streamDoneRef.current = true;
+          if (!mutedRef.current) {
+            beginListeningRef.current();
+          }
+        }
+      }
+    },
+    [
+      basePath,
+      chatId,
+      drainAudioQueue,
+      setMessages,
+      stopListeningHardware,
+      stopPlaybackAndAbortTurn,
+      updatePhase,
+    ]
+  );
+
+  const startMediaRecorderVadFallback = useCallback(async () => {
+    if (
+      !openRef.current ||
+      mutedRef.current ||
+      typeof navigator === "undefined" ||
+      !navigator.mediaDevices?.getUserMedia ||
+      typeof MediaRecorder === "undefined"
+    ) {
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!openRef.current || mutedRef.current) {
+        for (const t of stream.getTracks()) {
+          t.stop();
+        }
+        return;
+      }
+      vadStreamRef.current = stream;
+      const chunks: Blob[] = [];
+      const mimeType = pickSupportedRecorderMime();
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+      vadRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) {
+          chunks.push(ev.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        const effectiveType = recorder.mimeType || mimeType || "audio/webm";
+        const blob = new Blob(chunks, { type: effectiveType });
+        stopListeningHardware();
+        if (blob.size < 400 || !openRef.current) {
+          if (openRef.current && !mutedRef.current) {
+            beginListeningRef.current();
+          }
+          return;
+        }
+        updatePhase("thinking");
+        try {
+          const ext = extensionForAudioMime(effectiveType);
+          const form = new FormData();
+          form.append("audio", blob, `voice-turn.${ext}`);
+          const res = await fetch(`${basePath}/api/voice/transcribe`, {
+            method: "POST",
+            body: form,
+          });
+          const data = (await res.json()) as { transcript?: string };
+          if (res.ok && data.transcript?.trim()) {
+            await sendVoiceTurn(data.transcript.trim());
+          } else if (openRef.current && !mutedRef.current) {
+            beginListeningRef.current();
+          }
+        } catch {
+          if (openRef.current && !mutedRef.current) {
+            beginListeningRef.current();
+          }
+        }
+      };
+
+      recorder.start();
+
+      // Web Audio RMS Voice Activity Detection
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext;
+      const ctx = audioCtxRef.current ?? new AudioCtx();
+      audioCtxRef.current = ctx;
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      src.connect(analyser);
+      const buf = new Float32Array(analyser.fftSize);
+      let spoke = false;
+      let silenceSince = 0;
+
+      const tick = () => {
+        if (
+          !openRef.current ||
+          mutedRef.current ||
+          vadRecorderRef.current !== recorder
+        ) {
+          return;
+        }
+        analyser.getFloatTimeDomainData(buf);
+        let sum = 0;
+        for (const sample of buf) {
+          sum += sample * sample;
+        }
+        const rms = Math.sqrt(sum / buf.length);
+        const now = performance.now();
+
+        if (rms > 0.02) {
+          spoke = true;
+          silenceSince = 0;
+          setUserCaption("Listening…");
+        } else if (spoke) {
+          if (silenceSince === 0) {
+            silenceSince = now;
+          } else if (
+            now - silenceSince > 1050 &&
+            recorder.state === "recording"
+          ) {
+            recorder.stop();
+            return;
+          }
+        }
+        vadRafRef.current = requestAnimationFrame(tick);
+      };
+      vadRafRef.current = requestAnimationFrame(tick);
+    } catch {
+      toast.error(
+        "Microphone access is blocked. Allow microphone permission in browser settings."
+      );
+    }
+  }, [basePath, sendVoiceTurn, stopListeningHardware, updatePhase]);
+
+  const beginListeningTurn = useCallback(() => {
+    if (!openRef.current || mutedRef.current) {
+      return;
+    }
+
+    stopListeningHardware();
+    setIosAudioSessionType("play-and-record");
+    updatePhase("listening");
+    turnTextRef.current = "";
+    committedTurnRef.current = false;
+    setUserCaption("");
+
+    const Ctor = getSpeechRecognitionCtor();
+    if (!Ctor) {
+      startMediaRecorderVadFallback().catch(() => null);
+      return;
+    }
+
+    try {
+      const recognition = new Ctor();
+      // Native Siri / browser single-utterance endpointing avoids iOS WebKit's continuous-mode garbling
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang =
+        (typeof navigator !== "undefined" && navigator.language) || "en-GB";
+
+      const commitIfReady = () => {
+        if (committedTurnRef.current) {
+          return;
+        }
+        const finalSpoken = turnTextRef.current.trim();
+        if (!finalSpoken) {
+          return;
+        }
+        committedTurnRef.current = true;
+        clearSilenceTimer();
+        sendVoiceTurn(finalSpoken).catch(() => null);
+      };
+
+      recognition.onresult = (event) => {
+        let combined = "";
+        for (const item of Array.from(event.results)) {
+          combined += item?.[0]?.transcript ?? "";
+        }
+        const trimmed = combined.trim();
+        if (!trimmed) {
+          return;
+        }
+        turnTextRef.current = trimmed;
+        setUserCaption(trimmed);
+
+        clearSilenceTimer();
+        silenceTimerRef.current = setTimeout(() => {
+          commitIfReady();
+        }, 1050);
+      };
+
+      recognition.onerror = (event) => {
+        const code = event.error ?? "";
+        recognitionRef.current = null;
+        clearSilenceTimer();
+        if (code === "not-allowed") {
+          toast.error(
+            "Allow microphone access in browser settings to use live voice."
+          );
+          updatePhase("muted");
+          setMuted(true);
+          mutedRef.current = true;
+          return;
+        }
+        if (code === "service-not-allowed" || code === "network") {
+          startMediaRecorderVadFallback().catch(() => null);
+          return;
+        }
+        if (
+          openRef.current &&
+          !mutedRef.current &&
+          phaseRef.current === "listening" &&
+          !committedTurnRef.current
+        ) {
+          setTimeout(() => {
+            if (
+              openRef.current &&
+              !mutedRef.current &&
+              phaseRef.current === "listening"
+            ) {
+              beginListeningRef.current();
+            }
+          }, 180);
+        }
+      };
+
+      recognition.onend = () => {
+        recognitionRef.current = null;
+        clearSilenceTimer();
+        if (!openRef.current || mutedRef.current) {
+          return;
+        }
+        if (turnTextRef.current.trim() && !committedTurnRef.current) {
+          commitIfReady();
+          return;
+        }
+        if (!committedTurnRef.current && phaseRef.current === "listening") {
+          setTimeout(() => {
+            if (
+              openRef.current &&
+              !mutedRef.current &&
+              phaseRef.current === "listening"
+            ) {
+              beginListeningRef.current();
+            }
+          }, 140);
+        }
+      };
+
+      recognitionRef.current = recognition;
+      recognition.start();
+    } catch {
+      startMediaRecorderVadFallback().catch(() => null);
+    }
+  }, [
+    clearSilenceTimer,
+    sendVoiceTurn,
+    startMediaRecorderVadFallback,
+    stopListeningHardware,
+    updatePhase,
+  ]);
+
+  beginListeningRef.current = beginListeningTurn;
+
+  const closeLiveVoice = useCallback(() => {
+    openRef.current = false;
+    setOpen(false);
+    stopListeningHardware();
+    stopPlaybackAndAbortTurn();
+    setIosAudioSessionType("auto");
+  }, [stopListeningHardware, stopPlaybackAndAbortTurn]);
+
+  useEffect(() => {
+    return () => {
+      openRef.current = false;
+      stopListeningHardware();
+      stopPlaybackAndAbortTurn();
+    };
+  }, [stopListeningHardware, stopPlaybackAndAbortTurn]);
+
+  const handleOpenLiveVoice = () => {
+    // 1. Unlock iOS Safari audio output SYNCHRONOUSLY inside this single tap gesture
+    try {
+      setIosAudioSessionType("play-and-record");
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext?: typeof AudioContext })
+          .webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = audioCtxRef.current ?? new AudioCtx();
+        audioCtxRef.current = ctx;
+        ctx.resume().catch(() => null);
+        const silent = ctx.createBuffer(1, 1, 22_050);
+        const src = ctx.createBufferSource();
+        src.buffer = silent;
+        src.connect(ctx.destination);
+        src.start(0);
+      }
+
+      if (!audioElRef.current) {
+        audioElRef.current = new Audio(SILENT_WAV_DATA_URI);
+        audioElRef.current.setAttribute("playsinline", "true");
+      }
+      audioElRef.current.volume = 0.01;
+      audioElRef.current.play().catch(() => null);
+
+      if ("speechSynthesis" in window) {
+        const prime = new SpeechSynthesisUtterance("");
+        prime.volume = 0;
+        window.speechSynthesis.speak(prime);
+      }
+    } catch {
+      /* ignore audio prime errors */
+    }
+
+    // 2. Open full-screen Live Voice Mode and start listening IMMEDIATELY (zero extra taps)
+    openRef.current = true;
+    mutedRef.current = false;
+    setMuted(false);
+    setUserCaption("");
+    setAssistantCaption("");
+    setOpen(true);
+    beginListeningTurn();
+  };
+
+  const handleOrbTap = () => {
+    if (phase === "speaking" || phase === "thinking") {
+      // Barge-in: interrupt assistant immediately and listen to user
+      stopPlaybackAndAbortTurn();
+      mutedRef.current = false;
+      setMuted(false);
+      beginListeningTurn();
+      return;
+    }
+    if (phase === "listening" && turnTextRef.current.trim()) {
+      // Commit spoken turn immediately without waiting for silence timer
+      const text = turnTextRef.current.trim();
+      committedTurnRef.current = true;
+      sendVoiceTurn(text).catch(() => null);
+      return;
+    }
+    if (muted) {
+      mutedRef.current = false;
+      setMuted(false);
+      beginListeningTurn();
+    }
+  };
+
+  const toggleMute = () => {
+    if (muted) {
+      mutedRef.current = false;
+      setMuted(false);
+      beginListeningTurn();
+    } else {
+      mutedRef.current = true;
+      setMuted(true);
+      stopListeningHardware();
+      if (phase === "listening") {
+        updatePhase("muted");
+      }
+    }
+  };
+
+  const mascotState: "idle" | "thinking" | "working" =
+    phase === "thinking"
+      ? "thinking"
+      : phase === "speaking"
+        ? "working"
+        : "idle";
 
   return (
-    <Sheet
-      onOpenChange={(next) => {
-        setLiveOpen(next);
-        if (next) {
-          lastReadAssistantRef.current = latestAssistantSpeech?.trim() ?? "";
-          initializeLiveSession().catch(() => null);
-        } else if (recording) {
-          stopCapture();
-        }
-      }}
-      open={liveOpen}
-    >
-      <SheetTrigger asChild>
-        <Button
-          aria-label="Live speech"
-          className="size-11! rounded-full border-transparent bg-send p-0 text-send-foreground shadow-none transition-colors duration-150 hover:bg-send/90 motion-reduce:transition-none"
-          data-testid="live-voice-button"
-          disabled={disabled}
-          title="Start live speech"
-          type="button"
-          variant="secondary"
-        >
-          <AudioLinesIcon aria-hidden="true" className="size-5" />
-        </Button>
-      </SheetTrigger>
-      <SheetContent
-        className="mx-auto w-full rounded-t-[28px] border-[color:var(--hairline)] border-x border-t px-5 pt-5 pb-[max(1.75rem,calc(env(safe-area-inset-bottom)+1rem))] sm:bottom-4 sm:max-w-md sm:rounded-[28px] sm:border"
-        side="bottom"
+    <>
+      <Button
+        aria-label="Live voice chat"
+        className="size-11! rounded-full border-transparent bg-send p-0 text-send-foreground shadow-none transition-colors duration-150 hover:bg-send/90 motion-reduce:transition-none"
+        data-testid="live-voice-button"
+        disabled={disabled}
+        onClick={handleOpenLiveVoice}
+        title="Start live voice chat"
+        type="button"
+        variant="secondary"
       >
-        <SheetHeader className="p-0 pr-10 text-left">
-          <SheetTitle className="font-semibold text-lg">Live speech</SheetTitle>
-          <SheetDescription>
-            Speak hands-free turns into this conversation · personal assistant
-            use only.
-          </SheetDescription>
-        </SheetHeader>
+        <AudioLinesIcon aria-hidden="true" className="size-5" />
+      </Button>
 
-        <div className="mt-4 space-y-3.5 text-sm">
-          {liveLoading ? (
-            <p className="py-4 text-muted-foreground text-sm">
-              Connecting voice session…
-            </p>
-          ) : liveSession?.status === "ready" ? (
-            <div className="space-y-3.5">
-              <div className="space-y-3.5 rounded-2xl border border-[color:var(--hairline)] bg-card p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-foreground">
-                    {recording
-                      ? "Listening — tap below to send"
-                      : transcribing
-                        ? "Transcribing your turn…"
-                        : disabled
-                          ? "Assistant is replying…"
-                          : "Ready for your voice"}
-                  </span>
-                  <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 font-medium text-emerald-700 text-xs dark:text-emerald-300">
-                    Connected
-                  </span>
-                </div>
-
-                <button
-                  className={cn(
-                    "inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full font-medium text-sm transition-colors disabled:opacity-50",
-                    recording
-                      ? "bg-destructive text-destructive-foreground"
-                      : "bg-primary text-primary-foreground"
-                  )}
-                  disabled={(disabled && !recording) || transcribing}
-                  onClick={() => {
-                    if (recording) {
-                      stopCapture();
-                      return;
-                    }
-                    if (
-                      typeof window !== "undefined" &&
-                      "speechSynthesis" in window
-                    ) {
-                      window.speechSynthesis.cancel();
-                    }
-                    startCapture();
-                  }}
-                  type="button"
-                >
-                  {recording ? (
-                    <>
-                      <SquareIcon className="size-4 fill-current" />
-                      Stop &amp; send turn
-                    </>
-                  ) : (
-                    <>
-                      <AudioLinesIcon className="size-4" />
-                      {transcribing ? "Transcribing…" : "Tap to speak"}
-                    </>
-                  )}
-                </button>
-
-                <div className="flex items-center justify-between pt-0.5">
-                  <span className="text-muted-foreground text-xs">
-                    Hands-free voice mode
-                  </span>
-                  <button
-                    className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] px-3.5 text-xs hover:bg-muted"
-                    onClick={() => {
-                      setAutoSpeakReplies((prev) => {
-                        const next = !prev;
-                        if (
-                          !next &&
-                          typeof window !== "undefined" &&
-                          "speechSynthesis" in window
-                        ) {
-                          window.speechSynthesis.cancel();
-                        }
-                        return next;
-                      });
-                    }}
-                    type="button"
-                  >
-                    {autoSpeakReplies ? (
-                      <>
-                        <Volume2Icon className="size-3.5" />
-                        Read replies aloud
-                      </>
-                    ) : (
-                      <>
-                        <VolumeXIcon className="size-3.5" />
-                        Replies muted
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {lastSpokenTurn && (
-                <div className="rounded-2xl border border-[color:var(--hairline)] bg-card p-3.5 text-xs">
-                  <p className="text-muted-foreground">You said</p>
-                  <p className="mt-1 text-foreground text-sm">
-                    {lastSpokenTurn}
-                  </p>
-                </div>
-              )}
+      {open &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            aria-label="Live voice conversation"
+            aria-modal="true"
+            className="fixed inset-0 z-50 flex flex-col items-center justify-between bg-background px-6 pt-[max(1.25rem,calc(env(safe-area-inset-top)+0.75rem))] pb-[max(2.25rem,calc(env(safe-area-inset-bottom)+1.25rem))]"
+            data-phase={phase}
+            data-testid="live-voice-overlay"
+            role="dialog"
+          >
+            <div className="flex items-center gap-2 rounded-full border border-[color:var(--hairline)] bg-card px-4 py-1.5 shadow-[var(--shadow-float)]">
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "size-2 rounded-full",
+                  phase === "listening"
+                    ? "animate-pulse bg-emerald-500"
+                    : phase === "thinking"
+                      ? "animate-pulse bg-amber-500"
+                      : phase === "speaking"
+                        ? "animate-pulse bg-primary"
+                        : "bg-muted-foreground"
+                )}
+              />
+              <span className="font-medium text-foreground text-xs">
+                {phase === "listening"
+                  ? "Listening…"
+                  : phase === "thinking"
+                    ? "Thinking…"
+                    : phase === "speaking"
+                      ? "Speaking · tap orb to interrupt"
+                      : "Microphone muted"}
+              </span>
             </div>
-          ) : (
-            <p className="text-muted-foreground text-sm">
-              {liveSession?.message ?? "Live speech is not active right now."}
-            </p>
-          )}
-        </div>
-      </SheetContent>
-    </Sheet>
+
+            <div className="flex w-full max-w-md flex-1 flex-col items-center justify-center gap-8 text-center">
+              <button
+                aria-label={
+                  phase === "speaking"
+                    ? "Interrupt assistant"
+                    : "Voice assistant orb"
+                }
+                className="group relative flex items-center justify-center rounded-full focus:outline-none"
+                onClick={handleOrbTap}
+                type="button"
+              >
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "pointer-events-none absolute -inset-6 rounded-full transition-transform duration-500",
+                    phase === "speaking"
+                      ? "scale-115 animate-pulse bg-primary/18"
+                      : phase === "listening"
+                        ? "scale-105 animate-pulse bg-emerald-500/12"
+                        : phase === "thinking"
+                          ? "scale-100 bg-amber-500/12"
+                          : "scale-95 bg-muted/40"
+                  )}
+                />
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "pointer-events-none absolute -inset-2.5 rounded-full border transition-transform duration-300",
+                    phase === "speaking"
+                      ? "scale-105 border-primary/35"
+                      : phase === "listening"
+                        ? "border-emerald-500/30"
+                        : "border-[color:var(--hairline)]"
+                  )}
+                />
+                <AgentMascot
+                  animated={phase !== "muted"}
+                  className="relative rounded-full shadow-[var(--shadow-float)]"
+                  size={132}
+                  state={mascotState}
+                  variant={variant}
+                />
+              </button>
+
+              <div className="min-h-24 w-full space-y-2.5 px-2">
+                {phase === "speaking" ||
+                (phase === "thinking" && assistantCaption) ? (
+                  <p
+                    className="font-medium text-[19px] text-foreground leading-relaxed"
+                    data-testid="live-voice-assistant-caption"
+                  >
+                    {assistantCaption}
+                  </p>
+                ) : userCaption ? (
+                  <p
+                    className="text-[18px] text-foreground leading-relaxed"
+                    data-testid="live-voice-user-caption"
+                  >
+                    {userCaption}
+                  </p>
+                ) : (
+                  <p className="text-muted-foreground text-sm">
+                    {muted
+                      ? "Tap the microphone below to resume speaking"
+                      : "Start speaking naturally — I'm listening"}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-center gap-6">
+              <button
+                aria-label={muted ? "Unmute microphone" : "Mute microphone"}
+                aria-pressed={muted}
+                className={cn(
+                  "inline-flex size-14 items-center justify-center rounded-full border transition-colors",
+                  muted
+                    ? "border-transparent bg-muted text-muted-foreground"
+                    : "border-[color:var(--hairline)] bg-card text-foreground shadow-[var(--shadow-float)] hover:bg-muted"
+                )}
+                onClick={toggleMute}
+                type="button"
+              >
+                {muted ? (
+                  <MicOffIcon className="size-6" />
+                ) : (
+                  <MicIcon className="size-6" />
+                )}
+              </button>
+
+              <button
+                aria-label="End live voice"
+                className="inline-flex size-14 items-center justify-center rounded-full bg-destructive text-destructive-foreground shadow-[var(--shadow-float)] transition-opacity hover:opacity-90"
+                data-testid="live-voice-close"
+                onClick={closeLiveVoice}
+                type="button"
+              >
+                <XIcon className="size-6" />
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
+    </>
   );
 }

@@ -355,3 +355,26 @@ export async function createLiveVoiceSessionDescriptor(opts: {
     };
   }
 }
+
+export function splitCompletedSentence(buffer: string): {
+  sentence: string | null;
+  rest: string;
+} {
+  const match = buffer.match(/^([\s\S]{14,}?[.!?;:]+)(?:\s+|$)([\s\S]*)$/);
+  if (!match) {
+    return { sentence: null, rest: buffer };
+  }
+  return {
+    sentence: match[1].trim(),
+    rest: match[2] ?? "",
+  };
+}
+
+export function cleanTextForSpeech(raw: string): string {
+  return raw
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/[*_`#~>]+/g, "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+}

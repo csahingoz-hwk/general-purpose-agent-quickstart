@@ -602,34 +602,10 @@ function PureMultimodalInput({
             attachments.length === 0 &&
             uploadQueue.length === 0 ? (
             <LiveVoiceButton
+              chatId={chatId}
               disabled={status !== "ready"}
-              latestAssistantSpeech={
-                status === "ready"
-                  ? ([...messages]
-                      .reverse()
-                      .find((m) => m.role === "assistant")
-                      ?.parts.filter(
-                        (p): p is { type: "text"; text: string } =>
-                          p.type === "text" && "text" in p
-                      )
-                      .map((p) => p.text)
-                      .join("\n") ?? null)
-                  : null
-              }
-              onSendVoiceTurn={(spoken) => {
-                if (!modelReady || !spoken.trim()) {
-                  return;
-                }
-                window.history.pushState(
-                  {},
-                  "",
-                  `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/chat/${chatId}`
-                );
-                (sendMessage as UseChatHelpers<ChatMessage>["sendMessage"])({
-                  role: "user",
-                  parts: [{ type: "text", text: spoken.trim() }],
-                });
-              }}
+              messages={messages}
+              setMessages={setMessages}
             />
           ) : (
             <PromptInputSubmit
