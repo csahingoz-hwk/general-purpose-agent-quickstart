@@ -1084,7 +1084,7 @@ test("owner credentials vault, sticky subpage header, and teammate chat wiring w
       route.fulfill({
         json: {
           serverSttReady: true,
-          liveReady: storedSecrets.some((s) => s.name === "GEMINI_API_KEY"),
+          liveReady: true,
         },
       })
     );
@@ -1164,27 +1164,20 @@ test("owner credentials vault, sticky subpage header, and teammate chat wiring w
       .first()
       .evaluate((el) => Math.round(el.getBoundingClientRect().top));
     assert.equal(headerTop, 0);
+    assert.equal(
+      await page.locator('input[type="password"]').count(),
+      0,
+      "no raw API key paste input in Connections UI"
+    );
 
-    await page
-      .getByText("Advanced: custom API key override (optional)")
-      .click();
-    await page
-      .getByPlaceholder("Paste key or token")
-      .fill("AIzaSyTestKey123456789");
-    const saveBtn = page.getByRole("button", { name: /Encrypt & save/i });
-    await expect(saveBtn).toBeEnabled();
-    await saveBtn.click();
-    await page.getByText("••••6789").waitFor();
-    assert.equal(captured.vaultPost?.name, "GEMINI_API_KEY");
-    assert.equal(captured.vaultPost?.provider, "gemini");
-
-    // Verify /setup Setup checklist renders plain-English items, status dots, and direct creation links
+    // Verify /setup Setup checklist renders plain-English items, status dots, and zero raw key inputs
     await page.getByRole("link", { name: "Setup", exact: true }).click();
     await page.waitForURL("**/setup");
     await page.getByRole("heading", { name: "Setup checklist" }).waitFor();
     assert.equal(
-      await page.getByPlaceholder("Paste token or key").isVisible(),
-      false
+      await page.locator('input[type="password"]').count(),
+      0,
+      "no raw API key paste input in Setup checklist UI"
     );
 
     // 2. Switch to Teammates via sticky top nav, activate Finance Controller, return to chat

@@ -14,7 +14,7 @@ import {
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import useSWR, { useSWRConfig } from "swr";
+import useSWR from "swr";
 import { connectGoogleWorkspace } from "@/app/(auth)/actions";
 import { SubpageHeader } from "@/components/chat/subpage-header";
 import { toast } from "@/components/chat/toast";
@@ -93,32 +93,6 @@ function describeCron(cron: string): string {
   return match ? match.label : cron;
 }
 
-const SERVICE_SECRET_PRESETS: Record<
-  string,
-  { defaultName: string; hint: string }
-> = {
-  gemini: {
-    defaultName: "GEMINI_API_KEY",
-    hint: "Unlocks Live Voice sessions and Imagen/Veo Media Studio (personal use).",
-  },
-  google: {
-    defaultName: "GOOGLE_CONNECTOR_ACCESS_TOKEN",
-    hint: "Unlocks Gmail, Drive, and Calendar read & draft-only tools.",
-  },
-  github: {
-    defaultName: "GITHUB_CONNECTOR_PAT",
-    hint: "Unlocks GitHub pull request & issue reads and pending draft reviews.",
-  },
-  openai: {
-    defaultName: "OPENAI_VOICE_API_KEY",
-    hint: "Optional direct OpenAI voice transcription key.",
-  },
-  custom: {
-    defaultName: "",
-    hint: "Stored encrypted with AES-256-GCM; never exposed in prompts.",
-  },
-};
-
 export default function RoutinesPage() {
   return (
     <Suspense fallback={<div className="h-dvh w-full bg-background" />}>
@@ -130,7 +104,6 @@ export default function RoutinesPage() {
 function RoutinesPageContent() {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
   const searchParams = useSearchParams();
-  const { mutate: globalMutate } = useSWRConfig();
   const [tab, setTab] = useState<"routines" | "tasks" | "vault">("routines");
 
   useEffect(() => {
@@ -160,10 +133,6 @@ function RoutinesPageContent() {
       /* keep default */
     }
   }, []);
-
-  const [secretProvider, setSecretProvider] = useState("gemini");
-  const [secretName, setSecretName] = useState("GEMINI_API_KEY");
-  const [secretPlaintext, setSecretPlaintext] = useState("");
 
   const { data: schedulesData, mutate: mutateSchedules } =
     useSWR<SchedulesResponse>(`${basePath}/api/schedules`, fetcher);
@@ -285,62 +254,6 @@ function RoutinesPageContent() {
         type: "success",
         description: "Task approved.",
       });
-    }
-  }
-
-  async function handleSaveSecret(event: React.FormEvent) {
-    event.preventDefault();
-    if (!secretName.trim() || !secretPlaintext.trim()) {
-      return;
-    }
-    setBusy(true);
-    try {
-      const response = await fetch(`${basePath}/api/vault`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: secretName.trim(),
-          provider: secretProvider.trim(),
-          plaintext: secretPlaintext,
-        }),
-      });
-      if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(body.error ?? "Could not store credential");
-      }
-      setSecretPlaintext("");
-      setSecretName(SERVICE_SECRET_PRESETS[secretProvider]?.defaultName ?? "");
-      await Promise.all([
-        mutateVault(),
-        globalMutate(`${basePath}/api/connectors`),
-        globalMutate(`${basePath}/api/voice/transcribe`),
-      ]);
-      toast({
-        type: "success",
-        description: "Encrypted credential saved and connected.",
-      });
-    } catch (err) {
-      toast({
-        type: "error",
-        description:
-          err instanceof Error ? err.message : "Could not store credential",
-      });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleDeleteSecret(name: string) {
-    const response = await fetch(
-      `${basePath}/api/vault?name=${encodeURIComponent(name)}`,
-      { method: "DELETE" }
-    );
-    if (response.ok) {
-      await Promise.all([
-        mutateVault(),
-        globalMutate(`${basePath}/api/connectors`),
-        globalMutate(`${basePath}/api/voice/transcribe`),
-      ]);
     }
   }
 
@@ -709,7 +622,7 @@ function RoutinesPageContent() {
                       Connected
                     </span>
                     <button
-                      className="min-h-10 rounded-full border border-[color:var(--hairline)] px-3 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
+                      className="min-h-11 rounded-full border border-[color:var(--hairline)] px-3.5 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
                       onClick={async () => {
                         await fetch(
                           `${basePath}/api/connectors?provider=google`,
@@ -759,7 +672,7 @@ function RoutinesPageContent() {
                       Connected
                     </span>
                     <button
-                      className="min-h-10 rounded-full border border-[color:var(--hairline)] px-3 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
+                      className="min-h-11 rounded-full border border-[color:var(--hairline)] px-3.5 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
                       onClick={async () => {
                         await fetch(
                           `${basePath}/api/connectors?provider=github`,
@@ -774,7 +687,7 @@ function RoutinesPageContent() {
                   </div>
                 ) : (
                   <Link
-                    className="inline-flex min-h-10 shrink-0 items-center rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-foreground text-xs transition-colors hover:bg-muted"
+                    className="inline-flex min-h-11 shrink-0 items-center rounded-full border border-[color:var(--hairline)] bg-background px-4 font-medium text-foreground text-xs transition-colors hover:bg-muted"
                     href="/setup"
                   >
                     Setup checklist
@@ -782,129 +695,6 @@ function RoutinesPageContent() {
                 )}
               </div>
             </div>
-
-            <details className="rounded-2xl border border-[color:var(--hairline)] bg-card">
-              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between px-4 py-3 font-medium text-muted-foreground text-xs hover:text-foreground">
-                <span>Advanced: custom API key override (optional)</span>
-                <span>Show</span>
-              </summary>
-
-              <form
-                className="space-y-4 border-[color:var(--hairline)] border-t p-4"
-                onSubmit={handleSaveSecret}
-              >
-                <div>
-                  <h2 className="font-semibold text-[15px]">
-                    Save encrypted credential
-                  </h2>
-                  <p className="mt-0.5 text-muted-foreground text-xs">
-                    Optional personal API key override. Encrypted on the server
-                    with AES-256-GCM.
-                  </p>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="space-y-1.5 text-sm">
-                    <span className="text-muted-foreground text-xs">
-                      Service
-                    </span>
-                    <select
-                      className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
-                      onChange={(e) => {
-                        const nextProvider = e.target.value;
-                        setSecretProvider(nextProvider);
-                        const preset = SERVICE_SECRET_PRESETS[nextProvider];
-                        if (preset) {
-                          setSecretName(preset.defaultName);
-                        }
-                      }}
-                      value={secretProvider}
-                    >
-                      <option value="gemini">Google Gemini</option>
-                      <option value="google">Google Workspace</option>
-                      <option value="github">GitHub</option>
-                      <option value="openai">OpenAI</option>
-                      <option value="custom">Custom</option>
-                    </select>
-                  </label>
-
-                  {secretProvider === "custom" && (
-                    <label className="space-y-1.5 text-sm">
-                      <span className="text-muted-foreground text-xs">
-                        Credential name
-                      </span>
-                      <input
-                        className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 font-mono text-[15px] text-foreground"
-                        onChange={(e) => setSecretName(e.target.value)}
-                        placeholder="CUSTOM_KEY_NAME"
-                        required
-                        value={secretName}
-                      />
-                    </label>
-                  )}
-                </div>
-
-                <label className="block space-y-1.5 text-sm">
-                  <span className="text-muted-foreground text-xs">
-                    API key or token
-                  </span>
-                  <input
-                    autoComplete="off"
-                    className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
-                    onChange={(e) => setSecretPlaintext(e.target.value)}
-                    placeholder="Paste key or token"
-                    required
-                    type="password"
-                    value={secretPlaintext}
-                  />
-                </label>
-
-                <div className="flex justify-end">
-                  <button
-                    className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-5 font-medium text-primary-foreground text-sm disabled:opacity-50"
-                    disabled={busy || vaultData?.status !== "ready"}
-                    type="submit"
-                  >
-                    <PlusIcon className="size-4" />
-                    Encrypt &amp; save
-                  </button>
-                </div>
-              </form>
-            </details>
-
-            {(vaultData?.secrets ?? []).length > 0 && (
-              <div className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card">
-                {vaultData?.secrets.map((secret) => (
-                  <article
-                    className="flex items-center justify-between gap-3 p-4"
-                    key={secret.id}
-                  >
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium text-foreground text-sm">
-                          {secret.name}
-                        </span>
-                        <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground text-xs">
-                          {secret.provider}
-                        </span>
-                      </div>
-                      <p className="font-mono text-muted-foreground text-xs">
-                        {secret.keyHint} · updated{" "}
-                        {new Date(secret.updatedAt).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <button
-                      aria-label={`Revoke ${secret.name}`}
-                      className="inline-flex size-11 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      onClick={() => handleDeleteSecret(secret.name)}
-                      type="button"
-                    >
-                      <Trash2Icon className="size-4" />
-                    </button>
-                  </article>
-                ))}
-              </div>
-            )}
           </div>
         )}
       </div>

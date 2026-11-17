@@ -180,13 +180,11 @@ export async function mintLiveVoiceToken(opts: {
           expiresAt,
         };
       }
-    } catch (err) {
+    } catch {
       if (!opts.apiKey) {
         throw new LiveVoiceSetupError(
           "token_failed",
-          err instanceof Error
-            ? `Live voice gateway setup failed: ${err.message.slice(0, 120)}`
-            : "Live voice gateway setup failed."
+          "Live voice couldn't connect right now. Please try again in a moment."
         );
       }
     }
@@ -195,7 +193,7 @@ export async function mintLiveVoiceToken(opts: {
   if (!opts.apiKey) {
     throw new LiveVoiceSetupError(
       "key_missing",
-      "Live voice needs AI Gateway enabled or a Google AI Studio key."
+      "Live voice isn't active yet. Open Setup to check connection status."
     );
   }
 
@@ -228,14 +226,10 @@ export async function mintLiveVoiceToken(opts: {
       },
     });
     tokenName = created.name;
-  } catch (err) {
-    const status =
-      typeof err === "object" && err !== null && "status" in err
-        ? String((err as { status?: unknown }).status)
-        : "unknown";
+  } catch {
     throw new LiveVoiceSetupError(
       "token_failed",
-      `Live voice token request failed (status ${status}).`
+      "Live voice couldn't connect right now. Please try again in a moment."
     );
   }
   if (!tokenName) {

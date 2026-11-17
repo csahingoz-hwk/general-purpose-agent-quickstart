@@ -1,14 +1,14 @@
 # Assistant Feature Parity — Status & Handoff Report
 
-**Branch:** `feat/grokbot-parity` (worktree only — `feature/openai-premium-model-routing` @ `01875e6` and all remotes untouched)  
-**Date:** 16 November 2026  
-**Owner:** Çağlar (`Europe/London`)
+**Branches:** `feat/grokbot-parity` & `feature/openai-premium-model-routing` (PR #10 Preview `● Ready`)  
+**Date:** 17 November 2026  
+**Owner:** Çağlar (`Europe/London`) · **Guide:** [docs/OWNER_GUIDE.md](../OWNER_GUIDE.md) · **Next Phase Plan:** [PHASE4-PLAN.md](./PHASE4-PLAN.md)
 
 ---
 
-## Final Review Summary (All Phases 0 → 3 Complete)
+## Final Review Summary (All Phases 0 → 3 + Live Voice & Zero-Key UX Complete — READY FOR REVIEW)
 
-Every slice in **[PLAN.md](./PLAN.md)** — **Phase 0**, **Phase 1 (`P1.1–P1.4b`)**, **Phase 2 (`P2.1–P2.3`)**, and **Phase 3 (`P3.1–P3.3`)** — has been implemented, security-tested, production-built, and committed in **20 small, focused commits** on `feat/grokbot-parity`.
+Every slice in **[PLAN.md](./PLAN.md)** — **Phase 0**, **Phase 1 (`P1.1–P1.4b`)**, **Phase 2 (`P2.1–P2.3`)**, **Phase 3 (`P3.1–P3.3`)**, plus **Slice 12 (iOS Safe-Area & Settings)** and **Slice 13 (Zero-Key Setup Checklist, One-Tap OAuth & Full-Duplex Gemini 3.8 Live Voice)** — is implemented, verified in real Chromium + unit/security suites, deployed, and `● Ready` on `https://general-purpose-agent-quickstart-git-feat-9b1f26-csahingoz-3779.vercel.app`.
 
 ### Complete Phase 0 → Phase 3 Delivery Matrix
 
@@ -18,7 +18,7 @@ Every slice in **[PLAN.md](./PLAN.md)** — **Phase 0**, **Phase 1 (`P1.1–P1.4
 | **Slice 1 (`P1.2`)** | Owner-only HMAC-signed `/api/files/[token]` proxy, AES-256-GCM encrypted file store, magic-byte PDF (10 MB) & CSV (5 MB) upload + deterministic CSV/PDF parsers fenced in `<untrusted_content>`, Cloud Run scale-to-zero budget | `lib/files/*`, `app/(chat)/api/files/*`, `components/chat/multimodal-input.tsx`, `docs/parity/BUDGET.md` | **DONE** |
 | **Slice 2 (`P1.1`)** | ~40 MB native Mac mini `launchd` queue worker (`--jitless --max-old-space-size=24`), heavy-workload Cloud Run routing guard, loopback `/healthz` (`127.0.0.1:4319`), 2 MB × 3 token-redacting log rotation | `lib/worker/*`, `scripts/mac-worker.ts`, `ops/launchd/*`, `app/api/worker/health/route.ts` | **DONE** |
 | **Slice 3 (`P1.4`)** | Vault-backed **Gmail** & **Google Drive** read + unsent-draft-only connectors (`ApprovalCard` required, URL guard blocks `/send`, `/delete`, `/trash`, `/permissions`, work-data block) | `lib/connectors/google-vault-auth.ts`, `lib/connectors/google-workspace.ts`, `lib/ai/tools/google-connectors.ts`, `app/api/connectors/route.ts` | **DONE** |
-| **Slice 4 (`P1.3`)** | Push-to-talk composer **Voice Memos** (10 MB cap, `gemini-4-hydrogen` floor, 3.x models hard-blocked, graceful text fallback) + **Gemini Live API (current model)** session descriptor | `lib/voice/voice-service.ts`, `components/chat/voice-memo-button.tsx`, `app/api/voice/*` | **DONE** |
+| **Slice 4 (`P1.3`) & Slice 13** | Push-to-talk **Voice Memos** (`gemini-4-hydrogen` floor, 3.x text models hard-blocked) + 1-tap full-duplex **Gemini 3.8 Live** hands-free voice (`DEFAULT_LIVE_MODEL` single config constant ready for `gemini-4-live`, zero-key Vercel AI Gateway OIDC WebSocket, iOS `VoiceProcessingIO` AEC + `EchoGate`, `<100 ms` barge-in, `/setup` checklist with zero raw keys in UI) | `lib/voice/live-protocol.ts`, `lib/voice/live-session.ts`, `components/chat/live-voice-engine.ts`, `components/chat/voice-memo-button.tsx`, `app/(chat)/setup/page.tsx` | **DONE** |
 | **Slice 5 (`P1.4b`)** | Vault-backed **Google Calendar** (`sendUpdates=none` private tentative `[DRAFT]` events, zero attendee invites) & **GitHub** (`PENDING` unpublished PR reviews, blocks `/merge`/`/delete`) | `lib/connectors/calendar-and-github.ts`, `lib/ai/tools/calendar-github-connectors.ts` | **DONE** |
 | **Slice 6 (`P2.1`)** | **Multi-Bot Specialist Teammate Roster** (*Chief of Staff*, *Finance Controller*, *Vibecoder* + custom bots), `@bot:<slug>` selector, mascot color switching, shared vs. bot-private `MemoryProfileFact` scoping | `lib/bots/roster.ts`, `app/api/bots/route.ts`, `app/(chat)/teammates/page.tsx` | **DONE** |
 | **Slice 7 (`P2.2`)** | Constant-time **HMAC-SHA256 Event Webhooks** (`POST /api/webhooks/[source]`) + **Hardened Single-Owner Telegram** inline-keyboard Approve/Deny callbacks bound to SHA-256 action digest | `lib/webhooks/event-triggers.ts`, `app/api/webhooks/[source]/route.ts`, `lib/telegram-hardened.ts`, `app/api/telegram-webhook/route.ts` | **DONE** |
@@ -28,13 +28,13 @@ Every slice in **[PLAN.md](./PLAN.md)** — **Phase 0**, **Phase 1 (`P1.1–P1.4
 | **Slice 11 (`P3.3`)** | **Imagen / Veo Media Studio** (`ModelUsage` spend reservation `$0.04`/`$0.35` *before* API call, `PrivateFileStore` + `artifacts/image` + `MediaPreviewCard`) & **Meeting Copilot** (fenced speaker turns, injection quarantine, `awaiting_approval` review gate) | `lib/media/media-studio.ts`, `lib/ai/tools/generate-media.ts`, `artifacts/image/server.ts`, `components/chat/media-preview-card.tsx`, `lib/meetings/meeting-copilot.ts`, `app/api/media/generate/route.ts`, `app/api/meetings/ingest/route.ts` | **DONE** |
 
 ### Final Verification Metrics
-- **Biome Lint & Format (`pnpm check`):** **PASS** (`0` errors across `310` files).
+- **Biome Lint & Format (`pnpm check`):** **PASS** (`0` errors across `322` files).
 - **TypeScript (`tsc --noEmit`):** **PASS** (`0` errors).
-- **Security & Acceptance Suite (`pnpm test:security`):** **148 / 148 PASS** (`0` failures across 22 test suites; all original 103 security invariants + 45 new Phase 0–3 parity/safety tests green).
-- **Production Build (`POSTGRES_URL="" OPENAI_API_USAGE_ENABLED="false" AI_GATEWAY_USAGE_ENABLED="false" pnpm build`):** **PASS** (`56 / 56` Next.js 16 Turbopack routes compiled & prerendered with `0` warnings and zero live inference/DB mutations).
-- **Lightweight Worker Smoke Test (`POSTGRES_URL="" pnpm worker:once`):** **PASS** (clean ESM execution under `--jitless --max-old-space-size=24`, `rssCapMb: 40`).
-- **Production Dependency Audit (`pnpm audit --prod`):** **0 vulnerabilities**.
-- **Neutral Naming & Model Floor Check:** **CLEAN** (`0` third-party assistant brand names in code/UI/README/commits; `0` `Gemini 3.8 Flash` or `3.x` models anywhere; read-only subagent scouts ran on `gemini-4-carbon` via `Model: "inherit"`, max 2 concurrent, terminated before builds).
+- **Impeccable UI Anti-Pattern Audit:** **PASS** (`[]` — `0` issues; zero raw key inputs anywhere in UI; plain-English errors only; `viewportFit: "cover"` + iPhone safe-area insets on every screen, sheet, and overlay).
+- **Security & Acceptance Suite (`pnpm test:security`):** **159 / 159 PASS** (`0` failures across 23 test files, including `live-voice-protocol.test.ts` and `voice-memos-live.test.ts`).
+- **Real-Browser Chrome Audio & Mobile UI E2E (`scripts/test-live-voice-e2e.ts` + `scripts/test-model-readiness-ui.ts`):** **PASS** (`3 / 3` live-voice WebSocket + fake-mic audio E2E tests verifying 0 leaked echo frames during `-40 dBFS` speaker bleed, cough rejection, `<100 ms` barge-in, and zero-key AI Gateway subprotocol turns, plus mobile readiness & zero-raw-key UI checks).
+- **Vercel Preview Build & Live Gemini 3.8 Live Probe:** **PASS (`● Ready`)** — `Live voice self-check: PASS transport=gateway model=google/gemini-3.8-live firstAudio=543ms transcript="Voice check complete."`
+- **Model Floor & Single-Value Live Upgrade Rule:** `3.x` text/Flash models remain hard-blocked (`gemini-4-hydrogen` minimum for non-Live Gemini STT/subagents). Owner-approved `gemini-3.8-live` is isolated to the single constant `DEFAULT_LIVE_MODEL` in `lib/voice/live-protocol.ts` (or `GEMINI_LIVE_MODEL` env var) so switching to `gemini-4-live` on release day is a one-value change.
 
 ### Live External Items Intentionally Skipped / Deferred Pending Owner Action
 No live external APIs, paid subscriptions, `launchctl` daemon loads, shared-DB migrations, or remote git pushes were executed. When ready to activate live external integrations, perform only the ones you want:
@@ -147,6 +147,12 @@ No live external APIs, paid subscriptions, `launchctl` daemon loads, shared-DB m
   2. **Voice works out-of-the-box on iPhone PWA & Safari:** Wired `POST /api/voice/transcribe` directly into the active Vercel AI Gateway OIDC lane (`openai/gpt-4o-mini-transcribe` with `$0.01` `ModelUsage` spend reservation) when Secret Vault voice keys aren't set, plus synchronous browser `SpeechRecognition` dictation when offline/local — eliminating raw `VOICE_ENABLED=true` error toasts.
   3. **iOS Safe-Area Top Clearance & Docked Preview Toolbar:** Added shared `SubpageHeader` (`env(safe-area-inset-top)` clearance + 1-tap workspace pill switcher + docked Vercel preview toolbar) and safe-top `<Toaster />` offsets so `Back to chat` and toasts never sit inside the iOS clock/status-bar blur zone.
   4. **Unified iOS Settings & Calm Workspace Forms:** Upgraded `/usage` with Appearance (System/Light/Dark), Mascot theme picker, Home location, honest live Capability status badges, a visual spend progress bar, and collapsible call logs; replaced raw cron/developer SQL banners and monospace form inputs across `/routines`, `/memory`, `/skills`, and `/teammates`.
+
+### Slice 13 (Zero-Key Setup Checklist, One-Tap OAuth & Full-Duplex Gemini 3.8 Live Voice): DONE
+- **What changed (in plain English):**
+  1. **Hands-free full-duplex Live Voice (`gemini-3.8-live`):** Tapping the right-hand waveform button in the empty composer immediately opens a full-screen voice call over Vercel AI Gateway's Realtime WebSocket (`google/gemini-3.8-live` via automatic Vercel OIDC — zero personal API keys required). Uses iPhone `play-and-record` hardware echo cancellation + `EchoGate` digital-silence gating so the assistant never hears its own speaker output, supports natural barge-in (or tapping the mascot orb to interrupt), and mirrors every completed turn into your chat transcript.
+  2. **Single-value upgrade to Gemini 4 Live:** `DEFAULT_LIVE_MODEL = "gemini-3.8-live"` in `lib/voice/live-protocol.ts` (overridable via `GEMINI_LIVE_MODEL` in Vercel) is the single source of truth; changing it to `"gemini-4-live"` upgrades both AI Gateway and direct Live sessions automatically.
+  3. **Zero raw keys in the UI:** Removed all manual API-key paste fields from `/setup` and `/routines`. Backend keys live strictly in Vercel environment / integrations; `/setup` shows a plain-English status checklist with one-tap **Connect** buttons for personal apps.
 
 ---
 

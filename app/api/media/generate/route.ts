@@ -17,8 +17,7 @@ export async function POST(request: Request) {
   if (!isMediaStudioEnabled()) {
     return NextResponse.json(
       {
-        error:
-          "Media Studio is disabled. Set MEDIA_STUDIO_ENABLED=true and add GEMINI_API_KEY in Secret Vault.",
+        error: "Image and video generation is turned off right now.",
       },
       { status: 503 }
     );

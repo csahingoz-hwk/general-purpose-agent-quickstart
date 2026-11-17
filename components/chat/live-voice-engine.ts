@@ -454,9 +454,9 @@ export class LiveVoiceEngine {
           return;
         }
         this.fail(
-          ev.reason
-            ? `Live voice was refused: ${ev.reason.slice(0, 140)}`
-            : "Live voice was refused by the server."
+          /credit|quota|billing/i.test(ev.reason)
+            ? "Voice credits are temporarily reached. Please try again shortly or check Setup."
+            : "Live voice couldn't connect right now. Tap the assistant to try again."
         );
         return;
       }

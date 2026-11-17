@@ -10,8 +10,13 @@ export const LIVE_OUTPUT_SAMPLE_RATE = 24_000;
 /** 40 ms of 16 kHz mono PCM: 640 samples / 1280 bytes per realtimeInput message. */
 export const LIVE_FRAME_SAMPLES = 640;
 export const LIVE_FRAME_MS = 40;
+/**
+ * Single Live Voice model config value. Update this one constant to
+ * `"gemini-4-live"` as soon as Google releases Gemini 4 Live (or set
+ * `GEMINI_LIVE_MODEL` in Vercel env vars).
+ */
 export const DEFAULT_LIVE_MODEL = "gemini-3.8-live";
-export const DEFAULT_GATEWAY_LIVE_MODEL = "google/gemini-3.8-live";
+export const DEFAULT_GATEWAY_LIVE_MODEL = `google/${DEFAULT_LIVE_MODEL}`;
 export const DEFAULT_LIVE_VOICE = "Kore";
 
 export type LiveTransportKind = "gateway" | "google-direct";

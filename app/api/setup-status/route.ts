@@ -72,7 +72,7 @@ export async function GET() {
       label: "Chat, web search, voice & images",
       summary: aiReady
         ? "Active automatically via Vercel AI Gateway."
-        : "Enable AI_GATEWAY_USAGE_ENABLED=true in Vercel Preview.",
+        : "Turn on AI Gateway in your Vercel project settings.",
       status: aiReady ? "ready" : "action_needed",
       actionKind: aiReady ? "none" : "external_link",
       externalUrl: aiReady ? undefined : "https://vercel.com/dashboard",

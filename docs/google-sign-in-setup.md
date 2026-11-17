@@ -1,5 +1,7 @@
 # Set up your Google sign-in
 
+> **Daily usage & zero-key Setup checklist:** See [docs/OWNER_GUIDE.md](./OWNER_GUIDE.md). Once signed in, use `/setup` to connect personal Gmail, Calendar, Drive, or GitHub with one tap — never paste raw keys in the app UI.
+
 This is the only account setup needed. You will use your existing Google account;
 you do not need a separate assistant password. It grants identity access only,
 not access to Gmail messages. Apple and passkeys are not part of this setup.
@@ -18,6 +20,7 @@ Open **Clients → Create client → Web application**. Name it "Assistant previ
 Add this exact **Authorized redirect URI**:
 
 ```text
+https://general-purpose-agent-quickstart-git-feat-9b1f26-csahingoz-3779.vercel.app/api/auth/callback/google
 https://general-purpose-agent-quickstart-git-secu-1658d1-csahingoz-3779.vercel.app/api/auth/callback/google
 ```
 

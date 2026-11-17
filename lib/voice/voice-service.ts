@@ -129,8 +129,7 @@ export async function transcribeVoiceMemo(opts: {
   if (!isVoiceEnabled()) {
     return {
       status: "setup_required",
-      message:
-        "Voice memos are not enabled yet. Set VOICE_ENABLED=true and save GEMINI_API_KEY (or OPENAI_VOICE_API_KEY) in Secret Vault.",
+      message: "Voice dictation is turned off right now.",
     };
   }
 
@@ -159,10 +158,13 @@ export async function transcribeVoiceMemo(opts: {
       return {
         status: "setup_required",
         message:
-          "Secret Vault is not configured yet. Set SECRET_VAULT_KEY and save GEMINI_API_KEY or OPENAI_VOICE_API_KEY.",
+          "Secure storage isn't ready yet. Open Setup to check connection status.",
       };
     }
-    return { status: "error", message: "Failed to read voice credentials." };
+    return {
+      status: "error",
+      message: "Could not access voice settings right now.",
+    };
   }
 
   // Prefer OpenAI STT if configured when owner wants non-Google processing; otherwise gemini-4-hydrogen
@@ -201,7 +203,7 @@ export async function transcribeVoiceMemo(opts: {
     if (!response || !response.ok) {
       return {
         status: "error",
-        message: `Voice transcription request failed${response ? ` (HTTP ${response.status})` : ""}.`,
+        message: "Voice transcription couldn't complete right now.",
       };
     }
 
@@ -259,7 +261,7 @@ export async function transcribeVoiceMemo(opts: {
     if (!response || !response.ok) {
       return {
         status: "error",
-        message: `OpenAI transcription failed${response ? ` (HTTP ${response.status})` : ""}.`,
+        message: "Voice transcription couldn't complete right now.",
       };
     }
 
@@ -277,7 +279,7 @@ export async function transcribeVoiceMemo(opts: {
   return {
     status: "setup_required",
     message:
-      "No voice API key found in Secret Vault. Save GEMINI_API_KEY (personal use, billed against GCP credit) or OPENAI_VOICE_API_KEY in /routines -> Secret Vault.",
+      "Voice transcription isn't active yet. Open Setup to check connection status.",
   };
 }
 
@@ -303,8 +305,7 @@ export async function createLiveVoiceSessionDescriptor(opts: {
   if (!isVoiceEnabled()) {
     return {
       status: "setup_required",
-      message:
-        "Live voice is disabled by default. Set VOICE_ENABLED=true and store GEMINI_API_KEY in Secret Vault.",
+      message: "Live voice is turned off right now.",
     };
   }
 

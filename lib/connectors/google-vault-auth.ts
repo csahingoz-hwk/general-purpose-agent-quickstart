@@ -138,13 +138,13 @@ export async function resolveGoogleAccessTokenFromVault(opts: {
         ok: false,
         code: "vault_not_configured",
         message:
-          "Secret Vault is not configured or provisioned yet (check SECRET_VAULT_KEY and lib/db/parity-schema.sql).",
+          "Secure account storage isn't ready yet. Open Setup to check your Google connection.",
       };
     }
     return {
       ok: false,
       code: "oauth_refresh_failed",
-      message: "Failed to resolve Google credentials from Secret Vault.",
+      message: "Google connection expired. Tap Connect in Setup to refresh it.",
     };
   }
 }
