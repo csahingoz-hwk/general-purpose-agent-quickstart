@@ -1,6 +1,10 @@
 import type { LanguageModelV4Usage } from "@ai-sdk/provider";
 import postgres from "postgres";
-import { monthlyAllowance, type PremiumModelId } from "./catalog";
+import {
+  isVertexModel,
+  monthlyAllowance,
+  type PremiumModelId,
+} from "./catalog";
 import { usageCost } from "./cost";
 import { ModelFailure } from "./policy";
 
@@ -46,6 +50,12 @@ export function createUsageLedger(
 ): UsageLedger {
   return {
     async reserve({ model, reserveUsd, fallbackReason }) {
+      // Vertex AI models (`gemini-4-hydrogen`, `gemini-4-argon`) bill directly
+      // to GCP `0140A2-72DEB2-62EDCD` Ultra Cloud credit ($0 Gateway allowance),
+      // so skip blocking Postgres advisory locks before streaming.
+      if (isVertexModel(model) && reserveUsd === 0) {
+        return `vertex:${crypto.randomUUID()}:${fallbackReason ?? ""}`;
+      }
       if (!Number.isFinite(reserveUsd) || reserveUsd <= 0) {
         throw new ModelFailure("spend");
       }
@@ -67,6 +77,16 @@ export function createUsageLedger(
     async settle(id, model, outcome, usage, extraUsd = 0) {
       const cost = usage && usageCost(model, usage);
       const estimatedUsd = settledEstimate(cost?.usd, extraUsd);
+      if (id.startsWith("vertex:")) {
+        if (!process.env.POSTGRES_URL) {
+          return;
+        }
+        const [, rawId = crypto.randomUUID(), rawReason = ""] = id.split(":");
+        await sql()`INSERT INTO "ModelUsage" ("id","userId","requestId","model","fallbackReason","reservedUsd","estimatedUsd","inputTokens","cachedInputTokens","cacheWriteTokens","outputTokens","reasoningTokens","usageReported","outcome") VALUES (${rawId},${userId},${requestId},${model},${rawReason || null},${0},${0},${cost?.input ?? null},${cost?.cached ?? null},${cost?.cacheWrite ?? null},${cost?.output ?? null},${cost?.reasoning ?? null},${Boolean(cost)},${outcome})`.catch(
+          () => undefined
+        );
+        return;
+      }
       // Unknown usage retains the full reservation, even on disconnect/cancel.
       // This deliberately favors stopping early over undercounting lost calls.
       await sql()`UPDATE "ModelUsage" SET "outcome"=${outcome}, "estimatedUsd"=${estimatedUsd}, "inputTokens"=${cost?.input ?? null}, "cachedInputTokens"=${cost?.cached ?? null}, "cacheWriteTokens"=${cost?.cacheWrite ?? null}, "outputTokens"=${cost?.output ?? null}, "reasoningTokens"=${cost?.reasoning ?? null}, "usageReported"=${Boolean(cost)} WHERE "id"=${id} AND "userId"=${userId}`;

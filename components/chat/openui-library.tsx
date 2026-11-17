@@ -5,15 +5,24 @@ import {
   defineComponent,
   Renderer,
 } from "@openuidev/react-lang";
-import { createContext, useContext, useEffect, useId, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useId,
+  useState,
+} from "react";
 import { z } from "zod/v4";
 import {
   chartProps,
+  comparisonProps,
   mapProps,
   sliderProps,
   statProps,
   tableProps,
   tabsProps,
+  timelineProps,
 } from "@/lib/openui/schemas";
 import {
   filterSeries,
@@ -63,6 +72,21 @@ function formatPointCallout(value: number, unit?: string): string {
     return `${rounded}%`;
   }
   return rounded;
+}
+
+function formatShortAxisLabel(label: string, maxLen = 10): string {
+  const trimmed = label.trim();
+  if (trimmed.length <= maxLen) {
+    return trimmed;
+  }
+  const words = trimmed.split(/\s+/);
+  if (words.length >= 2 && words[0] && words[1]) {
+    const initialForm = `${words[0][0]}. ${words.at(-1)}`;
+    if (initialForm.length <= maxLen + 1) {
+      return initialForm;
+    }
+  }
+  return `${trimmed.slice(0, maxLen - 1)}…`;
 }
 
 function WeatherGlyph({ kind }: { kind: WeatherIconKind }) {
@@ -503,7 +527,7 @@ function ChartGraphic({
                     x={barX + barWidth / 2}
                     y={bottomPad + 16}
                   >
-                    {point.label.slice(0, 8)}
+                    {formatShortAxisLabel(point.label)}
                   </text>
                 </>
               )}
@@ -982,6 +1006,117 @@ function MapGraphic({ props }: { props: { title: string; place: string } }) {
   );
 }
 
+function ComparisonView({
+  props,
+}: {
+  props: { title: string; dataset: string };
+}) {
+  const comp = useSnapshot().comparisons?.[props.dataset];
+  if (!comp || comp.rows.length === 0 || comp.options.length < 2) {
+    return null;
+  }
+  const gridColsClass =
+    comp.options.length === 3 ? "grid-cols-3" : "grid-cols-2";
+
+  return (
+    <div className="space-y-2.5" data-testid="openui-comparison">
+      <div className={`grid ${gridColsClass} gap-2`}>
+        {comp.options.map((opt) => (
+          <div
+            className="min-w-0 rounded-xl border border-border/70 bg-background/90 px-2.5 py-2 text-center"
+            key={opt}
+          >
+            <span className="block truncate font-semibold text-[13px] text-foreground">
+              {opt}
+            </span>
+          </div>
+        ))}
+      </div>
+      <div className="space-y-2">
+        {comp.rows.map((row) => (
+          <div
+            className="rounded-xl border border-border/60 bg-background/60 p-2.5"
+            key={row.feature}
+          >
+            <p className="mb-1.5 font-medium text-[11.5px] text-muted-foreground uppercase tracking-wide">
+              {row.feature}
+            </p>
+            <div className={`grid ${gridColsClass} gap-2`}>
+              {comp.options.map((opt, idx) => {
+                const val = row.values[idx] ?? "—";
+                const isWinner = row.winnerIndex === idx;
+                return (
+                  <div
+                    className={`min-w-0 rounded-lg px-2 py-1.5 text-[13px] leading-snug ${
+                      isWinner
+                        ? "border border-[var(--send)]/45 bg-[var(--send)]/10 font-medium text-foreground"
+                        : "bg-muted/35 text-foreground"
+                    }`}
+                    key={`${row.feature}-${opt}`}
+                  >
+                    <span className="block break-words">{val}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+      {comp.verdict && (
+        <div className="rounded-xl border border-[var(--send)]/30 bg-[var(--send)]/8 px-3 py-2 text-[13px] text-foreground leading-snug">
+          <span className="font-semibold">Takeaway: </span>
+          {comp.verdict}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TimelineView({
+  props,
+}: {
+  props: { title: string; dataset: string };
+}) {
+  const tl = useSnapshot().timelines?.[props.dataset];
+  if (!tl || tl.events.length === 0) {
+    return null;
+  }
+
+  return (
+    <ol
+      className="relative ml-2 space-y-3 border-[var(--send)]/35 border-l-2 pl-4"
+      data-testid="openui-timeline"
+    >
+      {tl.events.map((ev) => (
+        <li className="relative min-w-0" key={`${ev.when}-${ev.title}`}>
+          <span
+            aria-hidden="true"
+            className="absolute top-1.5 -left-[1.3125rem] block size-2.5 rounded-full border-2 border-card bg-[var(--send)]"
+          />
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="inline-flex items-center rounded-full bg-[var(--send)]/12 px-2 py-0.5 font-semibold text-[11.5px] text-foreground tabular-nums">
+              {ev.when}
+            </span>
+            {ev.badge && (
+              <span className="inline-flex items-center rounded-full border border-border/70 px-2 py-0.5 text-[11px] text-muted-foreground">
+                {ev.badge}
+              </span>
+            )}
+          </div>
+          <p className="mt-1 break-words font-semibold text-[14px] text-foreground leading-snug">
+            {ev.title}
+          </p>
+          {ev.detail && (
+            <p className="mt-0.5 break-words text-[13px] text-muted-foreground leading-snug">
+              {ev.detail}
+            </p>
+          )}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 const Chart = defineComponent({
   name: "Chart",
   description: "Line, bar, or pie chart for a series id.",
@@ -1018,6 +1153,48 @@ const MapView = defineComponent({
   props: mapProps,
   component: MapGraphic,
 });
+const Comparison = defineComponent({
+  name: "Comparison",
+  description: "Side-by-side comparison for a comparison id.",
+  props: comparisonProps,
+  component: ComparisonView,
+});
+const Timeline = defineComponent({
+  name: "Timeline",
+  description: "Chronological rail for a timeline id.",
+  props: timelineProps,
+  component: TimelineView,
+});
+
+function CardRootView({
+  props,
+  renderNode,
+}: {
+  props: { title: string; summary: string; children: unknown[] };
+  renderNode: (node: unknown) => ReactNode;
+}) {
+  const header = useSnapshot().header;
+  const displayTitle = header?.title || props.title;
+  const displaySummary = header?.summary || props.summary;
+  return (
+    <div className="space-y-3">
+      <div>
+        <h2 className="font-semibold text-[17px] leading-tight">
+          {displayTitle}
+        </h2>
+        <p className="text-[13px] text-muted-foreground">{displaySummary}</p>
+      </div>
+      {props.children.map((child) => {
+        const statementId =
+          child && typeof child === "object" && "statementId" in child
+            ? String(child.statementId)
+            : displayTitle;
+        return <div key={statementId}>{renderNode(child)}</div>;
+      })}
+    </div>
+  );
+}
+
 const Card = defineComponent({
   name: "Card",
   description: "Root frame.",
@@ -1032,31 +1209,27 @@ const Card = defineComponent({
         Slider.ref,
         Tabs.ref,
         MapView.ref,
+        Comparison.ref,
+        Timeline.ref,
       ])
     ),
   }),
-  component: ({ props, renderNode }) => (
-    <div className="space-y-3">
-      <div>
-        <h2 className="font-semibold text-[17px] leading-tight">
-          {props.title}
-        </h2>
-        <p className="text-[13px] text-muted-foreground">{props.summary}</p>
-      </div>
-      {props.children.map((child) => {
-        const statementId =
-          child && typeof child === "object" && "statementId" in child
-            ? String(child.statementId)
-            : props.title;
-        return <div key={statementId}>{renderNode(child)}</div>;
-      })}
-    </div>
-  ),
+  component: CardRootView,
 });
 
 export const openUiViewLibrary = createLibrary({
   root: "Card",
-  components: [Card, Chart, Table, Stat, Slider, Tabs, MapView],
+  components: [
+    Card,
+    Chart,
+    Table,
+    Stat,
+    Slider,
+    Tabs,
+    MapView,
+    Comparison,
+    Timeline,
+  ],
 });
 
 export function OpenUiRenderer({

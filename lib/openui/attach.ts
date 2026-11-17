@@ -11,6 +11,7 @@ import {
   payloadFromSnapshot,
   type VisualSnapshot,
 } from "./snapshot";
+import { extractAnswerVisualSnapshot } from "./structured-answer";
 import { validateOpenUiSpec } from "./validate";
 
 function partOutput(part: {
@@ -24,14 +25,20 @@ function partOutput(part: {
   return part.output;
 }
 
-function answerText(parts: readonly { type: string; text?: string }[]): string {
+function rawTextFromParts(
+  parts: readonly { type: string; text?: string }[]
+): string {
   const blocks: string[] = [];
   for (const part of parts) {
     if (part.type === "text" && part.text) {
-      blocks.push(part.text.replace(/```[\s\S]*?```/g, " "));
+      blocks.push(part.text);
     }
   }
   return blocks.join("\n");
+}
+
+function answerText(parts: readonly { type: string; text?: string }[]): string {
+  return rawTextFromParts(parts).replace(/```[\s\S]*?```/g, " ");
 }
 
 function hasFixtureCard(
@@ -95,6 +102,12 @@ export function snapshotFromParts(
         };
       }
     }
+  }
+  const structuredFromAnswer = extractAnswerVisualSnapshot(
+    rawTextFromParts(parts)
+  );
+  if (structuredFromAnswer && hasStructuredVisual(structuredFromAnswer.data)) {
+    return structuredFromAnswer;
   }
   return null;
 }

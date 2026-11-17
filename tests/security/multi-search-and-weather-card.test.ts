@@ -23,6 +23,7 @@ import {
   WEB_SEARCH_COST_USD,
   WEB_SEARCH_TOOL_ID,
 } from "../../lib/ai/routing/catalog";
+import { createUsageLedger } from "../../lib/ai/routing/ledger";
 import { createRoutedModel } from "../../lib/ai/routing/model";
 import type { InferenceSession } from "../../lib/ai/routing/session";
 import {
@@ -35,8 +36,10 @@ import {
   describeWeatherCode,
   formatShortDate,
 } from "../../lib/openui/snapshot";
+import { isVisualCandidateTurn } from "../../lib/openui/structured-answer";
 import { validateOpenUiSpec } from "../../lib/openui/validate";
 import type { ChatMessage } from "../../lib/types";
+import { sanitizeText } from "../../lib/utils";
 import { DEFAULT_LIVE_MODEL } from "../../lib/voice/live-protocol";
 
 test("Weather card formats short dates (Wed 18), current conditions icon/description, and High/Low series", () => {
@@ -385,28 +388,39 @@ test("Vertex AI Ultra routing: Hydrogen default, Argon research escalation, Hydr
   assert.equal(chatModels.find((m) => m.id === ARGON)?.name, "Gemini 4 Argon");
   assert.equal(chatModels.find((m) => m.id === TERRA)?.name, "GPT-6.1 Terra");
 
-  // Everyday trivial turn stays on Gemini 4 Hydrogen
+  // Everyday trivial turn stays on Gemini 4 Hydrogen with fast `low` effort (~1s TTFT)
   const trivial = resolveTurnModelAndEffort({
     selectedModelId: HYDROGEN,
     availableModelIds: [HYDROGEN, ARGON, TERRA],
     userText: "Merhaba, nasılsın?",
     requestedTools: [],
-    baseEffort: "medium",
+    baseEffort: "low",
   });
   assert.equal(trivial.modelId, HYDROGEN);
+  assert.equal(trivial.reasoningEffort, "low");
   assert.equal(trivial.escalated, false);
 
-  // Research / multi-search / hard questions auto-escalate Hydrogen -> Argon
+  // Research / multi-search / hard questions auto-escalate Hydrogen -> Argon with medium+ effort
   const escalatedSearch = resolveTurnModelAndEffort({
     selectedModelId: HYDROGEN,
     availableModelIds: [HYDROGEN, ARGON, TERRA],
     userText: "En çok kazanan CEO'lar ve yıllık kazançları nelerdir?",
     requestedTools: ["webSearch"],
-    baseEffort: "medium",
+    baseEffort: "low",
   });
   assert.equal(escalatedSearch.modelId, ARGON);
-  assert.equal(escalatedSearch.reasoningEffort, "high");
+  assert.equal(escalatedSearch.reasoningEffort, "medium");
   assert.equal(escalatedSearch.escalated, true);
+
+  const deepProof = resolveTurnModelAndEffort({
+    selectedModelId: HYDROGEN,
+    availableModelIds: [HYDROGEN, ARGON, TERRA],
+    userText: "Prove this theorem and find the root cause of the deadlock",
+    requestedTools: [],
+    baseEffort: "low",
+  });
+  assert.equal(deepProof.modelId, ARGON);
+  assert.equal(deepProof.reasoningEffort, "high");
 
   // Zero-key Vertex WIF token exchange uses STS + x-vercel-oidc-token, NEVER GEMINI_API_KEY
   const REQUEST_CONTEXT = Symbol.for("@vercel/request-context");
@@ -656,5 +670,255 @@ test("Vertex AI Ultra routing: Hydrogen default, Argon research escalation, Hydr
     triedAfterTerra,
     [HYDROGEN, TERRA],
     "Fallback order must be Hydrogen -> Terra and never Luna"
+  );
+});
+
+test("Zero-wait Vertex ledger, immediate search progress, and all 6 generative UI cards (comparison, timeline, chart, table, map, source cards) validate cleanly", async () => {
+  // 1) Zero-wait Vertex ledger reservation ($0 Gateway allowance, 0 DB queries)
+  const ledger = createUsageLedger("owner-u1", "req-fast");
+  const vertexResId = await ledger.reserve({ model: HYDROGEN, reserveUsd: 0 });
+  assert.match(vertexResId, /^vertex:/);
+  await assert.rejects(
+    () => ledger.reserve({ model: TERRA, reserveUsd: 0 }),
+    /model_spend/
+  );
+
+  // 2) Immediate webSearch tool-call emitted BEFORE first text-delta in Vertex doStream
+  const sseBody = [
+    `data: ${JSON.stringify({
+      candidates: [
+        {
+          content: { parts: [{ text: "Grounded answer text." }] },
+          finishReason: "STOP",
+          groundingMetadata: {
+            webSearchQueries: ["gold price today"],
+            groundingChunks: [
+              {
+                web: { uri: "https://reuters.com/gold", title: "Reuters Gold" },
+              },
+            ],
+          },
+        },
+      ],
+      usageMetadata: { promptTokenCount: 15, candidatesTokenCount: 6 },
+    })}`,
+    "",
+    "",
+  ].join("\n");
+
+  const searchStreamAdapter = createVertexGeminiAdapter(ARGON, {
+    projectId: "project-cd0bc64c-0025-446c-b41",
+    getAccessToken: () => Promise.resolve("tok"),
+    fetcher: () =>
+      Promise.resolve(
+        new Response(sseBody, {
+          status: 200,
+          headers: { "Content-Type": "text/event-stream" },
+        })
+      ),
+  });
+  const { stream } = await searchStreamAdapter.doStream({
+    prompt: [
+      { role: "user", content: [{ type: "text", text: "Gold price today?" }] },
+    ],
+    tools: [
+      {
+        type: "provider",
+        id: WEB_SEARCH_TOOL_ID,
+        name: "webSearch",
+        args: { count: 5 },
+      },
+    ],
+  });
+  const events: LanguageModelV4StreamPart[] = [];
+  const sr = stream.getReader();
+  for (;;) {
+    const next = await sr.read();
+    if (next.done) {
+      break;
+    }
+    events.push(next.value);
+  }
+  const toolCallIdx = events.findIndex(
+    (e) => e.type === "tool-call" && e.toolName === "webSearch"
+  );
+  const firstTextIdx = events.findIndex((e) => e.type === "text-delta");
+  const toolResultIdx = events.findIndex(
+    (e) => e.type === "tool-result" && e.toolName === "webSearch"
+  );
+  assert.ok(
+    toolCallIdx > 0 && toolCallIdx < firstTextIdx,
+    "Search progress tool-call must precede text-delta"
+  );
+  assert.ok(toolResultIdx > firstTextIdx);
+
+  // 3) Visual candidate classifier keeps casual chat lean and activates for structured intents
+  assert.equal(isVisualCandidateTurn("Merhaba, nasılsın?", []), false);
+  assert.equal(
+    isVisualCandidateTurn("Compare MacBook Air M4 vs MacBook Pro M4", []),
+    true
+  );
+  assert.equal(
+    isVisualCandidateTurn("SpaceX Starship milestones timeline", []),
+    true
+  );
+
+  // 4) Comparison, Timeline, Chart+Table (with digits in title!), Map, and Markdown table fallback
+  const comparisonAnswer = [
+    "MacBook Air M4 taşınabilirlikte, MacBook Pro M4 ise sürdürülebilir yükte öne çıkıyor.",
+    "```visual-json",
+    JSON.stringify({
+      kind: "comparison",
+      title: "MacBook Air M4 vs MacBook Pro M4 (2026)",
+      summary: "Apple Silicon laptop comparison",
+      options: ["MacBook Air M4", "MacBook Pro M4"],
+      rows: [
+        {
+          feature: "Weight",
+          values: ["1.24 kg", "1.55 kg"],
+          winnerIndex: 0,
+        },
+        {
+          feature: "Display",
+          values: ["60Hz Liquid Retina", "120Hz Mini-LED ProMotion"],
+          winnerIndex: 1,
+        },
+        {
+          feature: "Cooling",
+          values: ["Fanless silent", "Active fan sustained"],
+          winnerIndex: 1,
+        },
+      ],
+      verdict: "Pick Air for travel, Pro for sustained compiles & 120Hz.",
+    }),
+    "```",
+  ].join("\n");
+
+  assert.equal(
+    sanitizeText(comparisonAnswer),
+    "MacBook Air M4 taşınabilirlikte, MacBook Pro M4 ise sürdürülebilir yükte öne çıkıyor."
+  );
+
+  const compPayload = buildOpenUiPayload(
+    [{ type: "text", text: comparisonAnswer }],
+    ARGON
+  );
+  assert.ok(compPayload);
+  assert.equal(validateOpenUiSpec(compPayload.spec, compPayload.data).ok, true);
+  assert.equal(/\d/.test(compPayload.spec), false);
+  assert.match(compPayload.spec, /Comparison\(/);
+  assert.equal(
+    compPayload.data.header?.title,
+    "MacBook Air M4 vs MacBook Pro M4 (2026)"
+  );
+
+  const timelineAnswer = [
+    "Here are the key Starship milestones:",
+    "```visual-json",
+    JSON.stringify({
+      kind: "timeline",
+      title: "Starship Flight Milestones (2023–2026)",
+      events: [
+        {
+          when: "Apr 2023",
+          title: "Integrated Flight Test 1",
+          detail: "First full-stack liftoff from Starbase.",
+        },
+        {
+          when: "Oct 2024",
+          title: "Mechazilla Booster Catch",
+          detail: "Super Heavy caught on launch tower arms.",
+          badge: "Breakthrough",
+        },
+      ],
+    }),
+    "```",
+  ].join("\n");
+  const tlPayload = buildOpenUiPayload(
+    [{ type: "text", text: timelineAnswer }],
+    HYDROGEN
+  );
+  assert.ok(tlPayload);
+  assert.equal(validateOpenUiSpec(tlPayload.spec, tlPayload.data).ok, true);
+  assert.match(tlPayload.spec, /Timeline\(/);
+
+  const chartAnswer = [
+    "Top 4 tech CEOs by 2026 annual compensation:",
+    "```visual-json",
+    JSON.stringify({
+      kind: "chart",
+      chartKind: "bar",
+      title: "Top 4 Tech CEO Pay (2026)",
+      unit: "$M",
+      points: [
+        { label: "Hock Tan", value: 161.8 },
+        { label: "Nikesh Arora", value: 151.4 },
+        { label: "Satya Nadella", value: 79.1 },
+        { label: "Tim Cook", value: 74.6 },
+      ],
+    }),
+    "```",
+  ].join("\n");
+  const chartPayload = buildOpenUiPayload(
+    [{ type: "text", text: chartAnswer }],
+    ARGON
+  );
+  assert.ok(chartPayload);
+  assert.equal(
+    validateOpenUiSpec(chartPayload.spec, chartPayload.data).ok,
+    true
+  );
+  assert.match(chartPayload.spec, /Tabs\(\["Chart", "Table"\]/);
+
+  const mapAnswer = [
+    "Big Ben sits at the north end of the Palace of Westminster.",
+    "```visual-json",
+    JSON.stringify({
+      kind: "map",
+      title: "Big Ben · Westminster",
+      label: "Big Ben",
+      latitude: 51.5007,
+      longitude: -0.1246,
+    }),
+    "```",
+  ].join("\n");
+  const mapPayload = buildOpenUiPayload(
+    [{ type: "text", text: mapAnswer }],
+    HYDROGEN
+  );
+  assert.ok(mapPayload);
+  assert.equal(validateOpenUiSpec(mapPayload.spec, mapPayload.data).ok, true);
+  assert.match(mapPayload.spec, /Map\(/);
+
+  // Markdown table automatic promotion + unclosed/malformed visual-json safety
+  const mdTable = [
+    "### UK Income Tax Bands",
+    "| Band | Rate |",
+    "| --- | --- |",
+    "| Basic | 20% |",
+    "| Higher | 40% |",
+    "| Additional | 45% |",
+  ].join("\n");
+  const mdPayload = buildOpenUiPayload(
+    [{ type: "text", text: mdTable }],
+    HYDROGEN
+  );
+  assert.ok(mdPayload);
+  assert.equal(validateOpenUiSpec(mdPayload.spec, mdPayload.data).ok, true);
+
+  // Unclosed / broken visual-json mid-stream returns null (NEVER a broken card!)
+  assert.equal(
+    buildOpenUiPayload(
+      [{ type: "text", text: 'Streaming...\n```visual-json\n{"kind":"chart"' }],
+      HYDROGEN
+    ),
+    null
+  );
+  assert.equal(
+    buildOpenUiPayload(
+      [{ type: "text", text: "```visual-json\n{bad json}\n```" }],
+      HYDROGEN
+    ),
+    null
   );
 });

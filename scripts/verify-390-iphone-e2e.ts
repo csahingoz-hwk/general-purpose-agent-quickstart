@@ -179,6 +179,107 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
     assert.ok(weatherVisual);
 
     const searchChatId = "22222222-2222-4222-8222-222222222222";
+    const comparisonChatId = "33333333-3333-4333-8333-333333333333";
+    const timelineChatId = "44444444-4444-4444-8444-444444444444";
+
+    const ceoChartAnswer = [
+      "Güncel S&P 500 ve Equilar üst düzey yönetici kazanç raporlarına göre en yüksek yıllık toplam pakete sahip teknoloji CEO'ları aşağıda özetlenmiştir.",
+      "```visual-json",
+      JSON.stringify({
+        kind: "chart",
+        chartKind: "bar",
+        title: "En Çok Kazanan Teknoloji CEO'ları (2026)",
+        summary: "Yıllık toplam maaş + hisse paketi (Milyon $)",
+        unit: "$M",
+        points: [
+          { label: "Hock Tan", value: 161.8 },
+          { label: "Nikesh Arora", value: 151.4 },
+          { label: "Satya Nadella", value: 79.1 },
+          { label: "Tim Cook", value: 74.6 },
+        ],
+      }),
+      "```",
+    ].join("\n");
+    const ceoVisual = buildOpenUiPayload(
+      [{ type: "text", text: ceoChartAnswer }],
+      "gemini-4-argon",
+      "2026-11-17T18:05:00.000Z"
+    );
+    assert.ok(ceoVisual);
+
+    const comparisonAnswer = [
+      "MacBook Air M4 günlük taşınabilirlikte, MacBook Pro M4 ise uzun süreli yüksek yük ve 120Hz ekranda öne çıkar.",
+      "```visual-json",
+      JSON.stringify({
+        kind: "comparison",
+        title: "MacBook Air M4 vs MacBook Pro M4",
+        summary: "Taşınabilirlik, ekran ve performans karşılaştırması",
+        options: ["MacBook Air M4", "MacBook Pro M4"],
+        rows: [
+          {
+            feature: "Ağırlık",
+            values: ["1.24 kg (Ultra hafif)", "1.55 kg"],
+            winnerIndex: 0,
+          },
+          {
+            feature: "Ekran",
+            values: ["60Hz Liquid Retina", "120Hz Mini-LED ProMotion"],
+            winnerIndex: 1,
+          },
+          {
+            feature: "Pil Ömrü",
+            values: ["18 saate kadar", "24 saate kadar"],
+            winnerIndex: 1,
+          },
+        ],
+        verdict:
+          "Seyahat ve günlük iş için Air; yoğun kodlama/render ve 120Hz için Pro.",
+      }),
+      "```",
+    ].join("\n");
+    const comparisonVisual = buildOpenUiPayload(
+      [{ type: "text", text: comparisonAnswer }],
+      "gemini-4-argon",
+      "2026-11-17T18:06:00.000Z"
+    );
+    assert.ok(comparisonVisual);
+
+    const timelineAnswer = [
+      "SpaceX Starship programının temel uçuş kilometre taşları:",
+      "```visual-json",
+      JSON.stringify({
+        kind: "timeline",
+        title: "SpaceX Starship Kilometre Taşları",
+        summary: "2023–2026 test uçuşu kronolojisi",
+        events: [
+          {
+            when: "Nis 2023",
+            title: "IFT-1 İlk Tam Entegre Kalkış",
+            detail: "Starbase'den Super Heavy ile ilk birleşik uçuş.",
+          },
+          {
+            when: "Eki 2024",
+            title: "IFT-5 Mechazilla Yakalaması",
+            detail: "71 metrelik itici kule kollarında havada yakalandı.",
+            badge: "Tarihi İlk",
+          },
+          {
+            when: "2026",
+            title: "Yörüngede Yakıt Aktarımı Testi",
+            detail:
+              "Derin uzay görevleri için iki gemi arası kriyojenik transfer.",
+          },
+        ],
+      }),
+      "```",
+    ].join("\n");
+    const timelineVisual = buildOpenUiPayload(
+      [{ type: "text", text: timelineAnswer }],
+      "gemini-4-hydrogen",
+      "2026-11-17T18:07:00.000Z"
+    );
+    assert.ok(timelineVisual);
+
     await page.route("**/api/messages*", (route) => {
       const url = new URL(route.request().url());
       const chatId = url.searchParams.get("chatId");
@@ -226,7 +327,75 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
         });
       }
 
-      // Case 2: Turkish 4-search top earners research turn
+      if (chatId === comparisonChatId) {
+        return route.fulfill({
+          json: {
+            visibility: "private",
+            userId,
+            isReadonly: false,
+            messages: [
+              {
+                id: "30000000-0000-4000-8000-000000000001",
+                role: "user",
+                parts: [
+                  {
+                    type: "text",
+                    text: "MacBook Air M4 ile MacBook Pro M4'ü karşılaştır.",
+                  },
+                ],
+              },
+              {
+                id: "30000000-0000-4000-8000-000000000002",
+                role: "assistant",
+                parts: [
+                  { type: "text", text: comparisonAnswer },
+                  { type: "data-openui", data: comparisonVisual },
+                  {
+                    type: "data-reply-status",
+                    data: { status: "complete", retryable: false },
+                  },
+                ],
+              },
+            ],
+          },
+        });
+      }
+
+      if (chatId === timelineChatId) {
+        return route.fulfill({
+          json: {
+            visibility: "private",
+            userId,
+            isReadonly: false,
+            messages: [
+              {
+                id: "40000000-0000-4000-8000-000000000001",
+                role: "user",
+                parts: [
+                  {
+                    type: "text",
+                    text: "SpaceX Starship kilometre taşları kronolojisi nedir?",
+                  },
+                ],
+              },
+              {
+                id: "40000000-0000-4000-8000-000000000002",
+                role: "assistant",
+                parts: [
+                  { type: "text", text: timelineAnswer },
+                  { type: "data-openui", data: timelineVisual },
+                  {
+                    type: "data-reply-status",
+                    data: { status: "complete", retryable: false },
+                  },
+                ],
+              },
+            ],
+          },
+        });
+      }
+
+      // Case 2: Turkish 4-search top earners research turn with Source Cards + Chart/Table card
       return route.fulfill({
         json: {
           visibility: "private",
@@ -255,8 +424,11 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
                   input: { query: `top paid tech CEOs annual pay ${idx}` },
                   output: {
                     results: [1, 2, 3, 4, 5].map((s) => ({
-                      title: `Kaynak Raporu ${idx}.${s}`,
-                      url: `https://example.com/ceo-pay-${idx}-${s}`,
+                      title:
+                        s === 1
+                          ? `Equilar S&P 500 CEO Pay Study ${idx}`
+                          : `Bloomberg Executive Pay Index ${idx}.${s}`,
+                      url: `https://forbes.com/ceo-pay-${idx}-${s}`,
                       snippet: `Yıllık toplam hisse + maaş paketi verisi ${idx}.${s}.`,
                     })),
                   },
@@ -271,14 +443,11 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
                 },
                 {
                   type: "text",
-                  text: [
-                    "Güncel S&P 500 ve Equilar üst düzey yönetici kazanç raporlarına göre en yüksek yıllık toplam pakete sahip teknoloji CEO'ları:",
-                    "",
-                    "1. **Hock Tan (Broadcom)** — **~161,8 milyon $ / yıl** (ağırlıklı performans bazlı hisse ödülleri) · [Equilar CEO Pay Study](https://example.com/ceo-pay-1-1)",
-                    "2. **Nikesh Arora (Palo Alto Networks)** — **~151,4 milyon $ / yıl** · [Bloomberg Pay Index](https://example.com/ceo-pay-2-1)",
-                    "3. **Tim Cook (Apple)** — **~74,6 milyon $ / yıl** (3 milyon $ baz maaş + hisse teşvikleri) · [Apple Proxy Filing](https://example.com/ceo-pay-3-1)",
-                    "4. **Satya Nadella (Microsoft)** — **~79,1 milyon $ / yıl** · [Microsoft DEF 14A](https://example.com/ceo-pay-4-1)",
-                  ].join("\n"),
+                  text: ceoChartAnswer,
+                },
+                {
+                  type: "data-openui",
+                  data: ceoVisual,
                 },
                 {
                   type: "data-reply-status",
@@ -379,7 +548,7 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
     const weatherShot = join(scratchDir, "verify-weather-390.png");
     await page.screenshot({ path: weatherShot, fullPage: false });
 
-    // Navigate to Case 2 (Turkish 4-search top earners at 390x844)
+    // Navigate to Case 2 (Turkish 4-search Source Cards + Bar Chart/Table Tabs at 390x844)
     await page.goto(`${origin}/chat/${searchChatId}`, {
       waitUntil: "domcontentloaded",
     });
@@ -388,15 +557,21 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
     for (let i = 0; i < 4; i++) {
       await expect(searchCards.nth(i)).toContainText("5 kaynak");
     }
-    await expect(page.getByText("Hock Tan (Broadcom)")).toBeVisible();
-    await expect(page.getByText("161,8 milyon $")).toBeVisible();
+    await expect(
+      page.getByTestId("web-search-source-cards").first()
+    ).toBeVisible();
+    await expect(page.getByTestId("openui-card")).toContainText(
+      "En Çok Kazanan Teknoloji CEO'ları (2026)"
+    );
+    await expect(page.getByTestId("openui-card")).toContainText("161.8 $M");
 
     const bodyText = (await page.locator("body").textContent()) ?? "";
     assert.ok(
       !bodyText.includes("The reply could not be completed") &&
         !bodyText.includes("Yanıt tamamlanamadı") &&
-        !bodyText.includes("Searching the web"),
-      "Multi-search turn must not show error banner or dangling English spinner"
+        !bodyText.includes("Searching the web") &&
+        !bodyText.includes("visual-json"),
+      "Multi-search turn must not show error banner, raw visual-json, or dangling English spinner"
     );
 
     const searchOverflow = await page.evaluate(
@@ -412,13 +587,46 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
     );
     await page.screenshot({ path: multiSearchTopShot, fullPage: false });
 
-    await page.getByText("Hock Tan (Broadcom)").scrollIntoViewIfNeeded();
+    await page.getByTestId("openui-card").scrollIntoViewIfNeeded();
     await page.waitForTimeout(200);
     const multiSearchShot = join(scratchDir, "verify-multisearch-390.png");
     await page.screenshot({ path: multiSearchShot, fullPage: false });
 
+    // Navigate to Case 3 (Comparison Card at 390x844)
+    await page.goto(`${origin}/chat/${comparisonChatId}`, {
+      waitUntil: "domcontentloaded",
+    });
+    const compCard = page.getByTestId("openui-comparison");
+    await expect(compCard).toBeVisible({ timeout: 15_000 });
+    await expect(compCard).toContainText("MacBook Air M4");
+    await expect(compCard).toContainText("120Hz Mini-LED ProMotion");
+    const compOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth
+    );
+    assert.ok(compOverflow <= 390, `Comparison overflow: ${compOverflow}`);
+    await compCard.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+    const compShot = join(scratchDir, "verify-comparison-390.png");
+    await page.screenshot({ path: compShot, fullPage: false });
+
+    // Navigate to Case 4 (Timeline Card at 390x844)
+    await page.goto(`${origin}/chat/${timelineChatId}`, {
+      waitUntil: "domcontentloaded",
+    });
+    const tlCard = page.getByTestId("openui-timeline");
+    await expect(tlCard).toBeVisible({ timeout: 15_000 });
+    await expect(tlCard).toContainText("IFT-5 Mechazilla Yakalaması");
+    const tlOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth
+    );
+    assert.ok(tlOverflow <= 390, `Timeline overflow: ${tlOverflow}`);
+    await tlCard.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+    const tlShot = join(scratchDir, "verify-timeline-390.png");
+    await page.screenshot({ path: tlShot, fullPage: false });
+
     console.log(
-      `PASS: 390x844 iPhone verification succeeded (weatherShot=${weatherShot}, multiSearchShot=${multiSearchShot}, mapVisible=${mapVisible})`
+      `PASS: 390x844 iPhone verification succeeded (weather=${weatherShot}, ceoChart=${multiSearchShot}, comparison=${compShot}, timeline=${tlShot}, mapVisible=${mapVisible})`
     );
   } finally {
     await browser.close().catch(() => undefined);

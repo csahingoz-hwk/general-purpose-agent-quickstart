@@ -58,6 +58,10 @@ export type CustomUIDataTypes = {
   finish: null;
   "chat-title": string;
   openui: OpenUiPayload;
+  "turn-status": {
+    phase: "searching" | "weather" | "fixtures" | "tool" | "thinking";
+    model: string;
+  };
 };
 
 export type ChatMessage = UIMessage<

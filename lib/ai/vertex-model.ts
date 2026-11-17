@@ -520,6 +520,33 @@ export function createVertexGeminiAdapter(
       let latestThoughtSignature: string | undefined;
       const groundingChunksAcc: GroundingChunk[] = [];
       const groundingQueriesAcc: string[] = [];
+      const hasSearchToolOnTurn = Boolean(
+        params.tools?.some(
+          (tool) =>
+            (tool.type === "provider" && tool.id === WEB_SEARCH_TOOL_ID) ||
+            (tool.type === "function" && tool.name === "webSearch")
+        )
+      );
+      const latestUserQuery = (() => {
+        for (let i = params.prompt.length - 1; i >= 0; i--) {
+          const msg = params.prompt[i];
+          if (msg?.role === "user") {
+            const txt = msg.content
+              .filter((p) => p.type === "text")
+              .map((p) => p.text)
+              .join(" ")
+              .trim();
+            if (txt) {
+              return txt.slice(0, 180);
+            }
+          }
+        }
+        return "";
+      })();
+      const immediateSearchCallId = hasSearchToolOnTurn
+        ? `vground-0-${Math.random().toString(36).slice(2, 7)}`
+        : null;
+      let immediateSearchResolved = false;
 
       function processPayload(
         payload: VertexResponsePayload,
@@ -606,6 +633,15 @@ export function createVertexGeminiAdapter(
         stream: new ReadableStream<LanguageModelV4StreamPart>({
           async start(controller) {
             controller.enqueue({ type: "stream-start", warnings: [] });
+            if (immediateSearchCallId) {
+              controller.enqueue({
+                type: "tool-call",
+                toolCallId: immediateSearchCallId,
+                toolName: "webSearch",
+                input: JSON.stringify({ query: latestUserQuery }),
+                providerExecuted: true,
+              });
+            }
             try {
               for (;;) {
                 const { done, value } = await upstreamReader.read();
@@ -668,6 +704,17 @@ export function createVertexGeminiAdapter(
                 ) {
                   const slice = grounding.results.slice(idx, idx + chunkSize);
                   const qIdx = Math.floor(idx / chunkSize);
+                  if (idx === 0 && immediateSearchCallId) {
+                    immediateSearchResolved = true;
+                    controller.enqueue({
+                      type: "tool-result",
+                      toolCallId: immediateSearchCallId,
+                      toolName: "webSearch",
+                      result: { results: slice },
+                      providerExecuted: true,
+                    } as unknown as LanguageModelV4StreamPart);
+                    continue;
+                  }
                   const callId = `vground-${qIdx}-${Math.random().toString(36).slice(2, 7)}`;
                   controller.enqueue({
                     type: "tool-call",
@@ -687,6 +734,15 @@ export function createVertexGeminiAdapter(
                     providerExecuted: true,
                   } as unknown as LanguageModelV4StreamPart);
                 }
+              } else if (immediateSearchCallId && !immediateSearchResolved) {
+                immediateSearchResolved = true;
+                controller.enqueue({
+                  type: "tool-result",
+                  toolCallId: immediateSearchCallId,
+                  toolName: "webSearch",
+                  result: { results: [], skippedForSynthesis: true },
+                  providerExecuted: true,
+                } as unknown as LanguageModelV4StreamPart);
               }
 
               controller.enqueue({

@@ -23,7 +23,24 @@ export type WeatherIconKind =
   | "snow"
   | "storm";
 
+export type ComparisonRow = {
+  feature: string;
+  values: string[];
+  winnerIndex?: number;
+};
+
+export type TimelineEvent = {
+  when: string;
+  title: string;
+  detail?: string;
+  badge?: string;
+};
+
 export type VisualSnapshot = {
+  header?: {
+    title: string;
+    summary: string;
+  };
   series: Record<
     string,
     {
@@ -50,6 +67,20 @@ export type VisualSnapshot = {
   places: Record<
     string,
     { label: string; latitude: number; longitude: number }
+  >;
+  comparisons?: Record<
+    string,
+    {
+      options: string[];
+      rows: ComparisonRow[];
+      verdict?: string;
+    }
+  >;
+  timelines?: Record<
+    string,
+    {
+      events: TimelineEvent[];
+    }
   >;
 };
 
@@ -78,10 +109,11 @@ const emptySnapshot = (): VisualSnapshot => ({
 
 function quote(value: string): string {
   const clean = value
+    .replace(/\d+/g, "")
     .replace(/["\\\n\r]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  return `"${clean.slice(0, 120)}"`;
+  return `"${(clean || "Overview").slice(0, 120)}"`;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -411,12 +443,22 @@ export function buildSearchSnapshot(
   return snapshot;
 }
 
-/** A links table is not a visual answer. Weather, series, and fixtures are. */
+/** A links table is not a visual answer. Weather, series, comparisons, timelines, and fixtures are. */
 export function hasStructuredVisual(data: VisualSnapshot): boolean {
   if (
     Object.keys(data.series).length > 0 ||
     Object.keys(data.places).length > 0 ||
     Object.keys(data.stats).length > 0
+  ) {
+    return true;
+  }
+  if (
+    Object.values(data.comparisons ?? {}).some((item) => item.rows.length > 0)
+  ) {
+    return true;
+  }
+  if (
+    Object.values(data.timelines ?? {}).some((item) => item.events.length > 0)
   ) {
     return true;
   }
@@ -440,6 +482,12 @@ export function specForSnapshot(
     lines.push(`latest = Stat(${quote(data.stats.latest.label)}, "latest")`);
     children.push("latest");
   }
+  if (data.stats.highlight) {
+    lines.push(
+      `highlight = Stat(${quote(data.stats.highlight.label)}, "highlight")`
+    );
+    children.push("highlight");
+  }
   if (data.series.dailyHigh) {
     lines.push(
       `chart = Chart(${quote(data.series.dailyHigh.title)}, "line", "dailyHigh")`
@@ -453,6 +501,27 @@ export function specForSnapshot(
     lines.push(`filter = Slider(${quote("Minimum value")}, "rates")`);
     children.push("filter");
     children.push("chart");
+  }
+  if (data.series.ranking && data.tables.rankingTable) {
+    lines.push(`views = Tabs(["Chart", "Table"], ["ranking", "rankingTable"])`);
+    children.push("views");
+  } else if (data.series.ranking) {
+    lines.push(
+      `rankingChart = Chart(${quote(data.series.ranking.title)}, "${data.series.ranking.kind}", "ranking")`
+    );
+    children.push("rankingChart");
+  }
+  if (data.comparisons?.comparison) {
+    lines.push(`comp = Comparison(${quote(title)}, "comparison")`);
+    children.push("comp");
+  }
+  if (data.timelines?.timeline) {
+    lines.push(`tl = Timeline(${quote(title)}, "timeline")`);
+    children.push("tl");
+  }
+  if (data.tables.structured) {
+    lines.push(`tbl = Table(${quote(title)}, "structured")`);
+    children.push("tbl");
   }
   if (data.tables.fixtures) {
     lines.push(`fixtures = Table(${quote("Fixture")}, "fixtures")`);
@@ -475,6 +544,24 @@ export function fallbackTextFor(data: VisualSnapshot): string {
   for (const stat of Object.values(data.stats)) {
     bits.push(`${stat.label}: ${stat.value}`);
   }
+  for (const comp of Object.values(data.comparisons ?? {})) {
+    const preview = comp.rows
+      .slice(0, 3)
+      .map((r) => `${r.feature}: ${r.values.join(" vs ")}`)
+      .join("; ");
+    if (preview) {
+      bits.push(preview);
+    }
+  }
+  for (const tl of Object.values(data.timelines ?? {})) {
+    const preview = tl.events
+      .slice(0, 3)
+      .map((e) => `${e.when} — ${e.title}`)
+      .join("; ");
+    if (preview) {
+      bits.push(preview);
+    }
+  }
   for (const table of Object.values(data.tables)) {
     const preview = table.rows
       .slice(0, 3)
@@ -494,14 +581,21 @@ export function payloadFromSnapshot(input: {
   sourceModel: string;
   createdAt?: string;
 }): OpenUiPayload {
+  const enrichedData: VisualSnapshot = {
+    ...input.data,
+    header: input.data.header ?? {
+      title: input.title,
+      summary: input.summary,
+    },
+  };
   return {
     format: OPENUI_FORMAT,
     schemaVersion: OPENUI_SCHEMA_VERSION,
     sourceModel: input.sourceModel,
     specOrigin: "tool-snapshot",
-    spec: specForSnapshot(input.title, input.summary, input.data),
-    data: input.data,
+    spec: specForSnapshot(input.title, input.summary, enrichedData),
+    data: enrichedData,
     createdAt: input.createdAt ?? new Date().toISOString(),
-    fallbackText: fallbackTextFor(input.data),
+    fallbackText: fallbackTextFor(enrichedData),
   };
 }

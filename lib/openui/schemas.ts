@@ -31,3 +31,13 @@ export const mapProps = z.object({
   title: z.string().max(120),
   place: z.string().max(64),
 });
+
+export const comparisonProps = z.object({
+  title: z.string().max(120),
+  dataset: z.string().max(64),
+});
+
+export const timelineProps = z.object({
+  title: z.string().max(120),
+  dataset: z.string().max(64),
+});

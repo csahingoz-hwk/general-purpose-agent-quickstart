@@ -25,15 +25,15 @@ export const chatModels: ChatModel[] = [
     id: "gemini-4-hydrogen",
     name: "Gemini 4 Hydrogen",
     provider: "google",
-    description: "Default · Vertex AI on Google AI Ultra credit",
-    reasoningEffort: "medium",
+    description: "Default · fast ~1s responses via Vertex AI on Ultra credit",
+    reasoningEffort: "low",
   },
   {
     id: "gemini-4-argon",
     name: "Gemini 4 Argon",
     provider: "google",
     description: "Deep research & hard questions · Vertex AI on Ultra credit",
-    reasoningEffort: "high",
+    reasoningEffort: "medium",
   },
   {
     id: "gpt-6.1-terra",

@@ -6,11 +6,13 @@ import {
 import { z } from "zod/v4";
 import {
   chartProps,
+  comparisonProps,
   mapProps,
   sliderProps,
   statProps,
   tableProps,
   tabsProps,
+  timelineProps,
 } from "./schemas";
 import type { VisualSnapshot } from "./snapshot";
 
@@ -48,13 +50,25 @@ const Tabs = defineComponent({
 });
 const MapView = defineComponent({
   name: "Map",
-  description: "Static place marker from a place id. No remote tiles.",
+  description: "Place marker & street tiles from a place id.",
   props: mapProps,
+  component: blank,
+});
+const Comparison = defineComponent({
+  name: "Comparison",
+  description: "Side-by-side comparison rows from a comparison dataset id.",
+  props: comparisonProps,
+  component: blank,
+});
+const Timeline = defineComponent({
+  name: "Timeline",
+  description: "Chronological event rail from a timeline dataset id.",
+  props: timelineProps,
   component: blank,
 });
 const Card = defineComponent({
   name: "Card",
-  description: "Required root frame. Children are the six visual components.",
+  description: "Required root frame. Children are the visual components.",
   props: z.object({
     title: z.string(),
     summary: z.string(),
@@ -66,6 +80,8 @@ const Card = defineComponent({
         Slider.ref,
         Tabs.ref,
         MapView.ref,
+        Comparison.ref,
+        Timeline.ref,
       ])
     ),
   }),
@@ -74,7 +90,17 @@ const Card = defineComponent({
 
 export const openUiLibrary = createLibrary({
   root: "Card",
-  components: [Card, Chart, Table, Stat, Slider, Tabs, MapView],
+  components: [
+    Card,
+    Chart,
+    Table,
+    Stat,
+    Slider,
+    Tabs,
+    MapView,
+    Comparison,
+    Timeline,
+  ],
 });
 
 const parser = createParser(openUiLibrary.toJSONSchema(), openUiLibrary.root);
@@ -160,9 +186,29 @@ export function validateOpenUiSpec(
     if (element.typeName === "Map" && place && !data.places[place]) {
       missing = place;
     }
+    if (
+      element.typeName === "Comparison" &&
+      dataset &&
+      !data.comparisons?.[dataset]?.rows.length
+    ) {
+      missing = dataset;
+    }
+    if (
+      element.typeName === "Timeline" &&
+      dataset &&
+      !data.timelines?.[dataset]?.events.length
+    ) {
+      missing = dataset;
+    }
     if (element.typeName === "Tabs" && Array.isArray(props.datasets)) {
       for (const id of props.datasets) {
-        if (typeof id === "string" && !data.tables[id] && !data.series[id]) {
+        if (
+          typeof id === "string" &&
+          !data.tables[id] &&
+          !data.series[id] &&
+          !data.comparisons?.[id] &&
+          !data.timelines?.[id]
+        ) {
           missing = id;
         }
       }

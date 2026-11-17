@@ -1,3 +1,4 @@
+import type { LanguageModelV4 } from "@ai-sdk/provider";
 import { ARGON, HYDROGEN } from "../lib/ai/routing/catalog";
 import {
   clearVertexTokenCacheForTests,
@@ -7,6 +8,40 @@ import {
   resolveVercelOidcJwt,
 } from "../lib/ai/vertex-auth";
 import { createVertexGeminiAdapter } from "../lib/ai/vertex-model";
+
+async function measureStreamTtft(
+  adapter: LanguageModelV4,
+  promptText: string,
+  reasoningEffort: "low" | "medium"
+): Promise<{ ttftMs: number; totalMs: number; chars: number }> {
+  const t0 = performance.now();
+  const { stream } = await adapter.doStream({
+    prompt: [{ role: "user", content: [{ type: "text", text: promptText }] }],
+    maxOutputTokens: 256,
+    providerOptions: { openai: { reasoningEffort } },
+    abortSignal: AbortSignal.timeout(25_000),
+  });
+  const reader = stream.getReader();
+  let ttftMs: number | null = null;
+  let chars = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    if (value.type === "text-delta" && value.delta.length > 0) {
+      if (ttftMs === null) {
+        ttftMs = Math.round(performance.now() - t0);
+      }
+      chars += value.delta.length;
+    }
+  }
+  const totalMs = Math.round(performance.now() - t0);
+  if (ttftMs === null || chars === 0) {
+    throw new Error("Vertex Gemini stream probe returned zero text deltas");
+  }
+  return { ttftMs, totalMs, chars };
+}
 
 async function main() {
   if (!isVertexWifConfigured()) {
@@ -54,36 +89,24 @@ async function main() {
       getAccessToken: () => Promise.resolve(accessToken),
     });
 
-    const [hydrogenRes, argonRes] = await Promise.all([
-      hydrogenAdapter.doGenerate({
-        prompt: [
-          {
-            role: "user",
-            content: [{ type: "text", text: "Reply with exact word OK." }],
-          },
-        ],
-        maxOutputTokens: 64,
-        providerOptions: { openai: { reasoningEffort: "low" } },
-        abortSignal: AbortSignal.timeout(20_000),
-      }),
-      argonAdapter.doGenerate({
-        prompt: [
-          {
-            role: "user",
-            content: [{ type: "text", text: "Reply with exact word OK." }],
-          },
-        ],
-        maxOutputTokens: 64,
-        providerOptions: { openai: { reasoningEffort: "medium" } },
-        abortSignal: AbortSignal.timeout(20_000),
-      }),
-    ]);
+    // Warm TLS socket to aiplatform.googleapis.com before measuring steady-state TTFT
+    await hydrogenAdapter.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "OK" }] }],
+      maxOutputTokens: 16,
+      providerOptions: { openai: { reasoningEffort: "low" } },
+      abortSignal: AbortSignal.timeout(15_000),
+    });
 
-    if (hydrogenRes.content.length === 0 || argonRes.content.length === 0) {
-      throw new Error(
-        `Vertex Gemini probe returned empty content (hydrogenFinish=${hydrogenRes.finishReason.raw}, argonFinish=${argonRes.finishReason.raw})`
-      );
-    }
+    const hydrogenPerf = await measureStreamTtft(
+      hydrogenAdapter,
+      "Merhaba! Bugün Londra'da nasıl bir gün planlayabilirim? Tek cümleyle söyle.",
+      "low"
+    );
+    const argonPerf = await measureStreamTtft(
+      argonAdapter,
+      "Compare PostgreSQL vs SQLite in two concise bullet points.",
+      "medium"
+    );
 
     let kfCalls = 0;
     let kfBlocked = false;
@@ -117,7 +140,7 @@ async function main() {
     }
 
     console.log(
-      `Vertex WIF self-check: PASS project=${projectId} auth=vercel-oidc-wif(${stsMs}ms) geminiApiKeyUsed=false endpoints=${[...hitHosts].length} hydrogen=ok argon=ok kfBlock=ok`
+      `Vertex WIF self-check: PASS project=${projectId} auth=vercel-oidc-wif(${stsMs}ms) geminiApiKeyUsed=false endpoints=${[...hitHosts].length} hydrogenTtft=${hydrogenPerf.ttftMs}ms(total=${hydrogenPerf.totalMs}ms) argonTtft=${argonPerf.ttftMs}ms(total=${argonPerf.totalMs}ms) kfBlock=ok`
     );
   } finally {
     if (savedGeminiKey !== undefined) {

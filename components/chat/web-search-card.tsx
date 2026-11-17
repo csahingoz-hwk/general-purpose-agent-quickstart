@@ -75,33 +75,79 @@ export function WebSearchCard({
 
   return (
     <div
-      className="w-[min(100%,450px)] rounded-xl border border-border bg-muted/40 px-3 py-2 text-sm"
+      className="w-[min(100%,450px)] max-w-full overflow-hidden rounded-xl border border-border bg-muted/40 px-3 py-2 text-sm"
       data-testid="web-search-card"
     >
       {sources.length > 0 ? (
-        <button
-          aria-expanded={open}
-          className="flex min-h-11 w-full items-center gap-2 text-left"
-          data-testid="web-search-toggle"
-          onClick={() => setOpen((current) => !current)}
-          type="button"
-        >
-          <GlobeIcon
-            aria-hidden="true"
-            className="size-4 shrink-0 text-muted-foreground"
-          />
-          <span className="font-medium text-foreground">
-            {sourceCount(sources.length, locale)}
-          </span>
-          <span className="ml-auto flex items-center gap-1">
-            {marks.map((host) => (
-              <SourceMark host={host} key={host} />
-            ))}
-          </span>
-        </button>
+        <>
+          <button
+            aria-expanded={open}
+            className="flex min-h-10 w-full items-center gap-2 text-left"
+            data-testid="web-search-toggle"
+            onClick={() => setOpen((current) => !current)}
+            type="button"
+          >
+            <GlobeIcon
+              aria-hidden="true"
+              className="size-4 shrink-0 text-muted-foreground"
+            />
+            <span className="font-medium text-foreground">
+              {sourceCount(sources.length, locale)}
+            </span>
+            <span className="ml-auto flex items-center gap-1">
+              {marks.map((host) => (
+                <SourceMark host={host} key={host} />
+              ))}
+            </span>
+          </button>
+          {!open && (
+            <div
+              className="mt-1.5 flex max-w-full snap-x gap-2 overflow-x-auto pb-1"
+              data-testid="web-search-source-cards"
+            >
+              {sources.map((source, index) => {
+                const cardBody = (
+                  <>
+                    <div className="flex items-center gap-1.5">
+                      {source.hostname && <SourceMark host={source.hostname} />}
+                      <span className="truncate font-medium text-[11px] text-muted-foreground">
+                        {source.hostname ?? copy.searchSources}
+                      </span>
+                    </div>
+                    <p className="mt-1 line-clamp-2 font-medium text-[12.5px] text-foreground leading-snug">
+                      {source.title}
+                    </p>
+                  </>
+                );
+                const key = `${source.url ?? source.title}-${index}`;
+                return source.url ? (
+                  <a
+                    className="w-40 shrink-0 snap-start rounded-lg border border-border/70 bg-background/85 p-2 transition-colors hover:bg-background"
+                    href={source.url}
+                    key={key}
+                    rel="noopener noreferrer"
+                    target="_blank"
+                  >
+                    {cardBody}
+                  </a>
+                ) : (
+                  <div
+                    className="w-40 shrink-0 snap-start rounded-lg border border-border/70 bg-background/85 p-2"
+                    key={key}
+                  >
+                    {cardBody}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       ) : (
         <div className="flex min-h-11 items-center gap-2 text-muted-foreground">
-          <GlobeIcon aria-hidden="true" className="size-4 shrink-0" />
+          <GlobeIcon
+            aria-hidden="true"
+            className={`size-4 shrink-0 ${loading ? "animate-spin" : ""}`}
+          />
           <span className="font-medium text-foreground">
             {loading ? copy.searchingWeb : copy.searchedWeb}
           </span>

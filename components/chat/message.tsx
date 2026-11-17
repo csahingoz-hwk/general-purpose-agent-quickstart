@@ -86,6 +86,9 @@ const PurePreviewMessage = ({
   const isAssistant = message.role === "assistant";
   const fixture = isAssistant ? fixtureFromParts(message.parts) : null;
   const visual = isAssistant && !fixture ? visualPayload(message.parts) : null;
+  const turnStatus = isAssistant
+    ? message.parts.find((p) => p.type === "data-turn-status")?.data
+    : undefined;
 
   const hasAnyContent = message.parts?.some(
     (part) =>
@@ -148,6 +151,10 @@ const PurePreviewMessage = ({
     }
 
     if (type === "text") {
+      const cleanedText = sanitizeText(part.text);
+      if (!cleanedText.trim()) {
+        return null;
+      }
       return (
         <MessageContent
           className={cn(
@@ -160,7 +167,7 @@ const PurePreviewMessage = ({
           key={key}
         >
           <MessageResponse className="text-inherit">
-            {sanitizeText(part.text)}
+            {cleanedText}
           </MessageResponse>
         </MessageContent>
       );
@@ -653,11 +660,31 @@ const PurePreviewMessage = ({
   );
 
   const content = isThinking ? (
-    <div className="w-fit rounded-[22px] bg-bubble-assistant px-4 py-2.5 text-[17px] leading-[1.45]">
-      <Shimmer className="font-medium" duration={1}>
-        {copy.statusThinking}
-      </Shimmer>
-    </div>
+    turnStatus?.phase === "searching" ? (
+      <WebSearchCard
+        locale={locale}
+        output={undefined}
+        state="input-available"
+      />
+    ) : (
+      <div className="w-fit rounded-[22px] bg-bubble-assistant px-4 py-2.5 text-[17px] leading-[1.45]">
+        <Shimmer className="font-medium" duration={1}>
+          {turnStatus?.phase === "weather"
+            ? locale === "tr"
+              ? "Hava durumu kontrol ediliyor…"
+              : "Checking the weather…"
+            : turnStatus?.phase === "fixtures"
+              ? locale === "tr"
+                ? "Fikstür bakılıyor…"
+                : "Checking the fixture list…"
+              : turnStatus?.phase === "tool"
+                ? locale === "tr"
+                  ? "Araç çalıştırılıyor…"
+                  : "Running tool…"
+                : copy.statusThinking}
+        </Shimmer>
+      </div>
+    )
   ) : (
     <>
       {attachments}

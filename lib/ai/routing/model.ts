@@ -97,10 +97,10 @@ export function createRoutedModel(
         ? "high"
         : requestedEffort === "medium"
           ? "medium"
-          : model === LUNA
+          : requestedEffort === "low" && (model === HYDROGEN || model === LUNA)
             ? "low"
-            : model === ARGON
-              ? "high"
+            : model === HYDROGEN || model === LUNA
+              ? "low"
               : "medium";
     if (isVertexModel(model)) {
       return {

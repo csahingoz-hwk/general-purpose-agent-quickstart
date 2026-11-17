@@ -104,7 +104,9 @@ export function replyForStorage(
   return {
     ...message,
     parts: [
-      ...message.parts.filter((p) => p.type !== "data-reply-status"),
+      ...message.parts.filter(
+        (p) => p.type !== "data-reply-status" && p.type !== "data-turn-status"
+      ),
       {
         type: "data-reply-status",
         data: {

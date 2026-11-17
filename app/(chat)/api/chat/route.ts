@@ -102,6 +102,7 @@ import {
   isMemoryToolsEnabled,
 } from "@/lib/memory/store";
 import { attachOpenUiPart } from "@/lib/openui/attach";
+import { isVisualCandidateTurn } from "@/lib/openui/structured-answer";
 import { checkIpRateLimit } from "@/lib/ratelimit";
 import {
   createPostgresSkillStore,
@@ -153,7 +154,8 @@ function dropWebSearchHistory(messages: ChatMessage[]): ChatMessage[] {
     parts: message.parts.filter(
       (part) =>
         (part.type as string) !== "tool-webSearch" &&
-        part.type !== "data-openui"
+        part.type !== "data-openui" &&
+        part.type !== "data-turn-status"
     ),
   }));
 }
@@ -204,16 +206,19 @@ export async function POST(request: Request) {
       retry,
     } = requestBody;
 
-    const [, session] = await Promise.all([
-      checkBotId().catch(() => null),
+    const [, session, availability] = await Promise.all([
+      Promise.race([
+        checkBotId().catch(() => null),
+        new Promise((resolve) => setTimeout(() => resolve(null), 200)),
+      ]),
       auth(),
+      getRequestModelAvailability(),
     ]);
 
     if (!session?.user) {
       return new ChatbotError("unauthorized:chat").toResponse();
     }
 
-    const availability = await getRequestModelAvailability();
     if (availability.status !== "ready") {
       return new ChatbotError("offline:model_setup").toResponse();
     }
@@ -222,16 +227,27 @@ export async function POST(request: Request) {
     }
     let chatModel = selectedChatModel;
 
-    await checkIpRateLimit(ipAddress(request));
+    const [, acquiredLock, chat, soul, homeLocation, storedFacts] =
+      await Promise.all([
+        checkIpRateLimit(ipAddress(request)),
+        acquireChatLock(id),
+        getChatById({ id }),
+        getUserSoul({ userId: session.user.id }),
+        getUserHomeLocation({ userId: session.user.id }),
+        session.user.type !== "guest" && isMemoryToolsEnabled()
+          ? createPostgresMemoryStore()
+              .listProfileFacts({ userId: session.user.id })
+              .catch(() => [])
+          : Promise.resolve([]),
+      ]);
 
-    releaseLock = await acquireChatLock(id);
+    releaseLock = acquiredLock;
     if (!releaseLock) {
       return new ChatbotError("rate_limit:chat_busy").toResponse();
     }
 
     const isToolApprovalFlow = Boolean(messages);
 
-    const chat = await getChatById({ id });
     let messagesFromDb: DBMessage[] = [];
     let titlePromise: Promise<string> | null = null;
     let replacementReplyId: string | undefined;
@@ -295,31 +311,13 @@ export async function POST(request: Request) {
       ];
     }
 
-    if (message?.role === "user" && !retryAlreadyPersisted) {
-      await saveMessages({
-        messages: [
-          {
-            chatId: id,
-            id: message.id,
-            role: "user",
-            parts: message.parts,
-            attachments: [],
-            createdAt: new Date(),
-          },
-        ],
-      });
-    }
-
     const modelConfig = chatModels.find((m) => m.id === chatModel);
-    const modelCapabilities = await getCapabilities();
+    const modelCapabilities = getCapabilities();
     const capabilities = modelCapabilities[chatModel];
     const supportsTools = capabilities?.tools === true;
 
-    const soul = await getUserSoul({ userId: session.user.id });
-    const homeLocation = await getUserHomeLocation({ userId: session.user.id });
     const requestTimeZone = validTimeZone(timeZone);
     const requestNow = new Date();
-    // Web search exists only when this request is served by the AI Gateway lane.
     const searchLane = supportsTools && webSearchLane(chatModel);
     const requestedTools = supportsTools
       ? selectActiveTools(uiMessages, session.user.type !== "guest", searchLane)
@@ -343,11 +341,29 @@ export async function POST(request: Request) {
     const requestedBotSlug =
       extractRequestedBotSlug(finalUserText) ??
       (selectedBotSlug?.trim() || null);
-    const activeTeammate = requestedBotSlug
-      ? await createPostgresBotRosterStore()
-          .getBotBySlug(session.user.id, requestedBotSlug)
-          .catch(() => null)
-      : null;
+
+    const [, activeTeammate] = await Promise.all([
+      message?.role === "user" && !retryAlreadyPersisted
+        ? saveMessages({
+            messages: [
+              {
+                chatId: id,
+                id: message.id,
+                role: "user",
+                parts: message.parts,
+                attachments: [],
+                createdAt: new Date(),
+              },
+            ],
+          })
+        : Promise.resolve(),
+      requestedBotSlug
+        ? createPostgresBotRosterStore()
+            .getBotBySlug(session.user.id, requestedBotSlug)
+            .catch(() => null)
+        : Promise.resolve(null),
+    ]);
+
     const effectiveSoul = composeTeammateSoul(soul, activeTeammate);
     const requestedSkillSlug =
       extractRequestedSkillSlug(finalUserText) ??
@@ -365,12 +381,6 @@ export async function POST(request: Request) {
       timeZone: requestTimeZone ?? homeLocation?.timeZone ?? null,
       home: homeLocation,
     });
-    const storedFacts =
-      session.user.type !== "guest" && isMemoryToolsEnabled()
-        ? await createPostgresMemoryStore()
-            .listProfileFacts({ userId: session.user.id })
-            .catch(() => [])
-        : [];
     const scopedFacts = filterFactsForBot(
       storedFacts,
       activeTeammate?.slug ?? "chief-of-staff"
@@ -426,9 +436,7 @@ export async function POST(request: Request) {
       includeWebSearch: searchLane && requestedTools.includes("webSearch"),
       includeFixtures: requestedTools.includes("getFixtures"),
       includeOperatorTools: hasOperatorToolOnTurn,
-      includeVisual: requestedTools.some(
-        (name) => name === "webSearch" || name === "getWeather"
-      ),
+      includeVisual: isVisualCandidateTurn(finalUserText, requestedTools),
       context: activeSkill
         ? `${baseContext}\n\n${formatSkillPromptBlock(activeSkill)}`
         : baseContext,
@@ -454,6 +462,20 @@ export async function POST(request: Request) {
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
       execute: ({ writer: dataStream }) =>
         inferenceSession.run(execution, async () => {
+          const initialPhase =
+            searchLane && requestedTools.includes("webSearch")
+              ? "searching"
+              : requestedTools.includes("getWeather")
+                ? "weather"
+                : requestedTools.includes("getFixtures")
+                  ? "fixtures"
+                  : requestedTools.length > 0
+                    ? "tool"
+                    : "thinking";
+          dataStream.write({
+            type: "data-turn-status",
+            data: { phase: initialPhase, model: chatModel },
+          });
           const attachmentPrep = await prepareMessagesWithAttachments({
             messages: sanitizeToolCallIds(dropWebSearchHistory(uiMessages)),
             userId: session.user.id,

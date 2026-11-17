@@ -35,17 +35,14 @@ async function premiumAvailability(): Promise<Readiness> {
       return cached.result;
     }
 
-    let vertexTokenOk = false;
-    if (useVertex) {
-      try {
-        await getVertexWifAccessToken();
-        vertexTokenOk = true;
-      } catch {
-        vertexTokenOk = false;
-      }
-    }
-
-    const gatewayResult = useGateway ? await discoverGatewayReadiness() : null;
+    const [vertexTokenOk, gatewayResult] = await Promise.all([
+      useVertex
+        ? getVertexWifAccessToken()
+            .then(() => true)
+            .catch(() => false)
+        : Promise.resolve(false),
+      useGateway ? discoverGatewayReadiness() : Promise.resolve(null),
+    ]);
 
     if (vertexTokenOk) {
       const vertexModels = chatModels.filter(
@@ -63,7 +60,7 @@ async function premiumAvailability(): Promise<Readiness> {
         checkedAt: new Date().toISOString(),
         unavailableModels: gatewayResult?.unavailableModels ?? [],
       };
-      premiumCache = { key: cacheTag, expires: Date.now() + 60_000, result };
+      premiumCache = { key: cacheTag, expires: Date.now() + 300_000, result };
       return result;
     }
 
