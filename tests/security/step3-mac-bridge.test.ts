@@ -134,6 +134,16 @@ test("Step 3: Mac Bridge policy enforces no sudo, never Funnel, /Users/caglar is
     }).ok,
     true
   );
+  const agySpec = validateMacCliInvocation({
+    cli: "agy",
+    repoName: "demo",
+    branch: "agent/fix-navbar",
+    prompt: "Audit 390px mobile cards",
+  });
+  assert.equal(agySpec.ok, true);
+  if (agySpec.ok) {
+    assert.match(agySpec.shellCommand, /agy -p "\$PROMPT_TXT"/);
+  }
   const copilotBlocked = validateMacCliInvocation({
     cli: "copilot",
     repoName: "demo",

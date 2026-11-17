@@ -1,5 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
+import { resolveTaskStore } from "@/lib/ai/tools/delegate-task";
 import { runMacBridgeExec } from "@/lib/mac-bridge/client";
 import {
   classifyMacCommand,
@@ -8,6 +9,33 @@ import {
 } from "@/lib/mac-bridge/policy";
 import { reviewActionRisk } from "@/lib/safety/action-review";
 import { generateUUID } from "@/lib/utils";
+
+async function createPausedMacApprovalTask(opts: {
+  userId: string;
+  title: string;
+  prompt: string;
+  digest: string;
+}): Promise<string | undefined> {
+  try {
+    const store = resolveTaskStore();
+    const created = await store.enqueueTask({
+      userId: opts.userId,
+      kind: "coding_worktree",
+      title: opts.title,
+      prompt: opts.prompt,
+      riskLevel: "high",
+    });
+    const paused = await store.transitionTask({
+      userId: opts.userId,
+      id: created.id,
+      status: "awaiting_approval",
+      stepMessage: `Paused for your approval (MAC target · digest ${opts.digest.slice(0, 10)})`,
+    });
+    return (paused ?? created).id;
+  } catch {
+    return undefined;
+  }
+}
 
 export function createMacBridgeTools(opts: {
   userId: string;
@@ -61,12 +89,19 @@ export function createMacBridgeTools(opts: {
           input: { command, repoName },
           hasUntrustedContext,
         });
+        const approvalTaskId = await createPausedMacApprovalTask({
+          userId: opts.userId,
+          title: `Mac mini: ${command.slice(0, 80)}`,
+          prompt: command,
+          digest: review.digest,
+        });
         return {
           status: "awaiting_approval" as const,
           command,
           repoName,
           digest: review.digest,
           riskLevel: review.riskLevel,
+          ...(approvalTaskId ? { taskId: approvalTaskId } : {}),
           message:
             decision.tier === "needs_approval"
               ? decision.reason

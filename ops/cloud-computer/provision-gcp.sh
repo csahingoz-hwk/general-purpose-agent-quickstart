@@ -54,9 +54,13 @@ fi
 if ! command -v node >/dev/null 2>&1; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
-  apt-get install -y -qq ca-certificates curl git jq python3 python3-pip python3-venv unzip
+  apt-get install -y -qq ca-certificates curl git jq openssh-client python3 python3-pip python3-venv unzip
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y -qq nodejs
+fi
+
+if ! command -v tailscale >/dev/null 2>&1; then
+  curl -fsSL https://tailscale.com/install.sh | sh
 fi
 
 mkdir -p /opt/playwright-browsers

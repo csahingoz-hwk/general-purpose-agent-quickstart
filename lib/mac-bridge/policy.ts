@@ -205,7 +205,7 @@ export function validateMacCliInvocation(opts: {
   const cliCmdMap: Record<SupportedMacCli, string> = {
     claude: 'claude -p "$PROMPT_TXT" --output-format text --max-turns 6',
     codex: 'codex exec --sandbox workspace-write "$PROMPT_TXT"',
-    agy: 'agy run --prompt "$PROMPT_TXT"',
+    agy: 'agy -p "$PROMPT_TXT" --output-format text --mode accept-edits',
     t3: 't3 run --prompt "$PROMPT_TXT"',
     copilot: 'gh copilot suggest -t shell "$PROMPT_TXT"',
     cursor: "cursor --status",
