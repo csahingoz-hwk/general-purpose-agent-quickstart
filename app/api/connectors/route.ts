@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/app/(auth)/auth";
-import { gatewayEnabled } from "@/lib/ai/routing/catalog";
+import { vertexEnabled } from "@/lib/ai/routing/catalog";
 import {
   GITHUB_VAULT_SECRET_NAME,
   isGithubConnectorEnabled,
@@ -27,14 +27,14 @@ export async function GET() {
   const githubEnabled = isGithubConnectorEnabled();
   const vaultKeyReady = isVaultConfigured();
   const googleSignInReady = isGoogleSignInConfigured();
-  const gatewayMediaReady = gatewayEnabled();
+  const vertexMediaReady = vertexEnabled();
 
   if (!vaultKeyReady) {
     return NextResponse.json({
       enabled,
       vaultConfigured: false,
       googleSignInReady,
-      mediaReady: gatewayMediaReady,
+      mediaReady: vertexMediaReady,
       policy: "read_and_draft_only_never_send",
       gmailReady: false,
       driveReady: false,
@@ -74,7 +74,7 @@ export async function GET() {
       enabled,
       vaultConfigured: true,
       googleSignInReady,
-      mediaReady: gatewayMediaReady || hasGemini,
+      mediaReady: vertexMediaReady || hasGemini,
       policy: "read_and_draft_only_never_send",
       gmailReady: ready,
       driveReady: ready,
@@ -103,7 +103,7 @@ export async function GET() {
         enabled,
         vaultConfigured: false,
         googleSignInReady,
-        mediaReady: gatewayMediaReady,
+        mediaReady: vertexMediaReady,
         policy: "read_and_draft_only_never_send",
         gmailReady: false,
         driveReady: false,

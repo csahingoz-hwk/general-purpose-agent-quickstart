@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { gatewayEnabled, openAIEnabled } from "@/lib/ai/routing/catalog";
+import { vertexEnabled } from "@/lib/ai/routing/catalog";
+import {
+  getVertexProjectId,
+  getVertexWifAccessToken,
+} from "@/lib/ai/vertex-auth";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import {
   createPostgresVaultStore,
@@ -141,29 +145,116 @@ export async function transcribeVoiceMemo(opts: {
 
   let geminiKey: string | null = null;
   let openaiKey: string | null = null;
+  const canUseVertex = !opts.vaultStore && vertexEnabled();
 
-  try {
-    [geminiKey, openaiKey] = await Promise.all([
-      store.resolveSecret({
-        userId: opts.userId,
-        name: VOICE_VAULT_SECRET_NAMES.geminiApiKey,
-      }),
-      store.resolveSecret({
-        userId: opts.userId,
-        name: VOICE_VAULT_SECRET_NAMES.openaiApiKey,
-      }),
-    ]);
-  } catch (err) {
-    if (err instanceof VaultError) {
+  if (!canUseVertex) {
+    try {
+      [geminiKey, openaiKey] = await Promise.all([
+        store.resolveSecret({
+          userId: opts.userId,
+          name: VOICE_VAULT_SECRET_NAMES.geminiApiKey,
+        }),
+        store.resolveSecret({
+          userId: opts.userId,
+          name: VOICE_VAULT_SECRET_NAMES.openaiApiKey,
+        }),
+      ]);
+    } catch (err) {
+      if (err instanceof VaultError) {
+        return {
+          status: "setup_required",
+          message:
+            "Secure storage isn't ready yet. Open Setup to check connection status.",
+        };
+      }
       return {
-        status: "setup_required",
-        message:
-          "Secure storage isn't ready yet. Open Setup to check connection status.",
+        status: "error",
+        message: "Could not access voice settings right now.",
       };
     }
+  }
+
+  // Primary zero-key production route: Google Cloud Vertex AI `gemini-4-hydrogen`
+  // via WIF (`0140A2-72DEB2-62EDCD` Google AI Ultra credit — zero pay-per-use APIs).
+  if (canUseVertex) {
+    const projectId = getVertexProjectId();
+    const accessToken = await getVertexWifAccessToken(fetchFn).catch(
+      () => null
+    );
+    if (!projectId || !accessToken) {
+      return {
+        status: "error",
+        message: "Voice transcription couldn't connect to Vertex AI right now.",
+      };
+    }
+    const vertexUrl = `https://aiplatform.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/locations/global/publishers/google/models/${VOICE_STT_GEMINI_MODEL}:generateContent`;
+    const audioBase64 = Buffer.from(opts.bytes).toString("base64");
+    const response = await fetchFn(vertexUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: "Transcribe this voice memo verbatim in its spoken language (English or Turkish). Return only the transcript text with no commentary.",
+              },
+              {
+                inlineData: {
+                  mimeType: opts.mimeType,
+                  data: audioBase64,
+                },
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          maxOutputTokens: 2048,
+          thinkingConfig: { thinkingLevel: "LOW" },
+        },
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(25_000),
+    }).catch(() => null);
+
+    if (!response || !response.ok) {
+      return {
+        status: "error",
+        message: "Voice transcription couldn't complete right now.",
+      };
+    }
+
+    const body = (await response.json()) as {
+      candidates?: Array<{
+        content?: { parts?: Array<{ text?: string; thought?: boolean }> };
+      }>;
+    };
+    const text =
+      body.candidates?.[0]?.content?.parts
+        ?.filter((p) => !p.thought)
+        .map((p) => p.text ?? "")
+        .join("")
+        .trim() ?? "";
+
+    if (containsRestrictedWorkData(text)) {
+      return {
+        status: "blocked_data_boundary",
+        message:
+          "Transcript blocked: personal Google AI must not be used for Korn Ferry / employer work material.",
+      };
+    }
+
     return {
-      status: "error",
-      message: "Could not access voice settings right now.",
+      status: "ok",
+      transcript: text,
+      provider: "gemini",
+      model: VOICE_STT_GEMINI_MODEL,
+      estimatedSeconds,
+      estimatedInputTokens,
     };
   }
 
@@ -311,7 +402,7 @@ export async function createLiveVoiceSessionDescriptor(opts: {
 
   const model = resolveLiveVoiceModelName();
   const store = opts.vaultStore ?? createPostgresVaultStore();
-  const builtInVoiceReady = gatewayEnabled() || openAIEnabled();
+  const builtInVoiceReady = vertexEnabled();
 
   try {
     const geminiKey = await store

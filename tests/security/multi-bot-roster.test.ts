@@ -31,7 +31,7 @@ test("built-in teammates provide valid mascot themes, compose bilingual-safe sou
     name: "UK Tax Reviewer",
     description: "Personal self-assessment helper",
     soul: "Focus on HMRC deadlines and allowances.",
-    defaultModel: "gpt-6.1-terra",
+    defaultModel: "gemini-4-argon",
     mascotVariant: "teal",
     skillSlugs: ["variance-commentary"],
   });

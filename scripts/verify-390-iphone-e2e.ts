@@ -100,7 +100,8 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
               id: "gemini-4-hydrogen",
               name: "Gemini 4 Hydrogen",
               provider: "google",
-              description: "Default · Vertex AI on Google AI Ultra credit",
+              description:
+                "Default · fast ~1s responses via Vertex AI on Ultra credit",
             },
             {
               id: "gemini-4-argon",
@@ -108,12 +109,6 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
               provider: "google",
               description:
                 "Deep research & hard questions · Vertex AI on Ultra credit",
-            },
-            {
-              id: "gpt-6.1-terra",
-              name: "GPT-6.1 Terra",
-              provider: "openai",
-              description: "Fallback & OpenAI option · Vercel AI Gateway",
             },
           ],
           capabilities: {},
@@ -467,10 +462,19 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
     const card = page.getByTestId("openui-card");
     await expect(card).toBeVisible({ timeout: 15_000 });
 
-    // Verify picker chip shows real model name ("Gemini 4 Hydrogen", not "Everyday chat")
+    // Verify picker chip shows real model name ("Gemini 4 Hydrogen") and menu lists ONLY Ultra models
     const pickerChip = page.getByTestId("model-selector");
     await expect(pickerChip).toBeVisible();
     await expect(pickerChip).toContainText("Gemini 4 Hydrogen");
+    await pickerChip.click();
+    await expect(page.getByText("Gemini 4 Argon")).toBeVisible();
+    const fullMenuText = (await page.locator("body").textContent()) ?? "";
+    assert.ok(
+      !fullMenuText.includes("GPT-6.1 Terra") &&
+        !fullMenuText.includes("GPT-6 Luna"),
+      "Pay-per-use GPT models must not appear in the model picker"
+    );
+    await page.keyboard.press("Escape");
 
     const hero = page.getByTestId("openui-weather-hero");
     await expect(hero).toBeVisible();
@@ -625,8 +629,79 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
     const tlShot = join(scratchDir, "verify-timeline-390.png");
     await page.screenshot({ path: tlShot, fullPage: false });
 
+    // Navigate to Case 5 (Vertex failure -> plain-English error + Retry button at 390x844)
+    let chatPostAttempts = 0;
+    await page.route("**/api/chat", (route) => {
+      chatPostAttempts += 1;
+      if (chatPostAttempts === 1) {
+        // Simulate SSE stream emitting data-turn-status at t=0ms then Vertex 503 error
+        const sseError = [
+          `data: ${JSON.stringify({ type: "start", messageId: "a-fail-1" })}\n\n`,
+          `data: ${JSON.stringify({
+            type: "data-turn-status",
+            data: { phase: "thinking", model: "gemini-4-hydrogen" },
+          })}\n\n`,
+          `data: ${JSON.stringify({
+            type: "error",
+            errorText:
+              "Couldn't finish this reply right now. Your message is saved — tap Retry response below to try again. No paid fallback was used.",
+          })}\n\n`,
+          "data: [DONE]\n\n",
+        ].join("");
+        return route.fulfill({
+          status: 200,
+          headers: {
+            "content-type": "text/event-stream; charset=utf-8",
+            "x-vercel-ai-ui-message-stream": "v1",
+          },
+          body: sseError,
+        });
+      }
+      const sseSuccess = [
+        `data: ${JSON.stringify({ type: "start", messageId: "a-ok-2" })}\n\n`,
+        `data: ${JSON.stringify({ type: "text-start", id: "txt-1" })}\n\n`,
+        `data: ${JSON.stringify({
+          type: "text-delta",
+          id: "txt-1",
+          delta: "Retried cleanly on Gemini 4 Hydrogen via Vertex Ultra.",
+        })}\n\n`,
+        `data: ${JSON.stringify({ type: "text-end", id: "txt-1" })}\n\n`,
+        `data: ${JSON.stringify({ type: "finish" })}\n\n`,
+        "data: [DONE]\n\n",
+      ].join("");
+      return route.fulfill({
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream; charset=utf-8",
+          "x-vercel-ai-ui-message-stream": "v1",
+        },
+        body: sseSuccess,
+      });
+    });
+
+    await page.goto(`${origin}/?query=${encodeURIComponent("Quick test")}`, {
+      waitUntil: "domcontentloaded",
+    });
+    const errorNotice = page.getByTestId("reply-status-text");
+    const retryBtn = page.getByTestId("retry-response");
+    await expect(errorNotice).toBeVisible({ timeout: 15_000 });
+    await expect(errorNotice).toContainText("No paid fallback was used");
+    await expect(retryBtn).toBeVisible();
+    const errorShot = join(scratchDir, "verify-vertex-error-retry-390.png");
+    await page.screenshot({ path: errorShot, fullPage: false });
+
+    await retryBtn.click();
+    await expect(
+      page.getByText("Retried cleanly on Gemini 4 Hydrogen via Vertex Ultra.")
+    ).toBeVisible({ timeout: 15_000 });
+    assert.equal(
+      chatPostAttempts,
+      2,
+      "Expected Retry button to trigger 2nd attempt"
+    );
+
     console.log(
-      `PASS: 390x844 iPhone verification succeeded (weather=${weatherShot}, ceoChart=${multiSearchShot}, comparison=${compShot}, timeline=${tlShot}, mapVisible=${mapVisible})`
+      `PASS: 390x844 iPhone verification succeeded (weather=${weatherShot}, ceoChart=${multiSearchShot}, comparison=${compShot}, timeline=${tlShot}, retry=${errorShot}, mapVisible=${mapVisible})`
     );
   } finally {
     await browser.close().catch(() => undefined);

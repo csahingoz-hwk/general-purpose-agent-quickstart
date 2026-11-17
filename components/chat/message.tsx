@@ -99,6 +99,9 @@ const PurePreviewMessage = ({
       part.type.startsWith("tool-")
   );
   const isThinking = isAssistant && isLoading && !hasAnyContent;
+  if (isAssistant && !isLoading && !hasAnyContent && !fixture && !visual) {
+    return null;
+  }
 
   const attachments = attachmentsFromMessage.length > 0 && (
     <div

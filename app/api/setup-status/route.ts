@@ -1,10 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/app/(auth)/auth";
-import {
-  gatewayEnabled,
-  openAIEnabled,
-  vertexEnabled,
-} from "@/lib/ai/routing/catalog";
+import { vertexEnabled } from "@/lib/ai/routing/catalog";
 import { isCloudComputerConfigured } from "@/lib/cloud-computer/client";
 import { GITHUB_VAULT_SECRET_NAME } from "@/lib/connectors/calendar-and-github";
 import { GOOGLE_VAULT_SECRET_NAMES } from "@/lib/connectors/google-vault-auth";
@@ -35,7 +31,7 @@ export async function GET() {
   }
 
   const vertexReady = vertexEnabled();
-  const aiReady = vertexReady || gatewayEnabled() || openAIEnabled();
+  const aiReady = vertexReady;
   const dbReady = Boolean(process.env.POSTGRES_URL?.trim());
   const vaultReady = isVaultConfigured();
   const googleSignInReady = isGoogleSignInConfigured();
@@ -82,10 +78,8 @@ export async function GET() {
       id: "core_ai",
       label: "Chat, web search, voice & images",
       summary: vertexReady
-        ? "Active via Google Cloud Vertex AI (Gemini 4 Hydrogen & Argon on Ultra credit, with GPT-6.1 Terra Gateway fallback)."
-        : aiReady
-          ? "Active automatically via Vercel AI Gateway."
-          : "Turn on Vertex AI WIF or AI Gateway in your Vercel project settings.",
+        ? "Active via Google Cloud Vertex AI (Gemini 4 Hydrogen & Argon on Google AI Ultra credit — zero pay-per-use APIs)."
+        : "Turn on Vertex AI WIF (GOOGLE_VERTEX_PROJECT_ID + GOOGLE_VERTEX_WORKLOAD_AUDIENCE) in your Vercel project settings.",
       status: aiReady ? "ready" : "action_needed",
       actionKind: aiReady ? "none" : "external_link",
       externalUrl: aiReady ? undefined : "https://vercel.com/dashboard",
@@ -157,17 +151,17 @@ export async function GET() {
     {
       id: "gemini_live",
       label: "Live voice conversations (Gemini 3.8 Live)",
-      summary: aiReady
-        ? "Active automatically via Vercel AI Gateway — zero API keys needed."
+      summary: vertexReady
+        ? "Active automatically via Google Cloud Vertex AI on Ultra credit — zero API keys needed."
         : geminiReady
           ? "Active — hands-free voice runs on Gemini 3.8 Live."
-          : "Enable Vercel AI Gateway or add a Google AI Studio key.",
+          : "Configure Google Cloud Vertex AI WIF to enable hands-free voice.",
       status: geminiReady ? "ready" : "action_needed",
       actionKind: geminiReady ? "none" : "external_link",
       externalUrl: geminiReady
         ? undefined
-        : "https://aistudio.google.com/apikey",
-      externalLabel: geminiReady ? undefined : "Google AI Studio",
+        : "https://console.cloud.google.com/vertex-ai",
+      externalLabel: geminiReady ? undefined : "Vertex AI",
     },
     {
       id: "cloud_computer",

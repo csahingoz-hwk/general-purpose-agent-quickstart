@@ -1,4 +1,4 @@
-import { ARGON, HYDROGEN, TERRA } from "./routing/catalog";
+import { ARGON, HYDROGEN } from "./routing/catalog";
 
 export type ActiveReasoningEffort = "low" | "medium" | "high";
 
@@ -77,14 +77,9 @@ export function resolveTurnModelAndEffort(input: {
   let targetModel = input.selectedModelId;
   let escalated = false;
 
-  if (targetModel === HYDROGEN) {
-    if (input.availableModelIds.includes(ARGON)) {
-      targetModel = ARGON;
-      escalated = true;
-    } else if (input.availableModelIds.includes(TERRA)) {
-      targetModel = TERRA;
-      escalated = true;
-    }
+  if (targetModel === HYDROGEN && input.availableModelIds.includes(ARGON)) {
+    targetModel = ARGON;
+    escalated = true;
   }
 
   const needsHighEffort =

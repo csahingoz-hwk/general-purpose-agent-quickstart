@@ -4,12 +4,12 @@ import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import type { InferUIMessageChunk } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
 import { safeModelError } from "../../lib/ai/context/errors";
+import { canRetryReply, prepareRetry } from "../../lib/ai/conversation-state";
 import { resolveTurnModelAndEffort } from "../../lib/ai/escalation";
 import {
   chatModels,
   DEFAULT_CHAT_MODEL,
   ESCALATED_RESEARCH_MODEL,
-  FALLBACK_GATEWAY_MODEL,
 } from "../../lib/ai/models";
 import {
   buildPartialAnswerFromSources,
@@ -365,17 +365,22 @@ test("Multi-search recovery stream synthesizes answer with sources and closes da
   );
 });
 
-test("Vertex AI Ultra routing: Hydrogen default, Argon research escalation, Hydrogen -> Terra fallback, never Luna/3.8-flash, live voice stays gemini-3.8-live, and Korn Ferry firewall blocks before network", async () => {
+test("Vertex AI Ultra zero pay-per-use routing: ONLY Hydrogen & Argon in chatModels, zero silent fallback to Terra/Luna, plain-English error + retry on failure, live voice on Vertex gemini-3.8-live, and Korn Ferry firewall", async () => {
   assert.equal(DEFAULT_CHAT_MODEL, HYDROGEN);
   assert.equal(ESCALATED_RESEARCH_MODEL, ARGON);
-  assert.equal(FALLBACK_GATEWAY_MODEL, TERRA);
   assert.equal(DEFAULT_LIVE_MODEL, "gemini-3.8-live");
 
-  const ids = chatModels.map((m) => m.id);
-  assert.ok(!ids.includes("gpt-6-luna"), "Luna must not appear in chatModels");
+  const ids: string[] = chatModels.map((m) => m.id);
+  assert.ok(!ids.includes("gpt-6-luna"));
+  assert.ok(!ids.includes("gpt-6.1-terra"));
   assert.ok(
     !ids.some((id) => id.includes("3.8-flash")),
     "Gemini 3.8 Flash must never appear in chatModels"
+  );
+  assert.deepEqual(
+    ids,
+    [HYDROGEN, ARGON],
+    "Only Google AI Ultra Vertex models may appear in chatModels (zero pay-per-use models)"
   );
   for (const model of chatModels) {
     assert.notEqual(model.name, "Everyday chat");
@@ -386,7 +391,6 @@ test("Vertex AI Ultra routing: Hydrogen default, Argon research escalation, Hydr
     "Gemini 4 Hydrogen"
   );
   assert.equal(chatModels.find((m) => m.id === ARGON)?.name, "Gemini 4 Argon");
-  assert.equal(chatModels.find((m) => m.id === TERRA)?.name, "GPT-6.1 Terra");
 
   // Everyday trivial turn stays on Gemini 4 Hydrogen with fast `low` effort (~1s TTFT)
   const trivial = resolveTurnModelAndEffort({
@@ -564,112 +568,74 @@ test("Vertex AI Ultra routing: Hydrogen default, Argon research escalation, Hydr
     clearVertexTokenCacheForTests();
   }
 
-  // Fallback chain: Argon -> Hydrogen -> Terra (Gateway); NEVER Luna or 3.8 Flash
-  const hopOrder: string[] = [];
-  const fallbackSession: InferenceSession = {
-    available: [HYDROGEN, ARGON, TERRA, LUNA],
-    exposed: false,
-    toolBoundary: false,
-    fallbackUsed: false,
-    ledger: {
-      reserve: () => Promise.resolve("inv-fallback"),
-      settle: () => Promise.resolve(),
-    },
-  };
-  const chainModel = createRoutedModel(
-    ARGON,
-    fallbackSession,
-    (id) => {
-      hopOrder.push(id);
-      if (id === ARGON || id === HYDROGEN) {
+  // Zero automatic fallback on Vertex AI models: neither Argon nor Hydrogen
+  // silently switches to Terra, Luna, or any paid Gateway model on failure.
+  for (const primary of [ARGON, HYDROGEN] as const) {
+    const hopOrder: string[] = [];
+    const noFallbackSession: InferenceSession = {
+      available: [HYDROGEN, ARGON, TERRA, LUNA],
+      exposed: false,
+      toolBoundary: false,
+      fallbackUsed: false,
+      ledger: {
+        reserve: () => Promise.resolve(`inv-no-fallback-${primary}`),
+        settle: () => Promise.resolve(),
+      },
+    };
+    const noFallbackModel = createRoutedModel(
+      primary,
+      noFallbackSession,
+      (id) => {
+        hopOrder.push(id);
         return new MockLanguageModelV4({
           doStream: () =>
             Promise.reject(
               Object.assign(new Error("503"), { statusCode: 503 })
             ),
         });
-      }
-      return new MockLanguageModelV4({
-        doStream: () =>
-          Promise.resolve({
-            stream: new ReadableStream({
-              start(c) {
-                c.enqueue({ type: "stream-start", warnings: [] });
-                c.enqueue({ type: "text-start", id: "t1" });
-                c.enqueue({ type: "text-delta", id: "t1", delta: "Terra OK" });
-                c.enqueue({ type: "text-end", id: "t1" });
-                c.enqueue({
-                  type: "finish",
-                  finishReason: { unified: "stop", raw: "stop" },
-                  usage: {
-                    inputTokens: {
-                      total: 10,
-                      noCache: 10,
-                      cacheRead: 0,
-                      cacheWrite: 0,
-                    },
-                    outputTokens: { total: 4, text: 4, reasoning: undefined },
-                  },
-                });
-                c.close();
-              },
-            }),
-          }),
+      },
+      { gateway: false, vertexSearch: true }
+    );
+    await assert.rejects(async () => {
+      const res = await noFallbackModel.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
       });
-    },
-    { gateway: true, vertexSearch: true }
-  );
-  const chainRes = await chainModel.doStream({
-    prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
-  });
-  const chainReader = chainRes.stream.getReader();
-  let chainText = "";
-  for (;;) {
-    const part = await chainReader.read();
-    if (part.done) {
-      break;
-    }
-    if (part.value.type === "text-delta") {
-      chainText += part.value.delta;
-    }
+      await res.stream.getReader().read();
+    }, /model_transient/);
+    assert.deepEqual(
+      hopOrder,
+      [primary],
+      `${primary} must fail cleanly without silent fallback to Terra or Luna`
+    );
   }
-  assert.equal(chainText, "Terra OK");
-  assert.deepEqual(hopOrder, [ARGON, HYDROGEN, TERRA]);
 
-  // And if Terra also fails transiently, it NEVER hops to Luna
-  const triedAfterTerra: string[] = [];
-  const terraFailSession: InferenceSession = {
-    available: [HYDROGEN, TERRA, LUNA],
-    exposed: false,
-    toolBoundary: false,
-    fallbackUsed: false,
-    ledger: {
-      reserve: () => Promise.resolve("inv-no-luna"),
-      settle: () => Promise.resolve(),
-    },
+  // Plain-English error + Retry readiness even when data-turn-status arrived before Vertex failed
+  const savedUserMsg: ChatMessage = {
+    id: "u-retry-1",
+    role: "user",
+    parts: [{ type: "text", text: "What is the weather in London?" }],
   };
-  const noLunaFallback = createRoutedModel(
-    HYDROGEN,
-    terraFailSession,
-    (id) => {
-      triedAfterTerra.push(id);
-      return new MockLanguageModelV4({
-        doStream: () =>
-          Promise.reject(Object.assign(new Error("503"), { statusCode: 503 })),
-      });
-    },
-    { gateway: true, vertexSearch: true }
+  const emptyTurnStatusStub: ChatMessage = {
+    id: "a-stub-1",
+    role: "assistant",
+    parts: [
+      {
+        type: "data-turn-status",
+        data: { phase: "thinking", model: HYDROGEN },
+      },
+    ],
+  };
+  assert.equal(canRetryReply([savedUserMsg, emptyTurnStatusStub]), true);
+  const preparedRetry = prepareRetry(
+    [savedUserMsg, emptyTurnStatusStub],
+    savedUserMsg.id
   );
-  await assert.rejects(async () => {
-    const res = await noLunaFallback.doStream({
-      prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
-    });
-    await res.stream.getReader().read();
-  }, /model_transient/);
-  assert.deepEqual(
-    triedAfterTerra,
-    [HYDROGEN, TERRA],
-    "Fallback order must be Hydrogen -> Terra and never Luna"
+  assert.equal(preparedRetry.messages.length, 1);
+  assert.equal(preparedRetry.messages[0]?.id, savedUserMsg.id);
+  assert.equal(preparedRetry.replaceId, emptyTurnStatusStub.id);
+  assert.match(
+    safeModelError(new Error("model_transient"), "Hello"),
+    /Retry response.*No paid fallback was used/
   );
 });
 

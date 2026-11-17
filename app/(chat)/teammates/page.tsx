@@ -23,7 +23,7 @@ export default function TeammatesPage() {
   const [description, setDescription] = useState("");
   const [soul, setSoul] = useState("");
   const [defaultModel, setDefaultModel] = useState<
-    "gemini-4-hydrogen" | "gemini-4-argon" | "gpt-6.1-terra"
+    "gemini-4-hydrogen" | "gemini-4-argon"
   >("gemini-4-hydrogen");
   const [mascotVariant, setMascotVariant] = useState<MascotVariant>("teal");
   const [saving, setSaving] = useState(false);
@@ -236,10 +236,7 @@ export default function TeammatesPage() {
                 className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
                 onChange={(e) =>
                   setDefaultModel(
-                    e.target.value as
-                      | "gemini-4-hydrogen"
-                      | "gemini-4-argon"
-                      | "gpt-6.1-terra"
+                    e.target.value as "gemini-4-hydrogen" | "gemini-4-argon"
                   )
                 }
                 value={defaultModel}
@@ -249,9 +246,6 @@ export default function TeammatesPage() {
                 </option>
                 <option value="gemini-4-argon">
                   Gemini 4 Argon (Research · Ultra credit)
-                </option>
-                <option value="gpt-6.1-terra">
-                  GPT-6.1 Terra (Gateway fallback)
                 </option>
               </select>
             </label>

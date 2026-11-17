@@ -99,6 +99,6 @@ export function safeModelError(error: unknown, userText: string): string {
       : "The model's current usage limit was reached. Please retry shortly. No paid fallback was used.";
   }
   return tr
-    ? "Yanıt tamamlanamadı. Mesajın kayıtlı; yeniden deneyebilirsin."
-    : "Couldn't finish the reply. Your message is saved; you can retry.";
+    ? "Yanıt şu anda tamamlanamadı. Mesajın kayıtlı — yeniden denemek için aşağıdaki düğmeye dokun. Ücretli modele geçilmedi."
+    : "Couldn't finish this reply right now. Your message is saved — tap Retry response below to try again. No paid fallback was used.";
 }

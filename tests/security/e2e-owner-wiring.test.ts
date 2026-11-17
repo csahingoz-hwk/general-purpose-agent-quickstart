@@ -59,16 +59,19 @@ test("after owner verification, AUTH_SECRET + default flags embed vault, voice, 
     assert.equal(isVaultConfigured(), true);
     const vault = createInMemoryVaultStore();
 
-    const savedGateway = process.env.AI_GATEWAY_USAGE_ENABLED;
+    const savedVertexProject = process.env.GOOGLE_VERTEX_PROJECT_ID;
+    const savedVertexAudience = process.env.GOOGLE_VERTEX_WORKLOAD_AUDIENCE;
     const savedGoogleId = process.env.AUTH_GOOGLE_ID;
     const savedGoogleSecret = process.env.AUTH_GOOGLE_SECRET;
     try {
-      process.env.AI_GATEWAY_USAGE_ENABLED = "true";
+      process.env.GOOGLE_VERTEX_PROJECT_ID = "project-cd0bc64c-0025-446c-b41";
+      process.env.GOOGLE_VERTEX_WORKLOAD_AUDIENCE =
+        "//iam.googleapis.com/projects/439781161791/locations/global/workloadIdentityPools/vercel-pool/providers/vercel-oidc";
       process.env.AUTH_GOOGLE_ID =
         "owner-oauth-client.apps.googleusercontent.com";
       process.env.AUTH_GOOGLE_SECRET = "GOCSPX-owner-oauth-secret";
 
-      // Zero-key Live Speech works out of the box BEFORE any API key is saved in vault!
+      // Zero-key Live Speech works out of the box via Vertex AI WIF BEFORE any API key is saved in vault!
       const zeroKeyLive = await createLiveVoiceSessionDescriptor({
         userId: "owner-zero-key",
         vaultStore: vault,
@@ -98,10 +101,15 @@ test("after owner verification, AUTH_SECRET + default flags embed vault, voice, 
         assert.equal(oauthResolved.accessToken, "ya29.one-tap-oauth-token");
       }
     } finally {
-      if (savedGateway === undefined) {
-        Reflect.deleteProperty(process.env, "AI_GATEWAY_USAGE_ENABLED");
+      if (savedVertexProject === undefined) {
+        Reflect.deleteProperty(process.env, "GOOGLE_VERTEX_PROJECT_ID");
       } else {
-        process.env.AI_GATEWAY_USAGE_ENABLED = savedGateway;
+        process.env.GOOGLE_VERTEX_PROJECT_ID = savedVertexProject;
+      }
+      if (savedVertexAudience === undefined) {
+        Reflect.deleteProperty(process.env, "GOOGLE_VERTEX_WORKLOAD_AUDIENCE");
+      } else {
+        process.env.GOOGLE_VERTEX_WORKLOAD_AUDIENCE = savedVertexAudience;
       }
       if (savedGoogleId === undefined) {
         Reflect.deleteProperty(process.env, "AUTH_GOOGLE_ID");

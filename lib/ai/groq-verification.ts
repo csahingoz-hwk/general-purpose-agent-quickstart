@@ -1,6 +1,7 @@
 import { generateText } from "ai";
 import { createGroqModel } from "./groq-model";
-import { chatModels } from "./models";
+
+const LEGACY_GROQ_MODEL_IDS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"];
 
 export const GROQ_BASE_URL = "https://api.groq.com/openai/v1";
 export type Verification = {
@@ -46,13 +47,13 @@ export async function verifyGroqModels(
     );
     const modelIds: string[] = [];
     let diagnostic = "no_supported_models";
-    for (const model of chatModels) {
-      if (!listed.has(model.id)) {
+    for (const candidateId of LEGACY_GROQ_MODEL_IDS) {
+      if (!listed.has(candidateId)) {
         continue;
       }
       try {
         const result = await generateText({
-          model: createGroqModel(apiKey.trim(), model.id, fetcher),
+          model: createGroqModel(apiKey.trim(), candidateId, fetcher),
           prompt: "Return only these two greetings: Merhaba Hello",
           maxOutputTokens: 128,
           maxRetries: 0,
@@ -61,7 +62,7 @@ export async function verifyGroqModels(
           abortSignal: AbortSignal.timeout(15_000),
         });
         if (result.text.trim()) {
-          modelIds.push(model.id);
+          modelIds.push(candidateId);
         } else {
           diagnostic = "empty_response";
         }
@@ -91,7 +92,7 @@ export async function verifyGroqModels(
 export function parseVerification(value: string | undefined): Verification {
   try {
     const data = JSON.parse(value ?? "{}");
-    const ids = chatModels.map((model) => model.id);
+    const ids = LEGACY_GROQ_MODEL_IDS;
     if (
       data.status !== "ready" ||
       !Array.isArray(data.modelIds) ||

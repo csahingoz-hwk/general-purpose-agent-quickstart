@@ -24,6 +24,7 @@ export function ChatShell() {
     setMessages,
     sendMessage,
     status,
+    error,
     stop,
     regenerate,
     addToolApprovalResponse,
@@ -80,6 +81,7 @@ export function ChatShell() {
               activity={activity}
               addToolApprovalResponse={addToolApprovalResponse}
               chatId={chatId}
+              error={error}
               isArtifactVisible={isArtifactVisible}
               isLoading={isLoading}
               isReadonly={isReadonly}

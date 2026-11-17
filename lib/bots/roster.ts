@@ -11,7 +11,7 @@ export type BotTeammate = {
   name: string;
   description: string;
   soul: string;
-  defaultModel: "gemini-4-hydrogen" | "gemini-4-argon" | "gpt-6.1-terra";
+  defaultModel: "gemini-4-hydrogen" | "gemini-4-argon";
   mascotVariant: MascotVariant;
   skillSlugs: string[];
   builtIn: boolean;
@@ -113,7 +113,7 @@ export interface BotRosterStore {
     name: string;
     description: string;
     soul: string;
-    defaultModel?: "gemini-4-hydrogen" | "gemini-4-argon" | "gpt-6.1-terra";
+    defaultModel?: "gemini-4-hydrogen" | "gemini-4-argon";
     mascotVariant?: MascotVariant;
     skillSlugs?: string[];
   }) => Promise<BotTeammate>;
@@ -164,8 +164,8 @@ export function createInMemoryBotRosterStore(): BotRosterStore {
         ? mascotVariant
         : "blue";
       const safeModel =
-        defaultModel === "gemini-4-argon" || defaultModel === "gpt-6.1-terra"
-          ? defaultModel
+        defaultModel === "gemini-4-argon"
+          ? "gemini-4-argon"
           : "gemini-4-hydrogen";
 
       let userMap = customByUser.get(userId);
@@ -255,7 +255,7 @@ export function createPostgresBotRosterStore(): BotRosterStore {
             defaultModel:
               r.defaultModel === "gemini-4-argon" ||
               r.defaultModel === "gpt-6.1-terra"
-                ? r.defaultModel
+                ? "gemini-4-argon"
                 : "gemini-4-hydrogen",
             mascotVariant: isMascotVariant(mv) ? mv : "blue",
             skillSlugs: Array.isArray(r.skillSlugs)
@@ -298,8 +298,8 @@ export function createPostgresBotRosterStore(): BotRosterStore {
         ? mascotVariant
         : "blue";
       const safeModel =
-        defaultModel === "gemini-4-argon" || defaultModel === "gpt-6.1-terra"
-          ? defaultModel
+        defaultModel === "gemini-4-argon"
+          ? "gemini-4-argon"
           : "gemini-4-hydrogen";
       const id = randomUUID();
       const cleanedSkills = skillSlugs

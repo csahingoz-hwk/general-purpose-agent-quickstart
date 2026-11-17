@@ -2,6 +2,7 @@ import type { UseChatHelpers } from "@ai-sdk/react";
 import { ArrowDownIcon, RotateCcwIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useMessages } from "@/hooks/use-messages";
+import { safeModelError } from "@/lib/ai/context/errors";
 import { canRetryReply, interruptedReply } from "@/lib/ai/conversation-state";
 import type { Vote } from "@/lib/db/schema";
 import { textLocale } from "@/lib/fixtures";
@@ -21,6 +22,7 @@ type MessagesProps = {
   activity: MascotState;
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
   chatId: string;
+  error?: Error;
   status: UseChatHelpers<ChatMessage>["status"];
   votes: Vote[] | undefined;
   messages: ChatMessage[];
@@ -39,6 +41,7 @@ function PureMessages({
   activity,
   addToolApprovalResponse,
   chatId,
+  error,
   status,
   votes,
   messages,
@@ -66,6 +69,15 @@ function PureMessages({
   useDataStream();
 
   const lastMessage = messages.at(-1);
+  const lastUserText =
+    [...messages]
+      .reverse()
+      .find((item) => item.role === "user")
+      ?.parts.filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join(" ") ?? "";
+  const activeLocale = textLocale(lastUserText);
+  const localCopy = getCopy(activeLocale);
   const interrupted = interruptedReply(lastMessage);
   const showRetry =
     !isReadonly &&
@@ -89,20 +101,23 @@ function PureMessages({
   // (the pending "Thinking…" indicator is already drawn by ThinkingMessage).
   let replyStatus: { text: string; visible: boolean } | null = null;
   if (status === "submitted") {
-    replyStatus = { text: copy.statusThinking, visible: false };
+    replyStatus = { text: localCopy.statusThinking, visible: false };
   } else if (toolRunning) {
-    replyStatus = { text: copy.statusWorking, visible: true };
+    replyStatus = { text: localCopy.statusWorking, visible: true };
   } else if (status === "streaming") {
-    replyStatus = { text: copy.statusReplying, visible: false };
+    replyStatus = { text: localCopy.statusReplying, visible: false };
   } else if (interrupted?.status === "interrupted") {
     replyStatus = {
       text: interrupted.retryable
-        ? copy.statusInterrupted
-        : copy.interruptedAfterTool,
+        ? localCopy.statusInterrupted
+        : localCopy.interruptedAfterTool,
       visible: true,
     };
   } else if (status === "error") {
-    replyStatus = { text: copy.statusError, visible: true };
+    replyStatus = {
+      text: error ? safeModelError(error, lastUserText) : localCopy.statusError,
+      visible: true,
+    };
   }
 
   const prevChatIdRef = useRef(chatId);
@@ -219,25 +234,32 @@ function PureMessages({
           ))}
 
           {replyStatus?.visible && (
-            <p
-              aria-hidden="true"
-              className="px-10 text-sm text-muted-foreground"
-              data-testid="reply-status-text"
-            >
-              {replyStatus.text}
-            </p>
+            <div className="px-10">
+              <p
+                aria-hidden="true"
+                className={cn(
+                  "text-sm",
+                  status === "error" || interrupted?.status === "interrupted"
+                    ? "rounded-xl border border-border bg-card/80 px-3.5 py-2.5 text-foreground"
+                    : "text-muted-foreground"
+                )}
+                data-testid="reply-status-text"
+              >
+                {replyStatus.text}
+              </p>
+            </div>
           )}
 
           {showRetry && (
             <div className="flex justify-start pl-10">
               <button
-                className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-border bg-card px-4 text-sm transition-colors hover:bg-muted motion-reduce:transition-none"
+                className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-border bg-card px-4 font-medium text-sm transition-colors hover:bg-muted motion-reduce:transition-none"
                 data-testid="retry-response"
                 onClick={() => regenerate({ body: { retry: true } })}
                 type="button"
               >
                 <RotateCcwIcon className="size-4" />
-                {copy.retryResponse}
+                {localCopy.retryResponse}
               </button>
             </div>
           )}

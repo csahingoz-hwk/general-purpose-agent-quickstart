@@ -6,10 +6,26 @@ export function interruptedReply(message: ChatMessage | undefined) {
   return message?.parts.find((part) => part.type === "data-reply-status")?.data;
 }
 
+export function isEmptyAssistantTurnStub(
+  message: ChatMessage | undefined
+): boolean {
+  if (message?.role !== "assistant") {
+    return false;
+  }
+  const hasMeaningfulPart = message.parts.some(
+    (part) =>
+      (part.type === "text" && part.text.trim().length > 0) ||
+      part.type.startsWith("tool-") ||
+      part.type === "data-reply-status"
+  );
+  return !hasMeaningfulPart;
+}
+
 export function canRetryReply(messages: ChatMessage[]) {
   const last = messages.at(-1);
   return (
     last?.role === "user" ||
+    isEmptyAssistantTurnStub(last) ||
     (last?.role === "assistant" && interruptedReply(last)?.retryable === true)
   );
 }
@@ -18,7 +34,9 @@ export function canRetryReply(messages: ChatMessage[]) {
 export function prepareRetry(messages: ChatMessage[], targetId: string) {
   const last = messages.at(-1);
   const removable =
-    last?.role === "assistant" && interruptedReply(last)?.retryable === true
+    (last?.role === "assistant" &&
+      interruptedReply(last)?.retryable === true) ||
+    isEmptyAssistantTurnStub(last)
       ? last
       : undefined;
   const history = removable ? messages.slice(0, -1) : messages;

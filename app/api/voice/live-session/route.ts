@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
-import { gatewayEnabled } from "@/lib/ai/routing/catalog";
+import { vertexEnabled } from "@/lib/ai/routing/catalog";
 import {
   createPostgresBotRosterStore,
   filterFactsForBot,
@@ -58,14 +58,13 @@ export async function POST(request: Request) {
   }
 
   const userId = session.user.id;
-  const useGateway = gatewayEnabled();
-  const apiKey = useGateway ? null : await resolveLiveGeminiKey(userId);
-  if (!useGateway && !apiKey) {
+  const useVertex = vertexEnabled();
+  const apiKey = useVertex ? null : await resolveLiveGeminiKey(userId);
+  if (!useVertex && !apiKey) {
     return NextResponse.json(
       {
         status: "setup_required",
-        message:
-          "Live voice needs Vercel AI Gateway enabled or a Google AI Studio key.",
+        message: "Live voice needs Google Cloud Vertex AI WIF configured.",
       },
       { status: 503 }
     );
@@ -142,7 +141,7 @@ export async function POST(request: Request) {
   try {
     const grant = await mintLiveVoiceToken({
       apiKey,
-      preferGateway: useGateway,
+      preferVertex: useVertex,
       systemInstruction,
       resumeHandle: body.resumeHandle ?? null,
     });

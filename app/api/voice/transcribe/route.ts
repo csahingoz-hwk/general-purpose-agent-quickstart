@@ -1,9 +1,6 @@
-import { randomUUID } from "node:crypto";
-import { createGateway, experimental_transcribe as transcribeAudio } from "ai";
 import { NextResponse } from "next/server";
 import { auth } from "@/app/(auth)/auth";
-import { gatewayEnabled, LUNA, openAIEnabled } from "@/lib/ai/routing/catalog";
-import { createUsageLedger } from "@/lib/ai/routing/ledger";
+import { vertexEnabled } from "@/lib/ai/routing/catalog";
 import { createPostgresVaultStore } from "@/lib/vault/secret-vault";
 import {
   isVoiceEnabled,
@@ -21,11 +18,11 @@ export async function GET() {
     );
   }
 
-  const gatewayReady = gatewayEnabled() || openAIEnabled();
+  const vertexReady = vertexEnabled();
 
   if (!isVoiceEnabled()) {
     return NextResponse.json({
-      serverSttReady: gatewayReady,
+      serverSttReady: vertexReady,
       liveReady: false,
     });
   }
@@ -50,13 +47,13 @@ export async function GET() {
       Boolean(geminiKey?.trim()) || Boolean(process.env.GEMINI_API_KEY?.trim());
     const hasOpenAi = Boolean(openAiKey?.trim());
     return NextResponse.json({
-      serverSttReady: gatewayReady || hasGemini || hasOpenAi,
-      liveReady: gatewayReady || hasGemini,
+      serverSttReady: vertexReady || hasGemini || hasOpenAi,
+      liveReady: vertexReady || hasGemini,
     });
   } catch {
     return NextResponse.json({
-      serverSttReady: gatewayReady,
-      liveReady: gatewayReady || Boolean(process.env.GEMINI_API_KEY?.trim()),
+      serverSttReady: vertexReady,
+      liveReady: vertexReady || Boolean(process.env.GEMINI_API_KEY?.trim()),
     });
   }
 }
@@ -92,49 +89,6 @@ export async function POST(request: Request) {
       mimeType: validated.mimeType,
       bytes,
     });
-
-    if (
-      (result.status === "setup_required" || result.status === "error") &&
-      gatewayEnabled()
-    ) {
-      const ledger = createUsageLedger(session.user.id, randomUUID());
-      let reservationId: string | null = null;
-      try {
-        reservationId = await ledger.reserve({
-          model: LUNA,
-          reserveUsd: 0.01,
-          fallbackReason: "voice:stt",
-        });
-        const gateway = createGateway();
-        const stt = await transcribeAudio({
-          model: gateway.transcriptionModel("openai/gpt-4o-mini-transcribe"),
-          audio: bytes,
-        });
-        await ledger.settle(reservationId, LUNA, "voice_stt_ok");
-        return NextResponse.json(
-          {
-            status: "ok",
-            transcript: stt.text.trim(),
-            provider: "openai",
-            model: "openai/gpt-4o-mini-transcribe",
-          },
-          { status: 200 }
-        );
-      } catch {
-        if (reservationId) {
-          await ledger
-            .settle(reservationId, LUNA, "voice_stt_failed", undefined, 0)
-            .catch(() => null);
-        }
-        return NextResponse.json(
-          {
-            status: "error",
-            message: "Voice transcription could not complete right now.",
-          },
-          { status: 502 }
-        );
-      }
-    }
 
     if (result.status === "setup_required") {
       return NextResponse.json(

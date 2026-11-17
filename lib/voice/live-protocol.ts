@@ -477,7 +477,10 @@ export function fillerPhraseForTool(
   );
 }
 
-function toGoogleFunctionDeclarations(tools?: readonly LiveToolDeclaration[]) {
+function toGoogleFunctionDeclarations(
+  tools?: readonly LiveToolDeclaration[],
+  opts?: { vertex?: boolean }
+) {
   if (!tools || tools.length === 0) {
     return undefined;
   }
@@ -486,7 +489,7 @@ function toGoogleFunctionDeclarations(tools?: readonly LiveToolDeclaration[]) {
       functionDeclarations: tools.map((t) => ({
         name: t.name,
         description: t.description,
-        behavior: "NON_BLOCKING" as const,
+        ...(opts?.vertex ? {} : { behavior: "NON_BLOCKING" as const }),
         parameters: t.parameters,
       })),
     },
@@ -529,8 +532,11 @@ export function buildLiveConnectConfig(opts: {
   voiceName?: string;
   resumeHandle?: string | null;
   tools?: readonly LiveToolDeclaration[];
+  vertex?: boolean;
 }) {
-  const googleTools = toGoogleFunctionDeclarations(opts.tools);
+  const googleTools = toGoogleFunctionDeclarations(opts.tools, {
+    vertex: opts.vertex,
+  });
   return {
     responseModalities: ["AUDIO"],
     speechConfig: {
@@ -561,10 +567,15 @@ export function buildLiveSetupMessage(opts: {
   resumeHandle?: string | null;
   tools?: readonly LiveToolDeclaration[];
 }) {
-  const config = buildLiveConnectConfig(opts);
+  const isVertex = opts.model.startsWith("projects/");
+  const config = buildLiveConnectConfig({ ...opts, vertex: isVertex });
+  const normalizedModel =
+    isVertex || opts.model.startsWith("models/")
+      ? opts.model
+      : `models/${opts.model}`;
   return {
     setup: {
-      model: `models/${opts.model}`,
+      model: normalizedModel,
       generationConfig: {
         responseModalities: config.responseModalities,
         speechConfig: config.speechConfig,
@@ -582,6 +593,13 @@ export function buildLiveSetupMessage(opts: {
 
 export function liveConstrainedSocketUrl(token: string): string {
   return `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${encodeURI(token)}`;
+}
+
+export function vertexLiveSocketUrl(
+  accessToken: string,
+  region = "us-central1"
+): string {
+  return `wss://${encodeURIComponent(region)}-aiplatform.googleapis.com/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent?access_token=${encodeURIComponent(accessToken)}`;
 }
 
 /** Normalized AI Gateway Realtime `session-update` message for Gemini 3.8 Live. */

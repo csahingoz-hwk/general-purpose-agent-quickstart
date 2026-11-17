@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { createGateway, generateImage } from "ai";
-import { gatewayEnabled, LUNA } from "@/lib/ai/routing/catalog";
+import { HYDROGEN, LUNA, vertexEnabled } from "@/lib/ai/routing/catalog";
 import { createUsageLedger, type UsageLedger } from "@/lib/ai/routing/ledger";
 import { ModelFailure } from "@/lib/ai/routing/policy";
+import {
+  getVertexProjectId,
+  getVertexWifAccessToken,
+} from "@/lib/ai/vertex-auth";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import { createSignedFileToken } from "@/lib/files/signed-url";
 import {
@@ -134,9 +137,15 @@ export async function generateImageWithImagen(opts: {
   }
 
   const model = resolveImagenModelName();
-  const geminiKey = await readGeminiKeyFromVault(opts.userId, opts.vaultStore);
-  const useGateway = !geminiKey && gatewayEnabled();
-  if (!geminiKey && !useGateway) {
+  const geminiKey = opts.vaultStore
+    ? await readGeminiKeyFromVault(opts.userId, opts.vaultStore)
+    : null;
+  const useVertex = !geminiKey && vertexEnabled();
+  const fallbackVaultKey =
+    !geminiKey && !useVertex
+      ? await readGeminiKeyFromVault(opts.userId, opts.vaultStore)
+      : geminiKey;
+  if (!useVertex && !fallbackVaultKey) {
     return {
       status: "setup_required",
       message: "Image generation isn't active on this server yet.",
@@ -150,8 +159,8 @@ export async function generateImageWithImagen(opts: {
   let reservationId: string;
   try {
     reservationId = await ledger.reserve({
-      model: LUNA,
-      reserveUsd: IMAGE_RESERVE_USD,
+      model: useVertex ? HYDROGEN : LUNA,
+      reserveUsd: useVertex ? 0 : IMAGE_RESERVE_USD,
       fallbackReason: "media:imagen",
     });
   } catch (error) {
@@ -165,16 +174,59 @@ export async function generateImageWithImagen(opts: {
     throw error;
   }
 
-  if (useGateway) {
+  const fetchFn = opts.fetchImpl ?? fetch;
+  if (useVertex) {
     try {
-      const gateway = createGateway();
-      const generated = await generateImage({
-        model: gateway.imageModel(`google/${model}`),
-        prompt: trimmedPrompt,
-        aspectRatio: opts.aspectRatio ?? "1:1",
+      const projectId = getVertexProjectId();
+      const accessToken = await getVertexWifAccessToken(fetchFn);
+      if (!projectId) {
+        throw new Error("vertex_project_missing");
+      }
+      const vertexEndpoint = `https://us-central1-aiplatform.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/locations/us-central1/publishers/google/models/${encodeURIComponent(model)}:predict`;
+      const response = await fetchFn(vertexEndpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({
+          instances: [{ prompt: trimmedPrompt }],
+          parameters: {
+            sampleCount: 1,
+            aspectRatio: opts.aspectRatio ?? "1:1",
+            outputOptions: { mimeType: "image/png" },
+          },
+        }),
       });
-      const base64Png = generated.image.base64;
-      const bytes = generated.image.uint8Array;
+      if (!response.ok) {
+        await ledger
+          .settle(
+            reservationId,
+            HYDROGEN,
+            "media_imagen_http_error",
+            undefined,
+            0
+          )
+          .catch(() => null);
+        return {
+          status: "error",
+          message: `Imagen generation failed with HTTP ${response.status}.`,
+        };
+      }
+      const payload = (await response.json()) as {
+        predictions?: Array<{ bytesBase64Encoded?: string }>;
+      };
+      const base64Png = payload.predictions?.[0]?.bytesBase64Encoded?.trim();
+      if (!base64Png) {
+        await ledger
+          .settle(reservationId, HYDROGEN, "media_imagen_empty", undefined, 0)
+          .catch(() => null);
+        return {
+          status: "error",
+          message: "Imagen response did not include encoded PNG bytes.",
+        };
+      }
+      const bytes = new Uint8Array(Buffer.from(base64Png, "base64"));
       const fileStore = opts.fileStore ?? getDefaultPrivateFileStore();
       const safeName = "generated-image.png";
       const saved = await fileStore.save({
@@ -192,7 +244,7 @@ export async function generateImageWithImagen(opts: {
         ref: saved.storageRef,
         secret: opts.signingSecret,
       });
-      await ledger.settle(reservationId, LUNA, "media_imagen_ok");
+      await ledger.settle(reservationId, HYDROGEN, "media_imagen_ok");
       return {
         status: "ok",
         kind: "image",
@@ -201,12 +253,12 @@ export async function generateImageWithImagen(opts: {
         base64Png,
         fileId: saved.fileId,
         fileUrl: `/api/files/${encodeURIComponent(signedToken)}`,
-        reservedUsd: IMAGE_RESERVE_USD,
+        reservedUsd: 0,
         reservationId,
       };
     } catch {
       await ledger
-        .settle(reservationId, LUNA, "media_imagen_exception", undefined, 0)
+        .settle(reservationId, HYDROGEN, "media_imagen_exception", undefined, 0)
         .catch(() => null);
       return {
         status: "error",
@@ -215,7 +267,6 @@ export async function generateImageWithImagen(opts: {
     }
   }
 
-  const fetchFn = opts.fetchImpl ?? fetch;
   try {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
       model
@@ -224,7 +275,7 @@ export async function generateImageWithImagen(opts: {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-goog-api-key": geminiKey ?? "",
+        "x-goog-api-key": fallbackVaultKey ?? "",
       },
       body: JSON.stringify({
         instances: [{ prompt: trimmedPrompt }],

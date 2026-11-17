@@ -2,12 +2,12 @@
  * Build-time live-voice self-check (non-fatal).
  *
  * Proves the real production path end to end on every deploy:
- * Vercel AI Gateway OIDC (or direct Gemini key) → ephemeral grant →
- * WebSocket (`google/gemini-3.8-live`) → setup → spoken audio reply.
+ * Vercel OIDC -> Google Cloud Vertex AI WIF (`0140A2-72DEB2-62EDCD` Ultra credit) ->
+ * WebSocket (`gemini-3.8-live` BidiGenerateContent) -> setup -> tool call -> spoken audio reply.
  * Logs only timings and status, never credentials.
  */
 import postgres from "postgres";
-import { gatewayEnabled } from "../lib/ai/routing/catalog";
+import { vertexEnabled } from "../lib/ai/routing/catalog";
 import { createPostgresVaultStore } from "../lib/vault/secret-vault";
 import {
   buildLiveToolOutputItemMessage,
@@ -47,15 +47,11 @@ async function resolveKey(): Promise<string | null> {
 }
 
 async function run(): Promise<string> {
-  const hasGatewayCreds =
-    gatewayEnabled() &&
-    Boolean(
-      process.env.AI_GATEWAY_API_KEY?.trim() ||
-        process.env.VERCEL_OIDC_TOKEN?.trim()
-    );
-  const apiKey = hasGatewayCreds ? null : await resolveKey();
-  if (!hasGatewayCreds && !apiKey) {
-    return "SKIP (no AI Gateway OIDC or Gemini key in build environment)";
+  const hasVertexCreds =
+    vertexEnabled() && Boolean(process.env.VERCEL_OIDC_TOKEN?.trim());
+  const apiKey = hasVertexCreds ? null : await resolveKey();
+  if (!hasVertexCreds && !apiKey) {
+    return "SKIP (no Vertex WIF OIDC or Gemini key in build environment)";
   }
   const t0 = Date.now();
   const systemInstruction = buildVoiceSystemInstruction({
@@ -64,7 +60,7 @@ async function run(): Promise<string> {
   });
   const grant = await mintLiveVoiceToken({
     apiKey,
-    preferGateway: hasGatewayCreds,
+    preferVertex: hasVertexCreds,
     systemInstruction,
   });
   const tToken = Date.now() - t0;
@@ -136,6 +132,20 @@ async function run(): Promise<string> {
               })
             );
             ws.send(JSON.stringify({ type: "response-create" }));
+          } else if (grant.wsUrl.includes("aiplatform.googleapis.com")) {
+            ws.send(
+              JSON.stringify({
+                clientContent: {
+                  turns: [
+                    {
+                      role: "user",
+                      parts: [{ text: promptText }],
+                    },
+                  ],
+                  turnComplete: true,
+                },
+              })
+            );
           } else {
             ws.send(JSON.stringify({ realtimeInput: { text: promptText } }));
           }

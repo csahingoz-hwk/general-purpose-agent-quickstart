@@ -1,11 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { verifyGroqModels } from "../lib/ai/groq-verification";
-import {
-  gatewayEnabled,
-  legacyEnabled,
-  openAIEnabled,
-} from "../lib/ai/routing/catalog";
+import { legacyEnabled, vertexEnabled } from "../lib/ai/routing/catalog";
 
 async function main() {
   const verification = await verifyGroqModels(
@@ -15,7 +11,7 @@ async function main() {
   console.log(
     legacyEnabled()
       ? `Legacy readiness: ${verification.status}; verified candidates: ${verification.modelIds.length}; check: ${verification.diagnostic ?? "ok"}`
-      : `Paid model lane: ${gatewayEnabled() ? "AI Gateway opted in (authentication is verified at runtime)" : openAIEnabled() ? "direct OpenAI configured (access untested)" : "disabled"}; build does not perform inference`
+      : `Subscription model lane: ${vertexEnabled() ? "Google Cloud Vertex AI WIF (Ultra credit, zero pay-per-use APIs)" : "disabled"}; build does not perform paid inference`
   );
   const result = spawnSync(
     process.execPath,

@@ -1,14 +1,21 @@
 import { createGateway } from "ai";
-import { type ChatModel, chatModels } from "../models";
+import type { ChatModel } from "../models";
 import {
   ARGON,
   gatewayEnabled,
   HYDROGEN,
-  isPremiumModel,
   monthlyAllowance,
   type PremiumModelId,
   TERRA,
 } from "./catalog";
+
+const TERRA_COMPARISON_MODEL: ChatModel = {
+  id: TERRA,
+  name: "GPT-6.1 Terra",
+  provider: "openai",
+  description: "Pay-per-use comparison model (disabled in live app)",
+  reasoningEffort: "medium",
+};
 
 export type ReadinessReason =
   | "ready"
@@ -142,10 +149,9 @@ export async function discoverGatewayReadiness({
     return notReady(classifyGatewayFailure(error));
   }
 
-  // Only OpenAI Terra is served via Gateway; Google Gemini 4 models run via Vertex WIF.
-  const gatewayCandidates = chatModels.filter(
-    (model) => isPremiumModel(model.id) && model.id === TERRA
-  );
+  // Retained strictly for offline benchmark/readiness unit tests; live app
+  // disables AI_GATEWAY_USAGE_ENABLED under the zero pay-per-use rule.
+  const gatewayCandidates = [TERRA_COMPARISON_MODEL];
   const models = gatewayCandidates.filter((model) =>
     listed.has(gatewaySlug(model.id))
   );

@@ -1,12 +1,15 @@
 import { GoogleGenAI } from "@google/genai";
-import { gateway } from "ai";
-import { gatewayEnabled } from "@/lib/ai/routing/catalog";
+import { vertexEnabled } from "@/lib/ai/routing/catalog";
+import {
+  getVertexProjectId,
+  getVertexWifAccessToken,
+} from "@/lib/ai/vertex-auth";
 import {
   createPostgresVaultStore,
   isVaultConfigured,
 } from "@/lib/vault/secret-vault";
 import {
-  buildGatewayLiveSetupMessage,
+  type buildGatewayLiveSetupMessage,
   buildLiveConnectConfig,
   buildLiveSetupMessage,
   DEFAULT_LIVE_VOICE,
@@ -14,6 +17,7 @@ import {
   type LiveToolDeclaration,
   type LiveTransportKind,
   liveConstrainedSocketUrl,
+  vertexLiveSocketUrl,
 } from "./live-protocol";
 import {
   resolveLiveVoiceModelName,
@@ -118,14 +122,15 @@ export type LiveTokenGrant = {
 };
 
 /**
- * Mints a zero-key Vercel AI Gateway realtime grant for `google/gemini-3.8-live`
- * (using `vcst_` client secret when `AI_GATEWAY_API_KEY` is set, or Vercel OIDC
- * on Preview/Production), falling back to a single-use Google Direct ephemeral
- * token when AI Gateway is disabled and a personal `GEMINI_API_KEY` is present.
+ * Mints a zero-key Google Cloud Vertex AI `BidiGenerateContent` grant for
+ * `gemini-3.8-live` via Workload Identity Federation (`0140A2-72DEB2-62EDCD`
+ * Google AI Ultra Cloud credit — zero paid AI Gateway credits).
+ * Falls back to a single-use Google Direct ephemeral token only when Vertex WIF
+ * is absent and an explicit `GEMINI_API_KEY` is provided.
  */
 export async function mintLiveVoiceToken(opts: {
   apiKey?: string | null;
-  preferGateway?: boolean;
+  preferVertex?: boolean;
   systemInstruction: string;
   resumeHandle?: string | null;
   voiceName?: string;
@@ -145,60 +150,34 @@ export async function mintLiveVoiceToken(opts: {
     opts.voiceName ??
     (process.env.GEMINI_LIVE_VOICE?.trim() || DEFAULT_LIVE_VOICE);
 
-  if (opts.preferGateway ?? gatewayEnabled()) {
-    const gatewayModel = `google/${baseModel}`;
-    try {
-      let token = "";
-      let wsUrl = "";
-      let expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  if (opts.preferVertex ?? vertexEnabled()) {
+    const projectId = getVertexProjectId();
+    if (projectId) {
       try {
-        const secret = await gateway.experimental_realtime.getToken({
-          model: gatewayModel,
-        });
-        token = secret.token;
-        wsUrl = secret.url;
-        if (secret.expiresAt) {
-          expiresAt = String(secret.expiresAt);
-        }
-      } catch {
-        // Vercel OIDC deployment mode: use short-lived OIDC subprotocol auth.
-        const rtModel = gateway.experimental_realtime(
-          gatewayModel
-        ) as unknown as {
-          getServerWebSocketConfig: () => Promise<{
-            url: string;
-            headers: Record<string, string>;
-          }>;
-        };
-        const serverCfg = await rtModel.getServerWebSocketConfig();
-        const rawAuth =
-          serverCfg.headers.authorization ??
-          serverCfg.headers.Authorization ??
-          "";
-        token = rawAuth.replace(/^Bearer\s+/i, "").trim();
-        wsUrl = serverCfg.url;
-      }
-      if (token && wsUrl) {
+        const accessToken = await getVertexWifAccessToken();
+        const vertexModel = `projects/${projectId}/locations/us-central1/publishers/google/models/${baseModel}`;
+        const expiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
         return {
-          transport: "gateway",
-          token,
-          model: gatewayModel,
-          wsUrl,
-          protocols: ["ai-gateway-realtime-v1", `ai-gateway-auth.${token}`],
-          setup: buildGatewayLiveSetupMessage({
+          transport: "google-direct",
+          token: accessToken,
+          model: baseModel,
+          wsUrl: vertexLiveSocketUrl(accessToken),
+          setup: buildLiveSetupMessage({
+            model: vertexModel,
             systemInstruction: opts.systemInstruction,
             voiceName,
+            resumeHandle: opts.resumeHandle,
             tools,
           }),
           expiresAt,
         };
-      }
-    } catch {
-      if (!opts.apiKey) {
-        throw new LiveVoiceSetupError(
-          "token_failed",
-          "Live voice couldn't connect right now. Please try again in a moment."
-        );
+      } catch {
+        if (!opts.apiKey) {
+          throw new LiveVoiceSetupError(
+            "token_failed",
+            "Live voice couldn't connect to Vertex AI right now. Please try again in a moment."
+          );
+        }
       }
     }
   }

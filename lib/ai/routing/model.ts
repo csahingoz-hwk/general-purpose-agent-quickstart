@@ -61,24 +61,13 @@ export function createRoutedModel(
   }: { gateway?: boolean; vertexSearch?: boolean } = {}
 ): LanguageModelV4 {
   function fallbackTargetFor(model: PremiumModelId): PremiumModelId | null {
-    // Owner fallback order: Argon -> Hydrogen -> Terra via Gateway.
-    // NEVER fall back to Luna or Gemini 3.8 Flash.
-    if (model === ARGON) {
-      if (session.available.includes(HYDROGEN)) {
-        return HYDROGEN;
-      }
-      if (session.available.includes(TERRA)) {
-        return TERRA;
-      }
+    // Owner policy: NO automatic fallback on Vertex AI models (`gemini-4-hydrogen`
+    // and `gemini-4-argon`) until the owner chooses a subscription-backed fallback
+    // order. Never silently switch to pay-per-use GPT/Gateway models.
+    if (model === ARGON || model === HYDROGEN || model === TERRA) {
       return null;
     }
-    if (model === HYDROGEN) {
-      return session.available.includes(TERRA) ? TERRA : null;
-    }
-    if (model === TERRA) {
-      return null;
-    }
-    // Unit-test compatibility when createRoutedModel(LUNA, ...) is tested directly:
+    // Synthetic unit-test compatibility when createRoutedModel(LUNA, ...) is tested directly:
     return session.available.includes(TERRA) ? TERRA : null;
   }
   function options(
