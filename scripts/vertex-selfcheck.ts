@@ -62,8 +62,9 @@ async function main() {
             content: [{ type: "text", text: "Reply with exact word OK." }],
           },
         ],
-        maxOutputTokens: 16,
-        abortSignal: AbortSignal.timeout(15_000),
+        maxOutputTokens: 64,
+        providerOptions: { openai: { reasoningEffort: "low" } },
+        abortSignal: AbortSignal.timeout(20_000),
       }),
       argonAdapter.doGenerate({
         prompt: [
@@ -72,13 +73,16 @@ async function main() {
             content: [{ type: "text", text: "Reply with exact word OK." }],
           },
         ],
-        maxOutputTokens: 16,
-        abortSignal: AbortSignal.timeout(15_000),
+        maxOutputTokens: 64,
+        providerOptions: { openai: { reasoningEffort: "medium" } },
+        abortSignal: AbortSignal.timeout(20_000),
       }),
     ]);
 
     if (hydrogenRes.content.length === 0 || argonRes.content.length === 0) {
-      throw new Error("Vertex Gemini probe returned empty content");
+      throw new Error(
+        `Vertex Gemini probe returned empty content (hydrogenFinish=${hydrogenRes.finishReason.raw}, argonFinish=${argonRes.finishReason.raw})`
+      );
     }
 
     let kfCalls = 0;

@@ -276,8 +276,15 @@ function buildVertexRequestBody(
         ? "LOW"
         : "MEDIUM";
 
+  // Vertex Gemini 4 counts `thoughtsTokenCount` toward `generationConfig.maxOutputTokens`.
+  // Add thinking headroom on top of the caller's visible-text `maxOutputTokens` budget
+  // so deep reasoning never starves or truncates the visible answer.
+  const thinkingHeadroom =
+    thinkingLevel === "HIGH" ? 8192 : thinkingLevel === "MEDIUM" ? 4096 : 1024;
+  const visibleBudget = params.maxOutputTokens ?? 8192;
+
   const generationConfig: Record<string, unknown> = {
-    maxOutputTokens: params.maxOutputTokens ?? 8192,
+    maxOutputTokens: Math.min(32_768, visibleBudget + thinkingHeadroom),
     thinkingConfig: {
       thinkingLevel,
     },
