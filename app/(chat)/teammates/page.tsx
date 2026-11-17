@@ -23,8 +23,8 @@ export default function TeammatesPage() {
   const [description, setDescription] = useState("");
   const [soul, setSoul] = useState("");
   const [defaultModel, setDefaultModel] = useState<
-    "gpt-6-luna" | "gpt-6.1-terra"
-  >("gpt-6-luna");
+    "gpt-6.1-terra" | "gemini-4-hydrogen" | "gpt-6-luna"
+  >("gpt-6.1-terra");
   const [mascotVariant, setMascotVariant] = useState<MascotVariant>("teal");
   const [saving, setSaving] = useState(false);
 
@@ -231,20 +231,22 @@ export default function TeammatesPage() {
           </label>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="space-y-1.5 text-sm">
-              <span className="text-muted-foreground text-xs">
-                Answer style
-              </span>
+              <span className="text-muted-foreground text-xs">Model</span>
               <select
                 className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
                 onChange={(e) =>
                   setDefaultModel(
-                    e.target.value as "gpt-6-luna" | "gpt-6.1-terra"
+                    e.target.value as
+                      | "gpt-6.1-terra"
+                      | "gemini-4-hydrogen"
+                      | "gpt-6-luna"
                   )
                 }
                 value={defaultModel}
               >
-                <option value="gpt-6-luna">Everyday chat</option>
-                <option value="gpt-6.1-terra">Detailed chat</option>
+                <option value="gpt-6.1-terra">GPT-6.1 Terra (Default)</option>
+                <option value="gemini-4-hydrogen">Gemini 4 Hydrogen</option>
+                <option value="gpt-6-luna">GPT-6 Luna (Manual light)</option>
               </select>
             </label>
             <label className="space-y-1.5 text-sm">

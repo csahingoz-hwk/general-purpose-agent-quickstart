@@ -139,7 +139,7 @@ test("webSearch never sits beside state-changing tools; read-only tools may coex
   );
 });
 
-test("Everyday chat is Luna and can search only on the Gateway lane", () => {
+test("Default chat is GPT-6.1 Terra and can search only on the Gateway lane", () => {
   const keys = [
     "AI_GATEWAY_USAGE_ENABLED",
     "CHAT_PROVIDER",
@@ -147,7 +147,7 @@ test("Everyday chat is Luna and can search only on the Gateway lane", () => {
   ] as const;
   const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
   try {
-    assert.equal(DEFAULT_CHAT_MODEL, LUNA);
+    assert.equal(DEFAULT_CHAT_MODEL, TERRA);
     process.env.AI_GATEWAY_USAGE_ENABLED = "true";
     Reflect.deleteProperty(process.env, "CHAT_PROVIDER");
     Reflect.deleteProperty(process.env, "ENABLE_LEGACY_GROQ");

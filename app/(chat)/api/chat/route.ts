@@ -34,6 +34,7 @@ import {
   replyForStorage,
   safeUIStream,
 } from "@/lib/ai/conversation-state";
+import { resolveTurnModelAndEffort } from "@/lib/ai/escalation";
 import { getRequestModelAvailability } from "@/lib/ai/model-runtime";
 import { chatModels, getCapabilities } from "@/lib/ai/models";
 import { createMultiSearchRecoveryStream } from "@/lib/ai/multi-search-fallback";
@@ -219,7 +220,7 @@ export async function POST(request: Request) {
     if (!availability.models.some((model) => model.id === selectedChatModel)) {
       return new ChatbotError("bad_request:api").toResponse();
     }
-    const chatModel = selectedChatModel;
+    let chatModel = selectedChatModel;
 
     await checkIpRateLimit(ipAddress(request));
 
@@ -330,6 +331,15 @@ export async function POST(request: Request) {
         ?.parts.filter((part) => part.type === "text")
         .map((part) => part.text)
         .join(" ") ?? "";
+    const turnEscalation = resolveTurnModelAndEffort({
+      selectedModelId: chatModel,
+      availableModelIds: availability.models.map((model) => model.id),
+      userText: finalUserText,
+      requestedTools,
+      baseEffort: modelConfig?.reasoningEffort,
+    });
+    chatModel = turnEscalation.modelId;
+    const effectiveReasoningEffort = turnEscalation.reasoningEffort;
     const requestedBotSlug =
       extractRequestedBotSlug(finalUserText) ??
       (selectedBotSlug?.trim() || null);
@@ -639,9 +649,7 @@ export async function POST(request: Request) {
               return { messages: next.messages };
             },
             providerOptions: {
-              ...(modelConfig?.reasoningEffort && {
-                openai: { reasoningEffort: modelConfig.reasoningEffort },
-              }),
+              openai: { reasoningEffort: effectiveReasoningEffort },
             },
             tools,
             telemetry: {
@@ -683,6 +691,9 @@ export async function POST(request: Request) {
                         prompt,
                         maxOutputTokens: Math.min(replyTokens, 2048),
                         maxRetries: 0,
+                        providerOptions: {
+                          openai: { reasoningEffort: effectiveReasoningEffort },
+                        },
                         onError: () => {
                           /* Deterministic partial answer handles synthesis errors. */
                         },

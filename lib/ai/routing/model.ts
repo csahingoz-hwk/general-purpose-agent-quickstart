@@ -8,6 +8,7 @@ import type {
 import { createGateway } from "ai";
 import { z } from "zod";
 import {
+  HYDROGEN,
   LUNA,
   type PremiumModelId,
   premiumModels,
@@ -54,6 +55,23 @@ export function createRoutedModel(
   factory: (id: PremiumModelId) => LanguageModelV4,
   { gateway = false }: { gateway?: boolean } = {}
 ): LanguageModelV4 {
+  function fallbackTargetFor(model: PremiumModelId): PremiumModelId | null {
+    // Owner model floor: NEVER fall back to Luna.
+    if (model === TERRA) {
+      return gateway && session.available.includes(HYDROGEN) ? HYDROGEN : null;
+    }
+    if (model === HYDROGEN) {
+      return session.available.includes(TERRA) ? TERRA : null;
+    }
+    // Manual Luna selection may only fall back UP to a floor-compliant model.
+    if (session.available.includes(TERRA)) {
+      return TERRA;
+    }
+    if (gateway && session.available.includes(HYDROGEN)) {
+      return HYDROGEN;
+    }
+    return null;
+  }
   function options(
     model: PremiumModelId,
     params: LanguageModelV4CallOptions
@@ -62,6 +80,26 @@ export function createRoutedModel(
       params.maxOutputTokens ?? premiumModels[model].outputLimit,
       premiumModels[model].outputLimit
     );
+    const requestedEffort = (
+      params.providerOptions?.openai as { reasoningEffort?: string } | undefined
+    )?.reasoningEffort;
+    const safeEffort: "low" | "medium" | "high" =
+      requestedEffort === "high"
+        ? "high"
+        : requestedEffort === "medium"
+          ? "medium"
+          : model === LUNA
+            ? "low"
+            : "medium";
+    if (model === HYDROGEN) {
+      return {
+        ...params,
+        maxOutputTokens,
+        providerOptions: {
+          ...(gateway ? { gateway: { only: ["google"] } } : {}),
+        },
+      };
+    }
     return {
       ...params,
       maxOutputTokens,
@@ -69,7 +107,7 @@ export function createRoutedModel(
         openai: {
           // Deliberately override arbitrary provider options; no paid hosted tools,
           // persistence, premium tiers, 12h cache writes or unbounded reasoning.
-          reasoningEffort: model === LUNA ? "low" : "medium",
+          reasoningEffort: safeEffort,
           store: false,
           serviceTier: "default",
           parallelToolCalls: false,
@@ -91,7 +129,8 @@ export function createRoutedModel(
     if (session.exposed) {
       return `${failure}_after_output`;
     }
-    if (model === LUNA && !session.available.includes(TERRA)) {
+    const target = fallbackTargetFor(model);
+    if (!target) {
       return `${failure}_terra_unavailable`;
     }
     if (session.fallbackUsed) {
@@ -103,23 +142,24 @@ export function createRoutedModel(
     model: PremiumModelId,
     error: unknown,
     params: LanguageModelV4CallOptions
-  ) {
+  ): { reason: string; target: PremiumModelId } {
     const failure = failureKind(error);
+    const target = fallbackTargetFor(model);
     if (
-      model !== LUNA ||
+      !target ||
       !mayFallback({
         failure,
         exposed: session.exposed,
         toolBoundary: session.toolBoundary,
         used: session.fallbackUsed,
-        available: session.available.includes(TERRA),
+        available: true,
         cancelled: params.abortSignal?.aborted ?? false,
       })
     ) {
       throw new ModelFailure(failure);
     }
     session.fallbackUsed = true;
-    return failure;
+    return { reason: failure, target };
   }
   function reserve(
     model: PremiumModelId,
@@ -269,8 +309,9 @@ export function createRoutedModel(
             usage,
             searches * WEB_SEARCH_COST_USD
           );
-          reason = next(model, error, params);
-          model = TERRA;
+          const fallback = next(model, error, params);
+          reason = fallback.reason;
+          model = fallback.target;
         }
       }
     },
@@ -403,8 +444,9 @@ export function createRoutedModel(
                   return;
                 }
                 try {
-                  reason = next(model, error, params);
-                  model = TERRA;
+                  const fallback = next(model, error, params);
+                  reason = fallback.reason;
+                  model = fallback.target;
                 } catch (safeError) {
                   controller.error(safeError);
                   return;

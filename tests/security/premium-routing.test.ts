@@ -114,8 +114,8 @@ const transient = Object.assign(new Error("private upstream body"), {
   statusCode: 503,
 });
 
-test("Luna is the default; OpenAI and legacy routing require explicit separate enablement", () => {
-  assert.equal(DEFAULT_CHAT_MODEL, LUNA);
+test("GPT-6.1 Terra is the default; OpenAI and legacy routing require explicit separate enablement", () => {
+  assert.equal(DEFAULT_CHAT_MODEL, TERRA);
   const prior = { ...process.env };
   try {
     process.env.OPENAI_API_KEY = undefined;

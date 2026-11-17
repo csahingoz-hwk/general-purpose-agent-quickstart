@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, test } from "node:test";
 import { createGateway } from "ai";
-import { LUNA, TERRA } from "../../lib/ai/routing/catalog";
+import { HYDROGEN, LUNA, TERRA } from "../../lib/ai/routing/catalog";
 import {
   classifyGatewayFailure,
   discoverGatewayReadiness,
@@ -23,18 +23,22 @@ const syntheticOidcToken = () =>
 
 const lunaEntry = { id: gatewaySlug(LUNA), name: "GPT-6 Luna" };
 const terraEntry = { id: gatewaySlug(TERRA), name: "GPT-6.1 Terra" };
+const hydrogenEntry = { id: gatewaySlug(HYDROGEN), name: "Gemini 4 Hydrogen" };
 // Mirrors the Gateway /config schema enforced by the SDK, including `specification`.
 const catalogResponse = (...models: { id: string; name: string }[]) =>
   Response.json({
-    models: models.map((model) => ({
-      ...model,
-      modelType: "language",
-      specification: {
-        specificationVersion: "v4",
-        provider: "openai",
-        modelId: model.id.replace("openai/", ""),
-      },
-    })),
+    models: models.map((model) => {
+      const [prov = "openai", slug = model.id] = model.id.split("/");
+      return {
+        ...model,
+        modelType: "language",
+        specification: {
+          specificationVersion: "v4",
+          provider: prov,
+          modelId: slug,
+        },
+      };
+    }),
   });
 
 let priorEnv: NodeJS.ProcessEnv;
@@ -71,7 +75,9 @@ test("Vercel deployment with automatic OIDC is ready without any credential in p
   const provider = createGateway({
     fetch: (input, init) => {
       seen.push({ url: String(input), headers: new Headers(init?.headers) });
-      return Promise.resolve(catalogResponse(lunaEntry, terraEntry));
+      return Promise.resolve(
+        catalogResponse(terraEntry, hydrogenEntry, lunaEntry)
+      );
     },
   });
   const result = await discoverGatewayReadiness({ provider });
@@ -79,9 +85,9 @@ test("Vercel deployment with automatic OIDC is ready without any credential in p
   assert.equal(result.reason, "ready");
   assert.deepEqual(
     result.models.map((model) => model.id),
-    [LUNA, TERRA]
+    [TERRA, HYDROGEN, LUNA]
   );
-  assert.equal(result.defaultModelId, LUNA);
+  assert.equal(result.defaultModelId, TERRA);
   assert.deepEqual(result.unavailableModels, []);
   assert.equal(seen.length, 1);
   assert.match(seen[0].url, /\/config$/);
@@ -98,39 +104,41 @@ test("an explicit Gateway API key is also resolved natively and wins over OIDC",
   const provider = createGateway({
     fetch: (_input, init) => {
       seen.push(new Headers(init?.headers));
-      return Promise.resolve(catalogResponse(lunaEntry));
+      return Promise.resolve(catalogResponse(terraEntry));
     },
   });
   const result = await discoverGatewayReadiness({ provider });
   assert.equal(result.status, "ready");
+  assert.equal(result.defaultModelId, TERRA);
   assert.equal(seen[0].get("authorization"), "Bearer synthetic-gateway-key");
   assert.equal(seen[0].get("ai-gateway-auth-method"), "api-key");
 });
 
-test("Terra missing keeps Luna ready and reports the exact missing slug; Luna is never replaced", async () => {
+test("Terra missing falls back to Gemini 4 Hydrogen default; Luna alone is below floor and never promoted", async () => {
   process.env.AI_GATEWAY_USAGE_ENABLED = "true";
   deployedWithOidc();
+  const hydrogenDefault = await discoverGatewayReadiness({
+    provider: createGateway({
+      fetch: () => Promise.resolve(catalogResponse(hydrogenEntry, lunaEntry)),
+    }),
+  });
+  assert.equal(hydrogenDefault.status, "ready");
+  assert.equal(hydrogenDefault.defaultModelId, HYDROGEN);
+  assert.deepEqual(
+    hydrogenDefault.models.map((model) => model.id),
+    [HYDROGEN, LUNA]
+  );
+  assert.deepEqual(hydrogenDefault.unavailableModels, ["openai/gpt-6.1-terra"]);
+
   const onlyLuna = await discoverGatewayReadiness({
     provider: createGateway({
       fetch: () => Promise.resolve(catalogResponse(lunaEntry)),
     }),
   });
-  assert.equal(onlyLuna.status, "ready");
-  assert.deepEqual(
-    onlyLuna.models.map((model) => model.id),
-    [LUNA]
-  );
-  assert.deepEqual(onlyLuna.unavailableModels, ["openai/gpt-6.1-terra"]);
-
-  const onlyTerra = await discoverGatewayReadiness({
-    provider: createGateway({
-      fetch: () => Promise.resolve(catalogResponse(terraEntry)),
-    }),
-  });
-  assert.equal(onlyTerra.status, "temporarily_unavailable");
-  assert.equal(onlyTerra.reason, "model_unavailable");
-  assert.deepEqual(onlyTerra.models, []);
-  assert.equal(onlyTerra.defaultModelId, null);
+  assert.equal(onlyLuna.status, "temporarily_unavailable");
+  assert.equal(onlyLuna.reason, "model_unavailable");
+  assert.deepEqual(onlyLuna.models, []);
+  assert.equal(onlyLuna.defaultModelId, null);
 });
 
 test("negative: no opt-in means setup_required and the catalog is never contacted", async () => {

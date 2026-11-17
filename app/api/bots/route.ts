@@ -9,7 +9,9 @@ const upsertBotSchema = z.object({
   name: z.string().trim().min(1).max(80),
   description: z.string().trim().max(240).default(""),
   soul: z.string().trim().min(4).max(4000),
-  defaultModel: z.enum(["gpt-6-luna", "gpt-6.1-terra"]).default("gpt-6-luna"),
+  defaultModel: z
+    .enum(["gpt-6.1-terra", "gemini-4-hydrogen", "gpt-6-luna"])
+    .default("gpt-6.1-terra"),
   mascotVariant: z
     .string()
     .refine(isMascotVariant, "Invalid mascot variant")

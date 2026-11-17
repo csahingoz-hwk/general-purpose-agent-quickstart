@@ -233,10 +233,10 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
   }, [chatId, isNewChat, setMessages]);
 
   useEffect(() => {
-    if (chatData && !isNewChat) {
+    if (modelAvailability?.status === "ready") {
       const cookieModel = document.cookie
         .split("; ")
-        .find((row) => row.startsWith("chat-model="))
+        .find((row) => row.startsWith("chat-model-manual="))
         ?.split("=")[1];
       if (cookieModel) {
         const candidate = decodeURIComponent(cookieModel);
@@ -245,11 +245,12 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
             (model: { id: string }) => model.id === candidate
           )
         ) {
+          currentModelIdRef.current = candidate;
           setCurrentModelId(candidate);
         }
       }
     }
-  }, [chatData, isNewChat, modelAvailability]);
+  }, [modelAvailability]);
 
   const hasAppendedQueryRef = useRef(false);
   useEffect(() => {

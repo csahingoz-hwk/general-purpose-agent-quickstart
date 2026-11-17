@@ -3,9 +3,10 @@ import { GROQ_BASE_URL, parseVerification } from "./groq-verification";
 import { chatModels, DEFAULT_CHAT_MODEL } from "./models";
 import {
   gatewayEnabled,
-  isPremiumModel,
+  isOpenAIPremiumModel,
   legacyEnabled,
   openAIEnabled,
+  TERRA,
 } from "./routing/catalog";
 import { discoverGatewayReadiness, type Readiness } from "./routing/gateway";
 
@@ -68,10 +69,10 @@ async function premiumAvailability(): Promise<Readiness> {
       (body.data ?? []).map((model: { id: string }) => model.id)
     );
     const models = chatModels.filter(
-      (model) => isPremiumModel(model.id) && listed.has(model.id)
+      (model) => isOpenAIPremiumModel(model.id) && listed.has(model.id)
     );
-    // Luna must be available; never silently replace the default with Terra.
-    if (!models.some((model) => model.id === DEFAULT_CHAT_MODEL)) {
+    // Terra must be available on the direct OpenAI lane; never default to Luna.
+    if (!models.some((model) => model.id === TERRA)) {
       return unavailable("model_unavailable");
     }
     const result: Readiness = {
@@ -79,7 +80,7 @@ async function premiumAvailability(): Promise<Readiness> {
       reason: "ready",
       hint: null,
       models,
-      defaultModelId: DEFAULT_CHAT_MODEL,
+      defaultModelId: TERRA,
       checkedAt: new Date().toISOString(),
       unavailableModels: [],
     };

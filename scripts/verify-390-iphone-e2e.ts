@@ -94,12 +94,25 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
       route.fulfill({
         json: {
           status: "ready",
+          defaultModelId: "gpt-6.1-terra",
           models: [
             {
-              id: "gpt-6-luna",
-              name: "Everyday chat",
+              id: "gpt-6.1-terra",
+              name: "GPT-6.1 Terra",
               provider: "openai",
-              description: "GPT-6 Luna",
+              description: "Default · deep reasoning, tools & web research",
+            },
+            {
+              id: "gemini-4-hydrogen",
+              name: "Gemini 4 Hydrogen",
+              provider: "google",
+              description: "Fast multimodal reasoning · floor tier",
+            },
+            {
+              id: "gpt-6-luna",
+              name: "GPT-6 Luna",
+              provider: "openai",
+              description: "Manual light option · low effort",
             },
           ],
           capabilities: {},
@@ -283,6 +296,11 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
     });
     const card = page.getByTestId("openui-card");
     await expect(card).toBeVisible({ timeout: 15_000 });
+
+    // Verify picker chip shows real model name ("GPT-6.1 Terra", not "Everyday chat")
+    const pickerChip = page.getByTestId("model-selector");
+    await expect(pickerChip).toBeVisible();
+    await expect(pickerChip).toContainText("GPT-6.1 Terra");
 
     const hero = page.getByTestId("openui-weather-hero");
     await expect(hero).toBeVisible();

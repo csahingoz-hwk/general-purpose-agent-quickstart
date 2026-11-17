@@ -15,7 +15,7 @@
 
 ## 2. What Works Out of the Box (Zero API Keys Needed)
 
-- **Everyday & Detailed Chat:** Switch between fast daily answers (`GPT-6 Luna`) and deeper reasoning (`GPT-6.1 Terra`) from the pill in the composer. Replies match the language you use (English or Turkish).
+- **Default Model Floor & Real Model Picker:** Defaults to **GPT-6.1 Terra** (medium reasoning effort; automatically falls back to **Gemini 4 Hydrogen** if Terra is ever unavailable on the Gateway). The composer pill shows the exact model name (`GPT-6.1 Terra`, `Gemini 4 Hydrogen`, or manual-only `GPT-6 Luna`), and research or multi-search questions automatically escalate to `GPT-6.1 Terra` / `Gemini 4 Hydrogen` with medium-or-higher effort. Replies match the language you use (English or Turkish).
 - **Hands-Free Live Voice (Right-Hand Waveform Button):**
   - When the message box is empty, tap the **waveform button** on the right side of the composer to start a live, hands-free phone-style conversation (`Gemini 3.8 Live`, routed automatically through Vercel AI Gateway).
   - Speak naturally in English or Turkish. Just talk over the assistant (or tap the mascot orb) to interrupt immediately.

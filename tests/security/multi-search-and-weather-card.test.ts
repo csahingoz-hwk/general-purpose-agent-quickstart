@@ -3,11 +3,14 @@ import test from "node:test";
 import type { LanguageModelV4StreamPart } from "@ai-sdk/provider";
 import type { InferUIMessageChunk } from "ai";
 import { MockLanguageModelV4 } from "ai/test";
+import { resolveTurnModelAndEffort } from "../../lib/ai/escalation";
+import { chatModels, DEFAULT_CHAT_MODEL } from "../../lib/ai/models";
 import {
   buildPartialAnswerFromSources,
   createMultiSearchRecoveryStream,
 } from "../../lib/ai/multi-search-fallback";
 import {
+  HYDROGEN,
   LUNA,
   TERRA,
   WEB_SEARCH_COST_USD,
@@ -344,4 +347,88 @@ test("Multi-search recovery stream synthesizes answer with sources and closes da
     fallbackMarkdown,
     /\[Equilar Top Paid CEOs\]\(https:\/\/example\.com\/equilar-ceos\)/
   );
+});
+
+test("Owner model floor: default is GPT-6.1 Terra, real model names shown, Luna excluded from fallback, and research auto-escalates", async () => {
+  assert.equal(DEFAULT_CHAT_MODEL, TERRA);
+  for (const model of chatModels) {
+    assert.notEqual(model.name, "Everyday chat");
+    assert.notEqual(model.name, "Detailed chat");
+  }
+  assert.equal(chatModels.find((m) => m.id === TERRA)?.name, "GPT-6.1 Terra");
+  assert.equal(
+    chatModels.find((m) => m.id === HYDROGEN)?.name,
+    "Gemini 4 Hydrogen"
+  );
+  assert.equal(chatModels.find((m) => m.id === LUNA)?.name, "GPT-6 Luna");
+
+  // Manual Luna selection stays on Luna ONLY for trivial chat turns
+  const trivial = resolveTurnModelAndEffort({
+    selectedModelId: LUNA,
+    availableModelIds: [TERRA, HYDROGEN, LUNA],
+    userText: "Merhaba, nasılsın?",
+    requestedTools: [],
+    baseEffort: "low",
+  });
+  assert.equal(trivial.modelId, LUNA);
+  assert.equal(trivial.reasoningEffort, "low");
+  assert.equal(trivial.escalated, false);
+
+  // Manual Luna selection auto-escalates on multi-search / research questions to Terra with >= medium effort
+  const escalatedSearch = resolveTurnModelAndEffort({
+    selectedModelId: LUNA,
+    availableModelIds: [TERRA, HYDROGEN, LUNA],
+    userText: "En çok kazanan CEO'lar ve yıllık kazançları nelerdir?",
+    requestedTools: ["webSearch"],
+    baseEffort: "low",
+  });
+  assert.equal(escalatedSearch.modelId, TERRA);
+  assert.ok(
+    escalatedSearch.reasoningEffort === "medium" ||
+      escalatedSearch.reasoningEffort === "high"
+  );
+  assert.equal(escalatedSearch.escalated, true);
+
+  // If Terra isn't on the Gateway, research escalates to Gemini 4 Hydrogen
+  const escalatedHydrogen = resolveTurnModelAndEffort({
+    selectedModelId: LUNA,
+    availableModelIds: [HYDROGEN, LUNA],
+    userText: "Compare cloud database benchmarks in depth",
+    requestedTools: [],
+    baseEffort: "low",
+  });
+  assert.equal(escalatedHydrogen.modelId, HYDROGEN);
+  assert.equal(escalatedHydrogen.reasoningEffort, "high");
+
+  // Terra transient failure NEVER falls back down to Luna
+  const tried: string[] = [];
+  const session: InferenceSession = {
+    available: [TERRA, LUNA],
+    exposed: false,
+    toolBoundary: false,
+    fallbackUsed: false,
+    ledger: {
+      reserve: () => Promise.resolve("inv-no-luna"),
+      settle: () => Promise.resolve(),
+    },
+  };
+  const noLunaFallback = createRoutedModel(
+    TERRA,
+    session,
+    (id) => {
+      tried.push(id);
+      return new MockLanguageModelV4({
+        doStream: () =>
+          Promise.reject(Object.assign(new Error("503"), { statusCode: 503 })),
+      });
+    },
+    { gateway: true }
+  );
+  await assert.rejects(async () => {
+    const res = await noLunaFallback.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+    });
+    await res.stream.getReader().read();
+  }, /model_transient/);
+  assert.deepEqual(tried, [TERRA], "Terra must never fall back down to Luna");
 });

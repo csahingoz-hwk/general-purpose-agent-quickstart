@@ -1,4 +1,5 @@
-export const DEFAULT_CHAT_MODEL = "gpt-6-luna";
+export const DEFAULT_CHAT_MODEL = "gpt-6.1-terra";
+export const FALLBACK_FLOOR_MODEL = "gemini-4-hydrogen";
 
 export type ModelCapabilities = {
   tools: boolean;
@@ -15,33 +16,42 @@ export type ChatModel = {
 };
 
 // Candidates, not an availability assertion. Only verified IDs reach the UI.
+// Owner floor: minimum GPT-6.1 Terra or Gemini 4 Hydrogen by default.
+// GPT-6 Luna is kept solely for explicit manual selection by hand.
 export const chatModels: ChatModel[] = [
   {
-    id: "gpt-6-luna",
-    name: "Everyday chat",
-    provider: "openai",
-    description: "GPT-6 Luna · economical bilingual conversation",
-    reasoningEffort: "low",
-  },
-  {
     id: "gpt-6.1-terra",
-    name: "Detailed chat",
+    name: "GPT-6.1 Terra",
     provider: "openai",
-    description: "GPT-6.1 Terra · deeper thinking when needed",
+    description: "Default · deep reasoning, tools & web research",
     reasoningEffort: "medium",
   },
   {
-    id: "openai/gpt-oss-20b",
-    name: "Everyday chat",
-    provider: "groq",
-    description: "GPT OSS 20B · free-account quota applies",
+    id: "gemini-4-hydrogen",
+    name: "Gemini 4 Hydrogen",
+    provider: "google",
+    description: "Fast multimodal reasoning · floor tier",
+    reasoningEffort: "medium",
+  },
+  {
+    id: "gpt-6-luna",
+    name: "GPT-6 Luna",
+    provider: "openai",
+    description: "Manual light option · low effort (research auto-escalates)",
     reasoningEffort: "low",
   },
   {
     id: "openai/gpt-oss-120b",
-    name: "Detailed chat",
+    name: "GPT OSS 120B",
     provider: "groq",
-    description: "GPT OSS 120B · free-account quota applies",
+    description: "Legacy Groq · free-account quota applies",
+    reasoningEffort: "low",
+  },
+  {
+    id: "openai/gpt-oss-20b",
+    name: "GPT OSS 20B",
+    provider: "groq",
+    description: "Legacy Groq · free-account quota applies",
     reasoningEffort: "low",
   },
 ];
@@ -54,7 +64,7 @@ export function getCapabilities(): Record<string, ModelCapabilities> {
       model.id,
       {
         tools: true,
-        vision: model.provider === "openai",
+        vision: model.provider === "openai" || model.provider === "google",
         reasoning: true,
       },
     ])

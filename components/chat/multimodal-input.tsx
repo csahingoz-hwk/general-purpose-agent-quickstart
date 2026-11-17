@@ -736,7 +736,7 @@ function PureModelSelectorCompact({
       <ModelSelectorTrigger asChild>
         <Button
           aria-label={`${copy.modelMenuLabel}: ${selected.name}`}
-          className="h-11 max-w-[8.5rem] gap-1.5 rounded-full px-3 text-[15px] text-muted-foreground hover:bg-control sm:max-w-[9.5rem] md:h-11"
+          className="h-11 max-w-[11.5rem] gap-1.5 rounded-full px-3 text-[14px] font-medium text-muted-foreground hover:bg-control sm:max-w-[13.5rem] md:h-11"
           data-testid="model-selector"
           variant="ghost"
         >
@@ -756,7 +756,7 @@ function PureModelSelectorCompact({
                 keywords={[model.name, model.description]}
                 onSelect={() => {
                   onModelChange?.(model.id);
-                  setCookie("chat-model", model.id);
+                  setCookie("chat-model-manual", model.id);
                   setOpen(false);
                 }}
                 value={model.id}

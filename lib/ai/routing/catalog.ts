@@ -1,14 +1,5 @@
-/** Official Standard USD/1M tokens, verified 2026-11-08. See docs/MODEL_ROUTING.md. */
+/** Official Standard USD/1M tokens, verified against Vercel AI Gateway catalog. */
 export const premiumModels = {
-  "gpt-6-luna": {
-    input: 0.1,
-    cached: 0.01,
-    cacheWrite: 0.125,
-    output: 0.5,
-    contextWindow: 1_050_000,
-    inferenceBudget: 32_768,
-    outputLimit: 4096,
-  },
   "gpt-6.1-terra": {
     input: 1,
     cached: 0.05,
@@ -17,6 +8,24 @@ export const premiumModels = {
     contextWindow: 1_050_000,
     inferenceBudget: 65_536,
     outputLimit: 8192,
+  },
+  "gemini-4-hydrogen": {
+    input: 1.5,
+    cached: 0.075,
+    cacheWrite: 1.5,
+    output: 7.5,
+    contextWindow: 1_000_000,
+    inferenceBudget: 65_536,
+    outputLimit: 8192,
+  },
+  "gpt-6-luna": {
+    input: 0.1,
+    cached: 0.01,
+    cacheWrite: 0.125,
+    output: 0.5,
+    contextWindow: 1_050_000,
+    inferenceBudget: 32_768,
+    outputLimit: 4096,
   },
 } as const;
 export type PremiumModelId = keyof typeof premiumModels;
@@ -36,10 +45,20 @@ export const WEB_SEARCH_COST_USD = 0.000_75;
 export const WEB_SEARCH_MAX_CALLS = 8;
 /** Provider-executed tool id of gateway.tools.deepseekSearch (AI Gateway only). */
 export const WEB_SEARCH_TOOL_ID = "gateway.deepseek_search";
-export const LUNA: PremiumModelId = "gpt-6-luna";
 export const TERRA: PremiumModelId = "gpt-6.1-terra";
+export const HYDROGEN: PremiumModelId = "gemini-4-hydrogen";
+export const LUNA: PremiumModelId = "gpt-6-luna";
+
 export function isPremiumModel(id: string): id is PremiumModelId {
   return Object.hasOwn(premiumModels, id);
+}
+export function isOpenAIPremiumModel(
+  id: string
+): id is "gpt-6.1-terra" | "gpt-6-luna" {
+  return id === TERRA || id === LUNA;
+}
+export function isFloorCompliantModel(id: string): boolean {
+  return id === TERRA || id === HYDROGEN;
 }
 export function legacyEnabled() {
   return (

@@ -1,10 +1,12 @@
 import { createGateway } from "ai";
-import { type ChatModel, chatModels, DEFAULT_CHAT_MODEL } from "../models";
+import { type ChatModel, chatModels } from "../models";
 import {
   gatewayEnabled,
+  HYDROGEN,
   isPremiumModel,
   monthlyAllowance,
   type PremiumModelId,
+  TERRA,
 } from "./catalog";
 
 /**
@@ -52,11 +54,15 @@ const HINTS: Record<Exclude<ReadinessReason, "ready">, string> = {
     "AI Gateway rejected the credential. Redeploy so a fresh OIDC token is issued, or replace AI_GATEWAY_API_KEY if one is set.",
   catalog_unavailable:
     "The AI Gateway model catalog could not be reached. This is usually temporary; try again shortly.",
-  model_unavailable: `The default model ${gatewaySlug(DEFAULT_CHAT_MODEL as PremiumModelId)} is not listed by AI Gateway for this account.`,
+  model_unavailable:
+    "Neither openai/gpt-6.1-terra nor google/gemini-4-hydrogen is listed by AI Gateway for this account.",
 };
 
 /** Exact provider-prefixed slug used by AI Gateway. */
 export function gatewaySlug(model: PremiumModelId | string) {
+  if (model === HYDROGEN) {
+    return `google/${model}`;
+  }
   return `openai/${model}`;
 }
 
@@ -159,8 +165,14 @@ export async function discoverGatewayReadiness({
       (model) => isPremiumModel(model.id) && !listed.has(gatewaySlug(model.id))
     )
     .map((model) => gatewaySlug(model.id));
-  // The default must be genuinely available; never silently promote Terra.
-  if (!models.some((model) => model.id === DEFAULT_CHAT_MODEL)) {
+  // Owner floor: default to GPT-6.1 Terra, or Gemini 4 Hydrogen if Terra is not
+  // listed on the Gateway. Never promote GPT-6 Luna to default.
+  const resolvedDefault = models.some((model) => model.id === TERRA)
+    ? TERRA
+    : models.some((model) => model.id === HYDROGEN)
+      ? HYDROGEN
+      : null;
+  if (!resolvedDefault) {
     return notReady("model_unavailable", unavailableModels);
   }
   return {
@@ -168,7 +180,7 @@ export async function discoverGatewayReadiness({
     reason: "ready",
     hint: null,
     models,
-    defaultModelId: DEFAULT_CHAT_MODEL,
+    defaultModelId: resolvedDefault,
     checkedAt: now().toISOString(),
     unavailableModels,
   };
