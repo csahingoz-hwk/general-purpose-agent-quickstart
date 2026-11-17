@@ -588,13 +588,18 @@ test("personal shell: no vendor CTA, private status, usage replaces chat, no ove
             await expect(
               page.getByRole("menuitem", { name: "Usage & settings" })
             ).toBeVisible();
-            await page.keyboard.press("Escape");
-            if (viewport.width < 768) {
-              await page.keyboard.press("Escape");
-            }
 
-            // /usage replaces the chat surface and Back returns to it.
-            await page.goto(`${origin}/usage`);
+            // Selecting Usage & settings from the menu must close the mobile
+            // History sheet instead of rendering Settings behind the open sheet.
+            await page
+              .getByRole("menuitem", { name: "Usage & settings" })
+              .click();
+            await page.waitForURL(`${origin}/usage`);
+            if (viewport.width < 768) {
+              await expect(
+                page.locator('[data-slot="sidebar"][data-mobile="true"]')
+              ).toHaveCount(0);
+            }
             await expect(
               page.getByRole("heading", { name: "Conversation usage" })
             ).toBeVisible();
@@ -892,6 +897,109 @@ test("composer and actions: 16px text, bounded growth, touch targets, visible ac
         `PASS: composer and actions at ${viewport.width}x${viewport.height}`
       );
     }
+  } finally {
+    await browser.close();
+  }
+});
+
+test("voice dictation works out-of-the-box via Web Speech API without server keys", async () => {
+  const browser = await launchBrowser();
+  try {
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      hasTouch: true,
+      reducedMotion: "reduce",
+    });
+    const token = await encode({
+      secret,
+      salt: "authjs.session-token",
+      token: { id: userId, email: owner, type: "regular" },
+    });
+    await context.addCookies([
+      { name: "authjs.session-token", value: token, url: origin },
+    ]);
+    await context.addInitScript(`
+      function MockSpeechRecognition() {
+        this.continuous = false;
+        this.interimResults = false;
+        this.lang = "en-GB";
+        this.onresult = null;
+        this.onerror = null;
+        this.onend = null;
+      }
+      MockSpeechRecognition.prototype.start = function () {
+        var self = this;
+        setTimeout(function () {
+          var item = [{ transcript: "Plan my Friday morning" }];
+          item.isFinal = false;
+          if (self.onresult) {
+            self.onresult({ resultIndex: 0, results: [item] });
+          }
+        }, 25);
+      };
+      MockSpeechRecognition.prototype.stop = function () {
+        if (this.onend) {
+          this.onend();
+        }
+      };
+      MockSpeechRecognition.prototype.abort = function () {};
+      window.SpeechRecognition = MockSpeechRecognition;
+      window.webkitSpeechRecognition = MockSpeechRecognition;
+    `);
+
+    const page = await context.newPage();
+    await page.route("**/a-4-a/c.js*", (route) =>
+      route.fulfill({
+        contentType: "application/javascript",
+        body: "window.V_C.push({b:1,d:0});",
+      })
+    );
+    await page.route("**/api/history*", (route) =>
+      route.fulfill({ json: { chats: [], hasMore: false } })
+    );
+    await page.route("**/api/messages*", (route) =>
+      route.fulfill({
+        json: {
+          messages: [],
+          visibility: "private",
+          userId,
+          isReadonly: false,
+        },
+      })
+    );
+    await page.route("**/api/models", (route) =>
+      route.fulfill({
+        json: {
+          status: "ready",
+          defaultModelId: "openai/gpt-oss-20b",
+          checkedAt: "2026-11-08T15:00:00Z",
+          models: [
+            {
+              id: "openai/gpt-oss-20b",
+              name: "Everyday chat",
+              provider: "groq",
+              description: "GPT OSS 20B",
+            },
+          ],
+          capabilities: {},
+        },
+      })
+    );
+
+    await page.goto(origin);
+    const mic = page.getByTestId("voice-memo-button");
+    await mic.waitFor();
+    await mic.click();
+    await expect(mic).toHaveAttribute("data-recording", "true");
+    await page.waitForTimeout(80);
+    await mic.click();
+    await expect(page.getByTestId("multimodal-input").last()).toHaveValue(
+      "Plan my Friday morning"
+    );
+    assert.equal(await page.getByText(/VOICE_ENABLED/).count(), 0);
+    console.log(
+      "PASS: mobile voice dictation streams into composer without server keys"
+    );
   } finally {
     await browser.close();
   }

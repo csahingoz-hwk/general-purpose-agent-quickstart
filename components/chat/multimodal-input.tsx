@@ -203,6 +203,9 @@ function PureMultimodalInput({
       case "theme":
         setTheme(resolvedTheme === "dark" ? "light" : "dark");
         break;
+      case "settings":
+        router.push("/usage");
+        break;
       case "routines":
         router.push("/routines");
         break;

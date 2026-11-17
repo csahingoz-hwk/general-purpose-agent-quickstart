@@ -2,16 +2,15 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { BOT_THEMES, botThemeCss } from "@/lib/bot-theme";
+import { botThemeCss } from "@/lib/bot-theme";
 
 import "./globals.css";
 import { SessionProvider } from "next-auth/react";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://chat.vercel.ai"),
-  title: "OpenClaw Clone with Composio",
-  description:
-    "AI agent built on the Vercel AI SDK with Composio tools, Supermemory, and Telegram.",
+  title: "Assistant",
+  description: "Personal assistant",
   applicationName: "Assistant",
   appleWebApp: {
     capable: true,
@@ -30,16 +29,15 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  maximumScale: 1,
   viewportFit: "cover",
   themeColor: [
     {
       media: "(prefers-color-scheme: light)",
-      color: BOT_THEMES.blue.light.accent,
+      color: "#f6f5f3",
     },
     {
       media: "(prefers-color-scheme: dark)",
-      color: BOT_THEMES.blue.dark.accent,
+      color: "#141311",
     },
   ],
 };
@@ -67,7 +65,8 @@ const THEME_COLOR_SCRIPT = `\
     html.setAttribute("data-bot-theme", "blue");
   }
   function updateThemeColor() {
-    var color = getComputedStyle(html).getPropertyValue("--bot-accent").trim() || "${BOT_THEMES.blue.light.accent}";
+    var isDark = html.classList.contains("dark");
+    var color = getComputedStyle(html).getPropertyValue("--background").trim() || (isDark ? "#141311" : "#f6f5f3");
     var metas = document.querySelectorAll('meta[name="theme-color"]');
     if (metas.length === 0) {
       var created = document.createElement('meta');

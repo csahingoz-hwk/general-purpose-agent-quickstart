@@ -8,6 +8,7 @@ import {
   PaletteIcon,
   PenLineIcon,
   PenSquareIcon,
+  Settings2Icon,
   SparklesIcon,
   Trash2Icon,
   XIcon,
@@ -55,8 +56,14 @@ export const slashCommands: SlashCommand[] = [
     action: "theme",
   },
   {
+    name: "settings",
+    description: "Open settings, appearance & usage",
+    icon: <Settings2Icon className="size-3.5" />,
+    action: "settings",
+  },
+  {
     name: "routines",
-    description: "Open routines, background tasks & vault",
+    description: "Open routines & background tasks",
     icon: <ClockIcon className="size-3.5" />,
     action: "routines",
   },
@@ -123,18 +130,15 @@ export function SlashCommandMenu({
 
   return (
     <div
-      className="absolute bottom-full left-0 right-0 z-50 mb-2 overflow-hidden rounded-xl border border-border/50 bg-card/95 shadow-[var(--shadow-float)] backdrop-blur-xl"
+      className="absolute right-0 bottom-full left-0 z-50 mb-2 overflow-hidden rounded-[20px] border border-[color:var(--hairline)] bg-card shadow-[var(--shadow-float)]"
       ref={menuRef}
     >
-      <div className="px-4 py-2.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/40">
-        Commands
-      </div>
-      <div className="max-h-64 overflow-y-auto pb-1 no-scrollbar">
+      <div className="max-h-64 overflow-y-auto py-1.5 no-scrollbar">
         {filtered.map((cmd, index) => (
           <button
             className={cn(
-              "flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors",
-              index === selectedIndex ? "bg-muted/70" : "hover:bg-muted/40"
+              "flex min-h-11 w-full items-center gap-3 px-4 py-2 text-left transition-colors",
+              index === selectedIndex ? "bg-muted" : "hover:bg-muted/50"
             )}
             data-selected={index === selectedIndex}
             key={cmd.name}
@@ -142,17 +146,17 @@ export function SlashCommandMenu({
             onMouseDown={(e) => e.preventDefault()}
             type="button"
           >
-            <div className="flex size-6 shrink-0 items-center justify-center text-muted-foreground/60">
+            <div className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
               {cmd.icon}
             </div>
-            <span className="font-mono text-[13px] text-foreground">
+            <span className="font-mono font-medium text-[13px] text-foreground">
               /{cmd.name}
             </span>
-            <span className="text-[12px] text-muted-foreground/50">
+            <span className="truncate text-[13px] text-muted-foreground">
               {cmd.description}
             </span>
             {cmd.shortcut && (
-              <span className="ml-auto text-[11px] text-muted-foreground/30">
+              <span className="ml-auto text-[11px] text-muted-foreground">
                 {cmd.shortcut}
               </span>
             )}

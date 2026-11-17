@@ -7,14 +7,11 @@ import {
   Trash2Icon,
   UserCheckIcon,
 } from "lucide-react";
-import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
+import { SubpageHeader } from "@/components/chat/subpage-header";
 import { toast } from "@/components/chat/toast";
-import { getCopy } from "@/lib/ui-copy";
 import { cn, fetcher } from "@/lib/utils";
-
-const copy = getCopy();
 
 type ProfileFactItem = {
   id: string;
@@ -42,12 +39,12 @@ type MemoryApiResponse = {
 };
 
 const CATEGORIES = [
-  "identity",
-  "preference",
-  "work",
-  "finance",
-  "project",
-  "general",
+  { id: "preference", label: "Preference" },
+  { id: "identity", label: "Identity" },
+  { id: "work", label: "Work" },
+  { id: "finance", label: "Finance" },
+  { id: "project", label: "Project" },
+  { id: "general", label: "General" },
 ] as const;
 
 export default function MemoryPage() {
@@ -160,43 +157,34 @@ export default function MemoryPage() {
   }
 
   return (
-    <main className="h-dvh w-full overflow-y-auto overflow-x-hidden bg-background">
-      <div className="mx-auto w-full min-w-0 max-w-3xl space-y-6 px-4 py-6 md:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <Link
-            className="inline-flex min-h-11 items-center rounded-full border border-[color:var(--hairline)] bg-card px-4 font-medium text-foreground text-sm hover:bg-muted"
-            href="/"
-          >
-            {copy.backToChat}
-          </Link>
-          <span className="rounded-full border border-[color:var(--hairline)] bg-card px-3 py-1 text-muted-foreground text-xs">
-            {data?.toolsEnabled
-              ? "Chat memory tools: enabled"
-              : "Chat memory tools: off (manual inspector)"}
-          </span>
-        </div>
+    <main className="h-dvh w-full overflow-x-hidden overflow-y-auto bg-background">
+      <div className="mx-auto w-full min-w-0 max-w-2xl space-y-6 px-4 pb-[max(2.5rem,env(safe-area-inset-bottom))] md:px-6 md:pb-10">
+        <SubpageHeader
+          badge={
+            <span className="rounded-full border border-[color:var(--hairline)] bg-card px-3 py-1 text-muted-foreground text-xs">
+              {data?.toolsEnabled ? "Auto-recall on" : "Manual inspector"}
+            </span>
+          }
+        />
 
         <div>
-          <h1 className="font-semibold text-2xl tracking-tight">
-            Long-term memory
-          </h1>
+          <h1 className="font-semibold text-2xl tracking-tight">Memory</h1>
           <p className="mt-1 text-muted-foreground text-sm">
-            Split cleanly into durable Profile facts (optionally shared across
-            specialist bots) and an episodic Journal timeline.
+            Durable profile facts shared across teammates and a chronological
+            journal for notes and decisions.
           </p>
         </div>
 
         {data?.status === "setup_required" && (
-          <section className="rounded-[22px] border border-amber-500/30 bg-amber-500/10 p-4 text-sm">
-            <p className="font-medium text-amber-900 dark:text-amber-200">
-              Memory tables need one-time database setup
+          <div className="rounded-2xl border border-[color:var(--hairline)] bg-card p-4 text-sm">
+            <p className="font-medium text-foreground">
+              Memory storage isn&apos;t connected on this preview database yet
             </p>
-            <p className="mt-1 text-amber-800/90 dark:text-amber-300/90">
-              Apply <code>lib/db/parity-schema.sql</code> to your approved
-              Postgres database to enable persistent Profile and Journal
-              storage.
+            <p className="mt-1 text-muted-foreground text-xs">
+              Chat works normally. Saving durable facts unlocks once the
+              optional memory tables are enabled on an isolated database.
             </p>
-          </section>
+          </div>
         )}
 
         <div className="flex flex-wrap items-center gap-2">
@@ -204,20 +192,20 @@ export default function MemoryPage() {
             className={cn(
               "inline-flex min-h-11 items-center gap-2 rounded-full border px-4 font-medium text-sm transition-colors",
               tab === "profile"
-                ? "border-primary bg-primary text-primary-foreground"
+                ? "border-transparent bg-primary text-primary-foreground"
                 : "border-[color:var(--hairline)] bg-card text-foreground hover:bg-muted"
             )}
             onClick={() => setTab("profile")}
             type="button"
           >
             <UserCheckIcon className="size-4" />
-            Profile facts ({data?.profileFacts.length ?? 0})
+            Profile ({data?.profileFacts.length ?? 0})
           </button>
           <button
             className={cn(
               "inline-flex min-h-11 items-center gap-2 rounded-full border px-4 font-medium text-sm transition-colors",
               tab === "journal"
-                ? "border-primary bg-primary text-primary-foreground"
+                ? "border-transparent bg-primary text-primary-foreground"
                 : "border-[color:var(--hairline)] bg-card text-foreground hover:bg-muted"
             )}
             onClick={() => setTab("journal")}
@@ -228,9 +216,9 @@ export default function MemoryPage() {
           </button>
           <input
             aria-label="Search memory"
-            className="ml-auto min-h-11 w-full rounded-full border border-[color:var(--hairline)] bg-card px-4 text-[16px] text-foreground placeholder:text-muted-foreground sm:w-64"
+            className="min-h-11 w-full rounded-full border border-[color:var(--hairline)] bg-card px-4 text-[16px] text-foreground placeholder:text-muted-foreground sm:ml-auto sm:w-56"
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search facts or journal…"
+            placeholder="Search…"
             type="search"
             value={searchQuery}
           />
@@ -243,40 +231,48 @@ export default function MemoryPage() {
         ) : tab === "profile" ? (
           <div className="space-y-4">
             <form
-              className="space-y-3 rounded-[22px] border border-[color:var(--hairline)] bg-card p-4 shadow-[var(--shadow-card)]"
+              className="space-y-4 rounded-2xl border border-[color:var(--hairline)] bg-card p-4"
               onSubmit={handleSaveFact}
             >
-              <h2 className="font-semibold text-[15px]">
-                Add or update profile fact
-              </h2>
+              <h2 className="font-semibold text-[15px]">Save profile fact</h2>
               <div className="grid gap-3 sm:grid-cols-3">
-                <select
-                  aria-label="Category"
-                  className="min-h-11 rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px]"
-                  onChange={(e) => setFactCategory(e.target.value)}
-                  value={factCategory}
-                >
-                  {CATEGORIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  className="min-h-11 rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] sm:col-span-2"
-                  onChange={(e) => setFactKey(e.target.value)}
-                  placeholder="Key (e.g. reporting_currency, close_day_deadline)"
-                  required
-                  value={factKey}
-                />
+                <label className="space-y-1.5 text-sm">
+                  <span className="text-muted-foreground text-xs">
+                    Category
+                  </span>
+                  <select
+                    className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                    onChange={(e) => setFactCategory(e.target.value)}
+                    value={factCategory}
+                  >
+                    {CATEGORIES.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="space-y-1.5 text-sm sm:col-span-2">
+                  <span className="text-muted-foreground text-xs">Topic</span>
+                  <input
+                    className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                    onChange={(e) => setFactKey(e.target.value)}
+                    placeholder="e.g. reporting_currency"
+                    required
+                    value={factKey}
+                  />
+                </label>
               </div>
-              <input
-                className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px]"
-                onChange={(e) => setFactValue(e.target.value)}
-                placeholder="Fact value (e.g. Prefer concise variance tables in GBP & USD)"
-                required
-                value={factValue}
-              />
+              <label className="block space-y-1.5 text-sm">
+                <span className="text-muted-foreground text-xs">Detail</span>
+                <input
+                  className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                  onChange={(e) => setFactValue(e.target.value)}
+                  placeholder="e.g. Prefer concise variance tables in GBP & USD"
+                  required
+                  value={factValue}
+                />
+              </label>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <label className="inline-flex min-h-11 cursor-pointer items-center gap-2 text-sm">
                   <input
@@ -285,7 +281,7 @@ export default function MemoryPage() {
                     onChange={(e) => setSharedAcrossBots(e.target.checked)}
                     type="checkbox"
                   />
-                  <span>Share across future specialist bots</span>
+                  <span>Share across specialist teammates</span>
                 </label>
                 <button
                   className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-5 font-medium text-primary-foreground text-sm disabled:opacity-50"
@@ -298,15 +294,15 @@ export default function MemoryPage() {
               </div>
             </form>
 
-            <div className="space-y-2.5">
-              {(data?.profileFacts ?? []).length === 0 ? (
-                <p className="rounded-[22px] border border-[color:var(--hairline)] bg-card p-6 text-center text-muted-foreground text-sm">
-                  No profile facts stored yet.
-                </p>
-              ) : (
-                data?.profileFacts.map((fact) => (
+            {(data?.profileFacts ?? []).length === 0 ? (
+              <p className="rounded-2xl border border-[color:var(--hairline)] bg-card p-6 text-center text-muted-foreground text-sm">
+                No profile facts saved yet.
+              </p>
+            ) : (
+              <div className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card">
+                {data?.profileFacts.map((fact) => (
                   <article
-                    className="flex items-start justify-between gap-3 rounded-[22px] border border-[color:var(--hairline)] bg-card p-4 shadow-[var(--shadow-card)]"
+                    className="flex items-start justify-between gap-3 p-4"
                     key={fact.id}
                   >
                     <div className="min-w-0 space-y-1">
@@ -314,7 +310,9 @@ export default function MemoryPage() {
                         <span className="rounded-full bg-muted px-2.5 py-0.5 font-medium text-xs">
                           {fact.category}
                         </span>
-                        <code className="font-mono text-xs">{fact.key}</code>
+                        <span className="font-medium text-muted-foreground text-xs">
+                          {fact.key}
+                        </span>
                         {fact.sharedAcrossBots && (
                           <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--hairline)] px-2 py-0.5 text-muted-foreground text-xs">
                             <Share2Icon className="size-3" />
@@ -333,38 +331,49 @@ export default function MemoryPage() {
                       <Trash2Icon className="size-4" />
                     </button>
                   </article>
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           <div className="space-y-4">
             <form
-              className="space-y-3 rounded-[22px] border border-[color:var(--hairline)] bg-card p-4 shadow-[var(--shadow-card)]"
+              className="space-y-4 rounded-2xl border border-[color:var(--hairline)] bg-card p-4"
               onSubmit={handleSaveJournal}
             >
               <h2 className="font-semibold text-[15px]">New journal entry</h2>
-              <input
-                className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px]"
-                onChange={(e) => setJournalTitle(e.target.value)}
-                placeholder="Title (e.g. Q3 audit accrual sign-off notes)"
-                required
-                value={journalTitle}
-              />
-              <textarea
-                className="min-h-24 w-full rounded-xl border border-[color:var(--hairline)] bg-background p-3 text-[16px]"
-                onChange={(e) => setJournalBody(e.target.value)}
-                placeholder="Notes, decisions, or context to recall later…"
-                required
-                value={journalBody}
-              />
-              <div className="flex flex-wrap items-center justify-between gap-2">
+              <label className="block space-y-1.5 text-sm">
+                <span className="text-muted-foreground text-xs">Title</span>
                 <input
-                  className="min-h-11 flex-1 rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px]"
-                  onChange={(e) => setJournalTags(e.target.value)}
-                  placeholder="Tags, comma-separated (e.g. close, ksa, action)"
-                  value={journalTags}
+                  className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                  onChange={(e) => setJournalTitle(e.target.value)}
+                  placeholder="e.g. Monthly planning notes"
+                  required
+                  value={journalTitle}
                 />
+              </label>
+              <label className="block space-y-1.5 text-sm">
+                <span className="text-muted-foreground text-xs">Notes</span>
+                <textarea
+                  className="min-h-24 w-full rounded-xl border border-[color:var(--hairline)] bg-background p-3 text-[16px] text-foreground"
+                  onChange={(e) => setJournalBody(e.target.value)}
+                  placeholder="Decisions or context to recall later…"
+                  required
+                  value={journalBody}
+                />
+              </label>
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <label className="min-w-48 flex-1 space-y-1.5 text-sm">
+                  <span className="text-muted-foreground text-xs">
+                    Tags (optional)
+                  </span>
+                  <input
+                    className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                    onChange={(e) => setJournalTags(e.target.value)}
+                    placeholder="e.g. planning, travel"
+                    value={journalTags}
+                  />
+                </label>
                 <button
                   className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-5 font-medium text-primary-foreground text-sm disabled:opacity-50"
                   disabled={submitting || data?.status === "setup_required"}
@@ -376,15 +385,15 @@ export default function MemoryPage() {
               </div>
             </form>
 
-            <div className="space-y-2.5">
-              {(data?.journalEntries ?? []).length === 0 ? (
-                <p className="rounded-[22px] border border-[color:var(--hairline)] bg-card p-6 text-center text-muted-foreground text-sm">
-                  No journal entries yet.
-                </p>
-              ) : (
-                data?.journalEntries.map((entry) => (
+            {(data?.journalEntries ?? []).length === 0 ? (
+              <p className="rounded-2xl border border-[color:var(--hairline)] bg-card p-6 text-center text-muted-foreground text-sm">
+                No journal entries yet.
+              </p>
+            ) : (
+              <div className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card">
+                {data?.journalEntries.map((entry) => (
                   <article
-                    className="flex items-start justify-between gap-3 rounded-[22px] border border-[color:var(--hairline)] bg-card p-4 shadow-[var(--shadow-card)]"
+                    className="flex items-start justify-between gap-3 p-4"
                     key={entry.id}
                   >
                     <div className="min-w-0 space-y-1.5">
@@ -421,9 +430,9 @@ export default function MemoryPage() {
                       <Trash2Icon className="size-4" />
                     </button>
                   </article>
-                ))
-              )}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>

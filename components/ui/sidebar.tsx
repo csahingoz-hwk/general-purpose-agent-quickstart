@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
+import { usePathname } from "next/navigation"
 import { Slot } from "radix-ui"
 
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -66,7 +67,16 @@ function SidebarProvider({
   onOpenChange?: (open: boolean) => void
 }) {
   const isMobile = useIsMobile()
+  const pathname = usePathname()
   const [openMobile, setOpenMobile] = React.useState(false)
+  const prevPathnameRef = React.useRef(pathname)
+
+  React.useEffect(() => {
+    if (prevPathnameRef.current !== pathname) {
+      prevPathnameRef.current = pathname
+      setOpenMobile(false)
+    }
+  }, [pathname])
 
   const [_open, _setOpen] = React.useState(defaultOpen)
   const open = openProp ?? _open

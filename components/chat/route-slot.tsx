@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import { MascotPreferenceProvider } from "./mascot-preference";
 import { ChatShell } from "./shell";
 
 /**
@@ -16,14 +17,16 @@ export function isChatPath(pathname: string | null): boolean {
 export function RouteSlot({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
-  if (isChatPath(pathname)) {
-    return (
-      <>
-        <ChatShell />
-        {children}
-      </>
-    );
-  }
-
-  return <>{children}</>;
+  return (
+    <MascotPreferenceProvider>
+      {isChatPath(pathname) ? (
+        <>
+          <ChatShell />
+          {children}
+        </>
+      ) : (
+        children
+      )}
+    </MascotPreferenceProvider>
+  );
 }

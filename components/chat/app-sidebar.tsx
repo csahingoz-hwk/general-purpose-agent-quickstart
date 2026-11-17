@@ -1,6 +1,6 @@
 "use client";
 
-import { PanelLeftIcon, PenSquareIcon } from "lucide-react";
+import { PanelLeftIcon, PenSquareIcon, XIcon } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { User } from "next-auth";
@@ -64,7 +64,7 @@ export function AppSidebar({ user }: { user: User | undefined }) {
   return (
     <>
       <Sidebar collapsible="icon">
-        <SidebarHeader className="px-4 pt-4 pb-1 group-data-[collapsible=icon]:px-2">
+        <SidebarHeader className="sticky top-0 z-10 border-[color:var(--hairline)] border-b bg-background/95 px-4 pt-3 pb-2.5 backdrop-blur-sm md:static md:border-b-0 md:bg-transparent md:pt-4 md:pb-1 md:backdrop-blur-none group-data-[collapsible=icon]:px-2">
           <div className="flex items-center justify-between gap-3 group-data-[collapsible=icon]:justify-center">
             <Link
               className="min-w-0 truncate font-semibold text-[17px] text-foreground group-data-[collapsible=icon]:hidden"
@@ -80,7 +80,15 @@ export function AppSidebar({ user }: { user: User | undefined }) {
             >
               <PanelLeftIcon className="size-4" />
             </SidebarMenuButton>
-            <SidebarTrigger className="size-11 rounded-full text-foreground group-data-[collapsible=icon]:hidden md:size-8" />
+            <button
+              aria-label="Close History"
+              className="inline-flex size-11 items-center justify-center rounded-full bg-card text-foreground shadow-[var(--shadow-card)] md:hidden"
+              onClick={() => setOpenMobile(false)}
+              type="button"
+            >
+              <XIcon className="size-4" />
+            </button>
+            <SidebarTrigger className="hidden size-8 rounded-full text-foreground group-data-[collapsible=icon]:hidden md:inline-flex" />
           </div>
         </SidebarHeader>
         <SidebarContent>

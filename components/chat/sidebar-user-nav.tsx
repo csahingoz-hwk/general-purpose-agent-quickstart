@@ -1,6 +1,16 @@
 "use client";
 
-import { ChevronUp, TrashIcon } from "lucide-react";
+import {
+  BookOpenIcon,
+  BotIcon,
+  ChevronUp,
+  ClockIcon,
+  LogOutIcon,
+  Settings2Icon,
+  SparklesIcon,
+  SunMoonIcon,
+  TrashIcon,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { User } from "next-auth";
 import { signOut, useSession } from "next-auth/react";
@@ -16,6 +26,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { guestRegex } from "@/lib/constants";
 import { getCopy } from "@/lib/ui-copy";
@@ -40,10 +51,16 @@ export function SidebarUserNav({
   onRequestDeleteAll?: () => void;
 }) {
   const router = useRouter();
+  const { setOpenMobile } = useSidebar();
   const { data, status } = useSession();
   const { setTheme, resolvedTheme } = useTheme();
 
   const isGuest = guestRegex.test(data?.user?.email ?? "");
+
+  const navigateFromMenu = (href: string) => {
+    setOpenMobile(false);
+    router.push(href);
+  };
 
   return (
     <SidebarMenu>
@@ -54,7 +71,7 @@ export function SidebarUserNav({
               <SidebarMenuButton className="h-auto min-h-[60px] justify-between rounded-[20px] bg-card px-4 text-foreground data-[state=open]:bg-card">
                 <div className="flex flex-row items-center gap-2">
                   <div className="size-6 animate-pulse rounded-full bg-sidebar-foreground/10" />
-                  <span className="animate-pulse rounded-md bg-sidebar-foreground/10 text-transparent text-[13px]">
+                  <span className="animate-pulse rounded-md bg-sidebar-foreground/10 text-[13px] text-transparent">
                     Loading...
                   </span>
                 </div>
@@ -84,53 +101,60 @@ export function SidebarUserNav({
             )}
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            className="w-(--radix-popper-anchor-width) rounded-[20px] border border-[color:var(--hairline)] bg-card shadow-[var(--shadow-float)]"
+            className="w-(--radix-popper-anchor-width) rounded-[20px] border border-[color:var(--hairline)] bg-card p-1.5 shadow-[var(--shadow-float)]"
             data-testid="user-nav-menu"
             side="top"
           >
             <DropdownMenuItem
-              className="min-h-11 cursor-pointer text-[13px] md:min-h-8"
+              className="min-h-11 cursor-pointer gap-2.5 rounded-xl px-3 text-[15px] md:min-h-9 md:text-[13px]"
+              onSelect={() => navigateFromMenu("/usage")}
+            >
+              <Settings2Icon className="size-4 text-muted-foreground" />
+              {copy.usageAndSettings}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 cursor-pointer gap-2.5 rounded-xl px-3 text-[15px] md:min-h-9 md:text-[13px]"
+              onSelect={() => navigateFromMenu("/teammates")}
+            >
+              <BotIcon className="size-4 text-muted-foreground" />
+              {copy.teammatesRoster}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 cursor-pointer gap-2.5 rounded-xl px-3 text-[15px] md:min-h-9 md:text-[13px]"
+              onSelect={() => navigateFromMenu("/memory")}
+            >
+              <BookOpenIcon className="size-4 text-muted-foreground" />
+              {copy.memory}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 cursor-pointer gap-2.5 rounded-xl px-3 text-[15px] md:min-h-9 md:text-[13px]"
+              onSelect={() => navigateFromMenu("/routines")}
+            >
+              <ClockIcon className="size-4 text-muted-foreground" />
+              {copy.routinesAndTasks}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 cursor-pointer gap-2.5 rounded-xl px-3 text-[15px] md:min-h-9 md:text-[13px]"
+              onSelect={() => navigateFromMenu("/skills")}
+            >
+              <SparklesIcon className="size-4 text-muted-foreground" />
+              {copy.skillsLibrary}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              className="min-h-11 cursor-pointer gap-2.5 rounded-xl px-3 text-[15px] md:min-h-9 md:text-[13px]"
               data-testid="user-nav-item-theme"
               onSelect={() =>
                 setTheme(resolvedTheme === "dark" ? "light" : "dark")
               }
             >
+              <SunMoonIcon className="size-4 text-muted-foreground" />
               {`Toggle ${resolvedTheme === "light" ? "dark" : "light"} mode`}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="min-h-11 cursor-pointer text-[13px] md:min-h-8"
-              onSelect={() => router.push("/routines")}
-            >
-              {copy.routinesAndTasks}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="min-h-11 cursor-pointer text-[13px] md:min-h-8"
-              onSelect={() => router.push("/memory")}
-            >
-              {copy.memory}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="min-h-11 cursor-pointer text-[13px] md:min-h-8"
-              onSelect={() => router.push("/skills")}
-            >
-              {copy.skillsLibrary}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="min-h-11 cursor-pointer text-[13px] md:min-h-8"
-              onSelect={() => router.push("/teammates")}
-            >
-              {copy.teammatesRoster}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              className="min-h-11 cursor-pointer text-[13px] md:min-h-8"
-              onSelect={() => router.push("/usage")}
-            >
-              {copy.usageAndSettings}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild data-testid="user-nav-item-auth">
               <button
-                className="min-h-11 w-full cursor-pointer text-[13px] md:min-h-8"
+                className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-xl px-3 text-[15px] md:min-h-9 md:text-[13px]"
                 onClick={() => {
                   if (status === "loading") {
                     toast({
@@ -142,6 +166,7 @@ export function SidebarUserNav({
                     return;
                   }
 
+                  setOpenMobile(false);
                   if (isGuest) {
                     router.push("/login");
                   } else {
@@ -152,6 +177,7 @@ export function SidebarUserNav({
                 }}
                 type="button"
               >
+                <LogOutIcon className="size-4 text-muted-foreground" />
                 {isGuest ? "Login to your account" : "Sign out"}
               </button>
             </DropdownMenuItem>
@@ -159,9 +185,12 @@ export function SidebarUserNav({
               <>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  className="min-h-11 cursor-pointer text-[13px] text-destructive focus:bg-destructive/10 focus:text-destructive md:min-h-8"
+                  className="min-h-11 cursor-pointer gap-2.5 rounded-xl px-3 text-[15px] text-destructive focus:bg-destructive/10 focus:text-destructive md:min-h-9 md:text-[13px]"
                   data-testid="user-nav-item-delete-all"
-                  onSelect={() => onRequestDeleteAll()}
+                  onSelect={() => {
+                    setOpenMobile(false);
+                    onRequestDeleteAll();
+                  }}
                 >
                   <TrashIcon className="size-4" />
                   {copy.deleteAllChats}

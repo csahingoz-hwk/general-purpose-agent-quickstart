@@ -13,7 +13,6 @@ import { cn } from "@/lib/utils";
 import { Artifact } from "./artifact";
 import { ChatHeader } from "./chat-header";
 import { DataStreamHandler } from "./data-stream-handler";
-import { MascotPreferenceProvider } from "./mascot-preference";
 import { submitEditedMessage } from "./message-editor";
 import { Messages } from "./messages";
 import { MultimodalInput } from "./multimodal-input";
@@ -61,7 +60,7 @@ export function ChatShell() {
   }, [chatId, setArtifact]);
 
   return (
-    <MascotPreferenceProvider>
+    <>
       <div className="flex h-dvh w-full flex-row overflow-hidden">
         <div
           className={cn(
@@ -171,6 +170,6 @@ export function ChatShell() {
       </div>
 
       <DataStreamHandler />
-    </MascotPreferenceProvider>
+    </>
   );
 }

@@ -1,9 +1,10 @@
 "use client";
 
-import { BotIcon, CheckIcon, PlusIcon, Trash2Icon } from "lucide-react";
-import Link from "next/link";
+import { CheckIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
+import { AgentMascot } from "@/components/chat/agent-mascot";
+import { SubpageHeader } from "@/components/chat/subpage-header";
 import { toast } from "@/components/chat/toast";
 import type { BotTeammate } from "@/lib/bots/roster";
 import {
@@ -11,11 +12,9 @@ import {
   MASCOT_STORAGE_KEY,
   type MascotVariant,
 } from "@/lib/mascot";
-import { getCopy } from "@/lib/ui-copy";
-import { fetcher } from "@/lib/utils";
+import { cn, fetcher } from "@/lib/utils";
 
 const ACTIVE_BOT_STORAGE_KEY = "assistant-active-bot";
-const copy = getCopy();
 
 export default function TeammatesPage() {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
@@ -62,7 +61,7 @@ export default function TeammatesPage() {
     }
     toast({
       type: "success",
-      description: `Switched active teammate to ${bot.name} (${bot.mascotVariant} theme).`,
+      description: `Switched to ${bot.name}.`,
     });
   }
 
@@ -92,7 +91,7 @@ export default function TeammatesPage() {
       setDescription("");
       setSoul("");
       await mutate();
-      toast({ type: "success", description: "Specialist teammate saved." });
+      toast({ type: "success", description: "Teammate saved." });
     } catch (err) {
       toast({
         type: "error",
@@ -115,73 +114,74 @@ export default function TeammatesPage() {
   }
 
   return (
-    <main className="h-dvh w-full overflow-y-auto overflow-x-hidden bg-background">
-      <div className="mx-auto w-full min-w-0 max-w-3xl space-y-6 px-4 py-6 md:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <Link
-            className="inline-flex min-h-11 items-center rounded-full border border-[color:var(--hairline)] bg-card px-4 font-medium text-foreground text-sm hover:bg-muted"
-            href="/"
-          >
-            {copy.backToChat}
-          </Link>
-          <span className="rounded-full border border-[color:var(--hairline)] bg-card px-3 py-1 text-muted-foreground text-xs">
-            Invoke inline via <code>@bot:&lt;slug&gt;</code>
-          </span>
+    <main className="h-dvh w-full overflow-x-hidden overflow-y-auto bg-background">
+      <div className="mx-auto w-full min-w-0 max-w-2xl space-y-6 px-4 pb-[max(2.5rem,env(safe-area-inset-bottom))] md:px-6 md:pb-10">
+        <SubpageHeader />
+
+        <div>
+          <h1 className="font-semibold text-2xl tracking-tight">Teammates</h1>
+          <p className="mt-1 text-muted-foreground text-sm">
+            Choose a specialist persona and mascot theme for chat, or mention{" "}
+            <code className="font-mono text-xs">@bot:name</code> inline on any
+            turn.
+          </p>
         </div>
 
-        <header className="space-y-1">
-          <h1 className="flex items-center gap-2 font-semibold text-2xl tracking-tight">
-            <BotIcon className="size-6" />
-            Teammates Roster
-          </h1>
-          <p className="text-muted-foreground text-sm">
-            Switch between specialist assistant personas, mascot themes, and
-            default skill playbooks while sharing core profile facts.
-          </p>
-        </header>
-
-        <section className="space-y-3">
-          {(data?.bots ?? []).map((bot) => {
-            const isActive = bot.slug === activeSlug;
-            return (
-              <div
-                className="rounded-[22px] border border-[color:var(--hairline)] bg-card p-4 shadow-[var(--shadow-card)]"
-                key={bot.slug}
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="font-semibold text-base">{bot.name}</h2>
-                      <code className="rounded bg-muted px-2 py-0.5 font-mono text-xs">
-                        @bot:{bot.slug}
-                      </code>
-                      <span className="rounded-full bg-muted px-2.5 py-0.5 text-muted-foreground text-xs">
-                        {bot.mascotVariant} · {bot.defaultModel}
-                      </span>
-                    </div>
-                    <p className="text-muted-foreground text-sm">
-                      {bot.description}
-                    </p>
-                    {bot.skillSlugs.length > 0 && (
-                      <p className="text-muted-foreground text-xs">
-                        Default skills:{" "}
-                        {bot.skillSlugs.map((s) => `@skill:${s}`).join(", ")}
+        {(data?.bots ?? []).length > 0 && (
+          <div className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card">
+            {(data?.bots ?? []).map((bot) => {
+              const isActive = bot.slug === activeSlug;
+              return (
+                <article
+                  className="flex items-start justify-between gap-3.5 p-4"
+                  key={bot.slug}
+                >
+                  <div className="flex min-w-0 items-start gap-3">
+                    <AgentMascot
+                      className="mt-0.5 shrink-0 rounded-full"
+                      size={40}
+                      state="idle"
+                      variant={bot.mascotVariant}
+                    />
+                    <div className="min-w-0 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="font-semibold text-[15px] text-foreground">
+                          {bot.name}
+                        </h2>
+                        <code className="rounded-full bg-muted px-2 py-0.5 font-mono text-xs">
+                          @bot:{bot.slug}
+                        </code>
+                      </div>
+                      <p className="text-muted-foreground text-sm">
+                        {bot.description}
                       </p>
-                    )}
+                      {bot.skillSlugs.length > 0 && (
+                        <p className="text-muted-foreground text-xs">
+                          Playbooks:{" "}
+                          {bot.skillSlugs.map((s) => `@skill:${s}`).join(", ")}
+                        </p>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
+
+                  <div className="flex shrink-0 items-center gap-1.5">
                     <button
-                      className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-xs hover:bg-muted"
+                      className={cn(
+                        "inline-flex min-h-11 items-center gap-1.5 rounded-full border px-3.5 font-medium text-xs transition-colors",
+                        isActive
+                          ? "border-transparent bg-primary text-primary-foreground"
+                          : "border-[color:var(--hairline)] bg-background text-foreground hover:bg-muted"
+                      )}
                       onClick={() => activateBot(bot)}
                       type="button"
                     >
                       {isActive && <CheckIcon className="size-3.5" />}
-                      {isActive ? "Active" : "Activate"}
+                      {isActive ? "Active" : "Use"}
                     </button>
                     {!bot.builtIn && (
                       <button
                         aria-label={`Delete ${bot.name}`}
-                        className="inline-flex size-11 items-center justify-center rounded-full text-destructive hover:bg-destructive/10"
+                        className="inline-flex size-11 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                         onClick={() => handleDelete(bot.slug)}
                         type="button"
                       >
@@ -189,85 +189,111 @@ export default function TeammatesPage() {
                       </button>
                     )}
                   </div>
-                </div>
-              </div>
-            );
-          })}
-        </section>
+                </article>
+              );
+            })}
+          </div>
+        )}
 
         <form
-          className="space-y-3 rounded-[22px] border border-[color:var(--hairline)] bg-card p-5 shadow-[var(--shadow-card)]"
+          className="space-y-4 rounded-2xl border border-[color:var(--hairline)] bg-card p-4"
           onSubmit={handleSave}
         >
-          <h2 className="flex items-center gap-2 font-semibold text-base">
-            <PlusIcon className="size-4" />
-            Add Custom Teammate
-          </h2>
+          <h2 className="font-semibold text-[15px]">New custom teammate</h2>
           <div className="grid gap-3 sm:grid-cols-2">
-            <input
-              className="min-h-11 rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px]"
-              onChange={(e) => setSlug(e.target.value)}
-              placeholder="slug (e.g. tax-reviewer)"
-              required
-              value={slug}
-            />
-            <input
-              className="min-h-11 rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px]"
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Display name"
-              required
-              value={name}
-            />
+            <label className="space-y-1.5 text-sm">
+              <span className="text-muted-foreground text-xs">
+                Short identifier
+              </span>
+              <input
+                className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                onChange={(e) => setSlug(e.target.value)}
+                placeholder="e.g. tax-reviewer"
+                required
+                value={slug}
+              />
+            </label>
+            <label className="space-y-1.5 text-sm">
+              <span className="text-muted-foreground text-xs">
+                Display name
+              </span>
+              <input
+                className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Tax Reviewer"
+                required
+                value={name}
+              />
+            </label>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <select
-              className="min-h-11 rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px]"
-              onChange={(e) =>
-                setDefaultModel(
-                  e.target.value as "gpt-6-luna" | "gpt-6.1-terra"
-                )
-              }
-              value={defaultModel}
-            >
-              <option value="gpt-6-luna">Everyday chat (GPT-6 Luna)</option>
-              <option value="gpt-6.1-terra">
-                Detailed chat (GPT-6.1 Terra)
-              </option>
-            </select>
-            <select
-              className="min-h-11 rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px]"
-              onChange={(e) =>
-                setMascotVariant(e.target.value as MascotVariant)
-              }
-              value={mascotVariant}
-            >
-              {AGENT_MASCOTS.map((m) => (
-                <option key={m.id} value={m.id}>
-                  Mascot: {m.label}
-                </option>
-              ))}
-            </select>
+            <label className="space-y-1.5 text-sm">
+              <span className="text-muted-foreground text-xs">
+                Answer style
+              </span>
+              <select
+                className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                onChange={(e) =>
+                  setDefaultModel(
+                    e.target.value as "gpt-6-luna" | "gpt-6.1-terra"
+                  )
+                }
+                value={defaultModel}
+              >
+                <option value="gpt-6-luna">Everyday chat</option>
+                <option value="gpt-6.1-terra">Detailed chat</option>
+              </select>
+            </label>
+            <label className="space-y-1.5 text-sm">
+              <span className="text-muted-foreground text-xs">Mascot</span>
+              <select
+                className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                onChange={(e) =>
+                  setMascotVariant(e.target.value as MascotVariant)
+                }
+                value={mascotVariant}
+              >
+                {AGENT_MASCOTS.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.label}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
-          <input
-            className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px]"
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Short role summary"
-            value={description}
-          />
-          <textarea
-            className="min-h-24 w-full rounded-xl border border-[color:var(--hairline)] bg-background p-3 text-[16px]"
-            onChange={(e) => setSoul(e.target.value)}
-            placeholder="Teammate soul / domain instructions…"
-            required
-            value={soul}
-          />
-          <button
-            className="inline-flex min-h-11 items-center rounded-full bg-foreground px-5 font-medium text-background text-sm disabled:opacity-50"
-            disabled={saving}
-            type="submit"
-          >
-            {saving ? "Saving…" : "Save Teammate"}
-          </button>
+          <label className="block space-y-1.5 text-sm">
+            <span className="text-muted-foreground text-xs">
+              Role summary (optional)
+            </span>
+            <input
+              className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Short description of this teammate's focus"
+              value={description}
+            />
+          </label>
+          <label className="block space-y-1.5 text-sm">
+            <span className="text-muted-foreground text-xs">
+              Persona instructions
+            </span>
+            <textarea
+              className="min-h-24 w-full rounded-xl border border-[color:var(--hairline)] bg-background p-3 text-[16px] text-foreground"
+              onChange={(e) => setSoul(e.target.value)}
+              placeholder="How this teammate should think, structure answers, and communicate…"
+              required
+              value={soul}
+            />
+          </label>
+          <div className="flex justify-end">
+            <button
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-5 font-medium text-primary-foreground text-sm disabled:opacity-50"
+              disabled={saving}
+              type="submit"
+            >
+              <PlusIcon className="size-4" />
+              {saving ? "Saving…" : "Save teammate"}
+            </button>
+          </div>
         </form>
       </div>
     </main>

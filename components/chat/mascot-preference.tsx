@@ -40,6 +40,15 @@ export function MascotPreferenceProvider({
     if (isMascotVariant(saved)) {
       setVariantState(saved);
     }
+    const handleCustomChange = (event: Event) => {
+      const next = (event as CustomEvent<unknown>).detail;
+      if (isMascotVariant(next)) {
+        setVariantState(next);
+      }
+    };
+    window.addEventListener("assistant-mascot-change", handleCustomChange);
+    return () =>
+      window.removeEventListener("assistant-mascot-change", handleCustomChange);
   }, []);
 
   useEffect(() => {

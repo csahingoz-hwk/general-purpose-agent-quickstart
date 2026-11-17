@@ -1,15 +1,12 @@
 "use client";
 
-import { CopyIcon, PlusIcon, SparklesIcon, Trash2Icon } from "lucide-react";
-import Link from "next/link";
+import { CopyIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
 import useSWR from "swr";
+import { SubpageHeader } from "@/components/chat/subpage-header";
 import { toast } from "@/components/chat/toast";
 import type { SkillItem } from "@/lib/skills/library";
-import { getCopy } from "@/lib/ui-copy";
 import { fetcher } from "@/lib/utils";
-
-const copy = getCopy();
 
 export default function SkillsPage() {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
@@ -65,126 +62,131 @@ export default function SkillsPage() {
   }
 
   return (
-    <main className="h-dvh w-full overflow-y-auto overflow-x-hidden bg-background">
-      <div className="mx-auto w-full min-w-0 max-w-3xl space-y-6 px-4 py-6 md:p-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <Link
-            className="inline-flex min-h-11 items-center rounded-full border border-[color:var(--hairline)] bg-card px-4 font-medium text-foreground text-sm hover:bg-muted"
-            href="/"
-          >
-            {copy.backToChat}
-          </Link>
-          <span className="rounded-full border border-[color:var(--hairline)] bg-card px-3 py-1 text-muted-foreground text-xs">
-            Invoke in chat via <code>@skill:&lt;slug&gt;</code>
-          </span>
-        </div>
+    <main className="h-dvh w-full overflow-x-hidden overflow-y-auto bg-background">
+      <div className="mx-auto w-full min-w-0 max-w-2xl space-y-6 px-4 pb-[max(2.5rem,env(safe-area-inset-bottom))] md:px-6 md:pb-10">
+        <SubpageHeader />
 
         <div>
           <h1 className="font-semibold text-2xl tracking-tight">
             Skills library
           </h1>
           <p className="mt-1 text-muted-foreground text-sm">
-            Reusable domain playbooks injected only on turns where you invoke{" "}
-            <code>@skill:&lt;slug&gt;</code>, keeping everyday chat lean.
+            Reusable playbooks loaded only when you include{" "}
+            <code className="font-mono text-xs">@skill:name</code> in a message,
+            keeping everyday chat fast and lean.
           </p>
         </div>
 
-        <div className="space-y-3">
-          {(data?.skills ?? []).map((skill) => (
-            <article
-              className="space-y-2 rounded-[22px] border border-[color:var(--hairline)] bg-card p-4 shadow-[var(--shadow-card)]"
-              key={skill.id}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <SparklesIcon className="size-4 text-muted-foreground" />
-                  <h2 className="font-semibold text-[15px]">{skill.name}</h2>
-                  <code className="rounded-full bg-muted px-2.5 py-0.5 font-mono text-xs">
-                    @skill:{skill.slug}
-                  </code>
-                  {skill.builtIn && (
-                    <span className="rounded-full border border-[color:var(--hairline)] px-2 py-0.5 text-muted-foreground text-xs">
-                      Built-in
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] px-3.5 text-xs hover:bg-muted"
-                    onClick={() => {
-                      navigator.clipboard?.writeText(`@skill:${skill.slug} `);
-                      toast({
-                        type: "success",
-                        description: `Copied @skill:${skill.slug}`,
-                      });
-                    }}
-                    type="button"
-                  >
-                    <CopyIcon className="size-3.5" />
-                    Copy trigger
-                  </button>
-                  {!skill.builtIn && (
+        {(data?.skills ?? []).length > 0 && (
+          <div className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card">
+            {(data?.skills ?? []).map((skill) => (
+              <article className="space-y-2.5 p-4" key={skill.id}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="font-semibold text-[15px]">{skill.name}</h2>
+                    <code className="rounded-full bg-muted px-2.5 py-0.5 font-mono text-xs">
+                      @skill:{skill.slug}
+                    </code>
+                    {skill.builtIn && (
+                      <span className="rounded-full border border-[color:var(--hairline)] px-2 py-0.5 text-muted-foreground text-xs">
+                        Built-in
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5">
                     <button
-                      aria-label={`Delete ${skill.name}`}
-                      className="inline-flex size-11 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      onClick={() => handleDelete(skill.slug)}
+                      className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] px-3.5 text-xs hover:bg-muted"
+                      onClick={() => {
+                        navigator.clipboard?.writeText(`@skill:${skill.slug} `);
+                        toast({
+                          type: "success",
+                          description: `Copied @skill:${skill.slug}`,
+                        });
+                      }}
                       type="button"
                     >
-                      <Trash2Icon className="size-4" />
+                      <CopyIcon className="size-3.5" />
+                      Copy
                     </button>
-                  )}
+                    {!skill.builtIn && (
+                      <button
+                        aria-label={`Delete ${skill.name}`}
+                        className="inline-flex size-11 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        onClick={() => handleDelete(skill.slug)}
+                        type="button"
+                      >
+                        <Trash2Icon className="size-4" />
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-              <p className="text-[14px] text-muted-foreground">
-                {skill.description}
-              </p>
-              <details className="rounded-xl border border-[color:var(--hairline)] bg-muted/30 px-3 py-2 text-xs">
-                <summary className="cursor-pointer font-medium text-muted-foreground">
-                  View instructions
-                </summary>
-                <p className="mt-2 whitespace-pre-wrap text-foreground">
-                  {skill.instructions}
+                <p className="text-[14px] text-muted-foreground">
+                  {skill.description}
                 </p>
-              </details>
-            </article>
-          ))}
-        </div>
+                <details className="pt-0.5 text-xs">
+                  <summary className="cursor-pointer font-medium text-muted-foreground hover:text-foreground">
+                    Show instructions
+                  </summary>
+                  <p className="mt-2 whitespace-pre-wrap rounded-xl bg-muted/40 p-3 text-foreground">
+                    {skill.instructions}
+                  </p>
+                </details>
+              </article>
+            ))}
+          </div>
+        )}
 
         <form
-          className="space-y-3 rounded-[22px] border border-[color:var(--hairline)] bg-card p-4 shadow-[var(--shadow-card)]"
+          className="space-y-4 rounded-2xl border border-[color:var(--hairline)] bg-card p-4"
           onSubmit={handleSave}
         >
-          <h2 className="font-semibold text-[15px]">Add custom skill</h2>
+          <h2 className="font-semibold text-[15px]">New custom skill</h2>
           <div className="grid gap-3 sm:grid-cols-2">
-            <input
-              className="min-h-11 rounded-xl border border-[color:var(--hairline)] bg-background px-3 font-mono text-[16px]"
-              onChange={(e) => setSlug(e.target.value)}
-              placeholder="slug (e.g. sap-reconciliation)"
-              required
-              value={slug}
-            />
-            <input
-              className="min-h-11 rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px]"
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Display name"
-              required
-              value={name}
-            />
+            <label className="space-y-1.5 text-sm">
+              <span className="text-muted-foreground text-xs">
+                Short identifier
+              </span>
+              <input
+                className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                onChange={(e) => setSlug(e.target.value)}
+                placeholder="e.g. close-checklist"
+                required
+                value={slug}
+              />
+            </label>
+            <label className="space-y-1.5 text-sm">
+              <span className="text-muted-foreground text-xs">
+                Display name
+              </span>
+              <input
+                className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Close Checklist"
+                required
+                value={name}
+              />
+            </label>
           </div>
-          <input
-            className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px]"
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="One-line summary"
-            required
-            value={description}
-          />
-          <textarea
-            className="min-h-24 w-full rounded-xl border border-[color:var(--hairline)] bg-background p-3 text-[16px]"
-            onChange={(e) => setInstructions(e.target.value)}
-            placeholder="Playbook instructions injected when /skill:<slug> is invoked…"
-            required
-            value={instructions}
-          />
+          <label className="block space-y-1.5 text-sm">
+            <span className="text-muted-foreground text-xs">Summary</span>
+            <input
+              className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="One-line summary of when to use this playbook"
+              required
+              value={description}
+            />
+          </label>
+          <label className="block space-y-1.5 text-sm">
+            <span className="text-muted-foreground text-xs">Instructions</span>
+            <textarea
+              className="min-h-24 w-full rounded-xl border border-[color:var(--hairline)] bg-background p-3 text-[16px] text-foreground"
+              onChange={(e) => setInstructions(e.target.value)}
+              placeholder="Step-by-step guidance applied when @skill:name is used…"
+              required
+              value={instructions}
+            />
+          </label>
           <div className="flex justify-end">
             <button
               className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-5 font-medium text-primary-foreground text-sm disabled:opacity-50"
@@ -192,7 +194,7 @@ export default function SkillsPage() {
               type="submit"
             >
               <PlusIcon className="size-4" />
-              Save custom skill
+              Save skill
             </button>
           </div>
         </form>

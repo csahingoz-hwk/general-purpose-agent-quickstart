@@ -38,11 +38,19 @@ async function SidebarShell({ children }: { children: React.ReactNode }) {
       <AppSidebar user={session?.user} />
       <SidebarInset>
         <Toaster
+          mobileOffset={{
+            top: "max(3.75rem, calc(env(safe-area-inset-top) + 0.875rem))",
+            left: "1rem",
+            right: "1rem",
+          }}
+          offset={{
+            top: "max(3.75rem, calc(env(safe-area-inset-top) + 0.875rem))",
+          }}
           position="top-center"
           theme="system"
           toastOptions={{
             className:
-              "!bg-card !text-foreground !border-border/50 !shadow-[var(--shadow-float)]",
+              "!rounded-[20px] !bg-card !text-foreground !border-[color:var(--hairline)] !shadow-[var(--shadow-float)]",
           }}
         />
         <Suspense fallback={<div className="flex h-dvh" />}>

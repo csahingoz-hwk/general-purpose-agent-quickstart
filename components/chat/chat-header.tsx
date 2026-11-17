@@ -5,8 +5,10 @@ import {
   LockIcon,
   MoreHorizontalIcon,
   PanelLeftIcon,
+  Settings2Icon,
 } from "lucide-react";
-import { memo, useEffect, useRef } from "react";
+import Link from "next/link";
+import { memo, useEffect, useRef, useState } from "react";
 import useSWRInfinite from "swr/infinite";
 import { Button } from "@/components/ui/button";
 import {
@@ -63,6 +65,7 @@ function PureChatHeader({
 }) {
   const { variant } = useMascotPreference();
   const { openMobile, setOpenMobile, toggleSidebar } = useSidebar();
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const toolbarSlotRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -94,7 +97,7 @@ function PureChatHeader({
 
   return (
     <header
-      className="relative z-20 grid grid-cols-[52px_minmax(0,1fr)_auto] items-center gap-2 pt-[max(0.5rem,env(safe-area-inset-top))] pr-[max(0.75rem,env(safe-area-inset-right))] pb-2 pl-[max(0.75rem,env(safe-area-inset-left))] md:grid-cols-[44px_minmax(0,1fr)_auto] md:pr-[max(1rem,env(safe-area-inset-right))] md:pl-[max(1rem,env(safe-area-inset-left))]"
+      className="relative z-20 grid grid-cols-[52px_minmax(0,1fr)_auto] items-center gap-2 pt-[max(0.625rem,calc(env(safe-area-inset-top)+0.375rem))] pr-[max(0.75rem,env(safe-area-inset-right))] pb-2 pl-[max(0.75rem,env(safe-area-inset-left))] md:grid-cols-[44px_minmax(0,1fr)_auto] md:pr-[max(1rem,env(safe-area-inset-right))] md:pl-[max(1rem,env(safe-area-inset-left))]"
       data-chat-header
     >
       <div
@@ -165,7 +168,7 @@ function PureChatHeader({
           data-slot="preview-toolbar"
           ref={toolbarSlotRef}
         />
-        <Popover>
+        <Popover onOpenChange={setOptionsOpen} open={optionsOpen}>
           <PopoverTrigger asChild>
             <Button
               aria-label="Chat options"
@@ -178,12 +181,27 @@ function PureChatHeader({
               <MoreHorizontalIcon className="size-5" />
             </Button>
           </PopoverTrigger>
-          <PopoverContent align="end" className="w-80 rounded-[20px] p-4">
+          <PopoverContent
+            align="end"
+            className="max-h-[calc(100dvh-6rem)] w-80 overflow-y-auto rounded-[22px] border-[color:var(--hairline)] p-4 shadow-[var(--shadow-float)]"
+          >
             <ConversationResultsPanel />
-            <div className="my-4 h-px bg-border" />
+            <div className="my-3.5 h-px bg-border" />
             <MascotPicker />
-            <div className="my-4 h-px bg-border" />
+            <div className="my-3.5 h-px bg-border" />
             <HomeLocationPanel />
+            <div className="my-3.5 h-px bg-border" />
+            <Link
+              className="flex min-h-11 w-full items-center justify-between rounded-xl bg-muted/60 px-3.5 font-medium text-foreground text-sm transition-colors hover:bg-muted"
+              href="/usage"
+              onClick={() => setOptionsOpen(false)}
+            >
+              <span className="flex items-center gap-2">
+                <Settings2Icon className="size-4 text-muted-foreground" />
+                {copy.usageAndSettings}
+              </span>
+              <span className="text-muted-foreground text-xs">Open</span>
+            </Link>
           </PopoverContent>
         </Popover>
       </div>
