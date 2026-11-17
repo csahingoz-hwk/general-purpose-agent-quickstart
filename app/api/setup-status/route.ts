@@ -62,6 +62,7 @@ export async function GET() {
     storedNames.has(GITHUB_VAULT_SECRET_NAME);
 
   const geminiReady =
+    aiReady ||
     Boolean(process.env.GEMINI_API_KEY?.trim()) ||
     storedNames.has(VOICE_VAULT_SECRET_NAMES.geminiApiKey);
 
@@ -142,10 +143,12 @@ export async function GET() {
     },
     {
       id: "gemini_live",
-      label: "Live voice conversations & Veo video",
-      summary: geminiReady
-        ? "Active — hands-free voice runs on Gemini 3.8 Live."
-        : "Add a Google AI Studio key once to turn on hands-free live voice.",
+      label: "Live voice conversations (Gemini 3.8 Live)",
+      summary: aiReady
+        ? "Active automatically via Vercel AI Gateway — zero API keys needed."
+        : geminiReady
+          ? "Active — hands-free voice runs on Gemini 3.8 Live."
+          : "Enable Vercel AI Gateway or add a Google AI Studio key.",
       status: geminiReady ? "ready" : "action_needed",
       actionKind: geminiReady ? "none" : "external_link",
       externalUrl: geminiReady

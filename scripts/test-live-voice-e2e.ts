@@ -9,7 +9,9 @@ import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
 import { encode } from "next-auth/jwt";
 import {
+  buildGatewayLiveSetupMessage,
   buildLiveSetupMessage,
+  DEFAULT_GATEWAY_LIVE_MODEL,
   DEFAULT_LIVE_MODEL,
   int16ToBase64,
   LIVE_OUTPUT_SAMPLE_RATE,
@@ -106,6 +108,7 @@ type MockClientSocket = {
 
 async function startMockLiveWsServer(opts: {
   onMessage: (ws: MockClientSocket, msg: Record<string, any>) => void;
+  onUpgradeProtocols?: (protocols: string[]) => void;
   onClose?: () => void;
 }): Promise<{ server: Server; wsUrl: string; close: () => Promise<void> }> {
   const sockets = new Set<Duplex>();
@@ -117,18 +120,24 @@ async function startMockLiveWsServer(opts: {
       socket.destroy();
       return;
     }
+    const rawProto = req.headers["sec-websocket-protocol"];
+    const protoList =
+      typeof rawProto === "string"
+        ? rawProto.split(",").map((s) => s.trim())
+        : [];
+    opts.onUpgradeProtocols?.(protoList);
     const accept = createHash("sha1")
       .update(`${key}${WS_GUID}`)
       .digest("base64");
-    socket.write(
-      [
-        "HTTP/1.1 101 Switching Protocols",
-        "Upgrade: websocket",
-        "Connection: Upgrade",
-        `Sec-WebSocket-Accept: ${accept}`,
-        "\r\n",
-      ].join("\r\n")
-    );
+    const headers = [
+      "HTTP/1.1 101 Switching Protocols",
+      "Upgrade: websocket",
+      "Connection: Upgrade",
+      `Sec-WebSocket-Accept: ${accept}`,
+      ...(protoList[0] ? [`Sec-WebSocket-Protocol: ${protoList[0]}`] : []),
+      "\r\n",
+    ];
+    socket.write(headers.join("\r\n"));
     sockets.add(socket);
 
     const client: MockClientSocket = {
@@ -711,6 +720,180 @@ test("live voice E2E: ignores brief cough during assistant speech, honors sustai
     assert.equal(persistedTurns[1]?.interrupted, false);
     console.log(
       "PASS: barge-in flushes interrupted 4s reply in <100 ms and plays follow-up reply without dropping audio"
+    );
+  } finally {
+    await browser.close();
+    await mock.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("live voice E2E: zero-key Vercel AI Gateway (google/gemini-3.8-live) subprotocol WebSocket turn works end to end", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "live-voice-gw-"));
+  const wavPath = join(dir, "gw.wav");
+  writeTestWav(wavPath, [
+    { durationMs: 300, amplitude: 20 },
+    { durationMs: 560, amplitude: 9000, freqHz: 440 },
+    { durationMs: 2500, amplitude: 20 },
+  ]);
+
+  const seenProtocols: string[] = [];
+  let sessionUpdateReceived = false;
+  let speechFrames = 0;
+  let replied = false;
+  let commitReceived = false;
+  const persistedTurns: Record<string, any>[] = [];
+
+  const mock = await startMockLiveWsServer({
+    onUpgradeProtocols: (list) => {
+      seenProtocols.push(...list);
+    },
+    onMessage: (ws, msg) => {
+      if (msg.type === "session-update") {
+        sessionUpdateReceived = true;
+        ws.sendJson({ type: "session-created", raw: { setupComplete: {} } });
+        return;
+      }
+      if (msg.type === "input-audio-commit") {
+        commitReceived = true;
+        return;
+      }
+      if (msg.type === "input-audio-append" && typeof msg.audio === "string") {
+        const { maxAbs } = pcmMaxAbs(msg.audio);
+        if (maxAbs > 1000) {
+          speechFrames += 1;
+        } else if (!replied && speechFrames >= 8) {
+          replied = true;
+          const chunks = makeAssistantAudioChunks(600, 150);
+          ws.sendJson({
+            type: "input-transcription-completed",
+            transcript: "Check my evening",
+          });
+          for (const delta of chunks) {
+            ws.sendJson({ type: "audio-delta", delta });
+          }
+          ws.sendJson({
+            type: "audio-transcript-delta",
+            delta: "Your evening is completely free.",
+          });
+          ws.sendJson({ type: "response-done", status: "completed" });
+        }
+      }
+    },
+  });
+
+  const browser = await launchWithFakeMic(wavPath);
+  try {
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      permissions: ["microphone"],
+    });
+    const sessionJwt = await encode({
+      secret,
+      salt: "authjs.session-token",
+      token: { id: userId, email: owner, type: "regular" },
+    });
+    await context.addCookies([
+      { name: "authjs.session-token", value: sessionJwt, url: origin },
+    ]);
+    const page = await context.newPage();
+
+    await page.route("**/a-4-a/c.js*", (route) =>
+      route.fulfill({
+        contentType: "application/javascript",
+        body: "window.V_C.push({b:1,d:0});",
+      })
+    );
+    await page.route("**/api/history*", (route) =>
+      route.fulfill({ json: { chats: [], hasMore: false } })
+    );
+    await page.route("**/api/messages*", (route) =>
+      route.fulfill({
+        json: {
+          messages: [],
+          visibility: "private",
+          userId,
+          isReadonly: false,
+        },
+      })
+    );
+    await page.route("**/api/models", (route) =>
+      route.fulfill({
+        json: {
+          status: "ready",
+          defaultModelId: "gpt-6-luna",
+          checkedAt: "2026-11-17T12:00:00Z",
+          models: [
+            {
+              id: "gpt-6-luna",
+              name: "Everyday chat",
+              provider: "openai",
+              description: "GPT-6 Luna",
+            },
+          ],
+          capabilities: {},
+        },
+      })
+    );
+    await page.route("**/api/voice/transcribe", (route) =>
+      route.fulfill({ json: { serverSttReady: true, liveReady: true } })
+    );
+    await page.route("**/api/voice/live-session", (route) =>
+      route.fulfill({
+        json: {
+          status: "ready",
+          transport: "gateway",
+          token: "vcst_mock_gateway_secret",
+          model: DEFAULT_GATEWAY_LIVE_MODEL,
+          wsUrl: mock.wsUrl,
+          protocols: [
+            "ai-gateway-realtime-v1",
+            "ai-gateway-auth.vcst_mock_gateway_secret",
+          ],
+          setup: buildGatewayLiveSetupMessage({
+            systemInstruction: "Be concise.",
+          }),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+      })
+    );
+    await page.route("**/api/voice/live-transcript", (route) => {
+      persistedTurns.push(JSON.parse(route.request().postData() ?? "{}"));
+      return route.fulfill({ json: { saved: true } });
+    });
+
+    await page.goto(origin);
+    await page.getByTestId("live-voice-button").click();
+    const overlay = page.getByTestId("live-voice-overlay");
+    await expect(overlay).toBeVisible();
+
+    await expect(
+      page.getByTestId("live-voice-assistant-caption")
+    ).toContainText("Your evening is completely free.", { timeout: 6000 });
+    await expect(overlay).toHaveAttribute("data-phase", "listening", {
+      timeout: 6000,
+    });
+
+    await page.getByTestId("live-voice-close").click();
+    await expect(overlay).toHaveCount(0);
+
+    await expect(page.getByText("Check my evening")).toBeVisible();
+    await expect(
+      page.getByText("Your evening is completely free.")
+    ).toBeVisible();
+
+    assert.equal(sessionUpdateReceived, true);
+    assert.deepEqual(seenProtocols, [
+      "ai-gateway-realtime-v1",
+      "ai-gateway-auth.vcst_mock_gateway_secret",
+    ]);
+    assert.equal(commitReceived, true);
+    assert.equal(persistedTurns.length, 1);
+    assert.equal(persistedTurns[0]?.userText, "Check my evening");
+    console.log(
+      "PASS: zero-key Vercel AI Gateway (google/gemini-3.8-live) live voice turn verified end to end"
     );
   } finally {
     await browser.close();

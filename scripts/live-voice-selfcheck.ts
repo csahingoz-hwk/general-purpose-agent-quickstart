@@ -2,15 +2,14 @@
  * Build-time live-voice self-check (non-fatal).
  *
  * Proves the real production path end to end on every deploy:
- * server key → single-use ephemeral token with locked config → constrained
- * WebSocket → setup → a short spoken reply. Logs only timings and status.
+ * Vercel AI Gateway OIDC (or direct Gemini key) → ephemeral grant →
+ * WebSocket (`google/gemini-3.8-live`) → setup → spoken audio reply.
+ * Logs only timings and status, never credentials.
  */
 import postgres from "postgres";
+import { gatewayEnabled } from "../lib/ai/routing/catalog";
 import { createPostgresVaultStore } from "../lib/vault/secret-vault";
-import {
-  buildLiveSetupMessage,
-  parseLiveServerMessage,
-} from "../lib/voice/live-protocol";
+import { parseLiveServerMessage } from "../lib/voice/live-protocol";
 import { mintLiveVoiceToken } from "../lib/voice/live-session";
 import { VOICE_VAULT_SECRET_NAMES } from "../lib/voice/voice-service";
 
@@ -42,26 +41,36 @@ async function resolveKey(): Promise<string | null> {
 }
 
 async function run(): Promise<string> {
-  const apiKey = await resolveKey();
-  if (!apiKey) {
-    return "SKIP (no Gemini key configured for the owner)";
+  const hasGatewayCreds =
+    gatewayEnabled() &&
+    Boolean(
+      process.env.AI_GATEWAY_API_KEY?.trim() ||
+        process.env.VERCEL_OIDC_TOKEN?.trim()
+    );
+  const apiKey = hasGatewayCreds ? null : await resolveKey();
+  if (!hasGatewayCreds && !apiKey) {
+    return "SKIP (no AI Gateway OIDC or Gemini key in build environment)";
   }
   const t0 = Date.now();
   const systemInstruction = "Self-check. Answer in one short English sentence.";
-  const grant = await mintLiveVoiceToken({ apiKey, systemInstruction });
-  const tToken = Date.now() - t0;
-  const setup = buildLiveSetupMessage({
-    model: grant.model,
+  const grant = await mintLiveVoiceToken({
+    apiKey,
+    preferGateway: hasGatewayCreds,
     systemInstruction,
   });
+  const tToken = Date.now() - t0;
 
   return await new Promise<string>((resolve) => {
-    const ws = new WebSocket(grant.wsUrl);
+    const ws =
+      grant.protocols && grant.protocols.length > 0
+        ? new WebSocket(grant.wsUrl, grant.protocols)
+        : new WebSocket(grant.wsUrl);
     let tSetup = 0;
     let tSent = 0;
     let tFirstAudio = 0;
     let audioBytes = 0;
     let transcript = "";
+    let promptSent = false;
     const finish = (status: string) => {
       try {
         ws.close();
@@ -72,11 +81,11 @@ async function run(): Promise<string> {
     };
     const timer = setTimeout(() => {
       finish(
-        `FAIL timeout (token ${tToken}ms, setup ${tSetup ? `${tSetup}ms` : "none"}, audio ${audioBytes}B)`
+        `FAIL timeout (transport=${grant.transport}, token ${tToken}ms, setup ${tSetup ? `${tSetup}ms` : "none"}, audio ${audioBytes}B)`
       );
     }, HARD_TIMEOUT_MS - 3000);
 
-    ws.onopen = () => ws.send(JSON.stringify(setup));
+    ws.onopen = () => ws.send(JSON.stringify(grant.setup));
     ws.onerror = () => {
       /* onclose reports */
     };
@@ -84,7 +93,7 @@ async function run(): Promise<string> {
       clearTimeout(timer);
       if (!tFirstAudio) {
         resolve(
-          `FAIL socket closed code=${ev.code} reason=${(ev.reason || "").slice(0, 160)} (token ${tToken}ms)`
+          `FAIL socket closed transport=${grant.transport} code=${ev.code} reason=${(ev.reason || "").slice(0, 160)} (token ${tToken}ms)`
         );
       }
     };
@@ -96,14 +105,28 @@ async function run(): Promise<string> {
             ? await ev.data.text()
             : new TextDecoder().decode(ev.data as ArrayBuffer);
       for (const event of parseLiveServerMessage(raw)) {
-        if (event.type === "setup-complete") {
+        if (event.type === "setup-complete" && !promptSent) {
+          promptSent = true;
           tSetup = Date.now() - t0;
           tSent = Date.now();
-          ws.send(
-            JSON.stringify({
-              realtimeInput: { text: "Please say: voice check complete." },
-            })
-          );
+          if (grant.transport === "gateway") {
+            ws.send(
+              JSON.stringify({
+                type: "conversation-item-create",
+                item: {
+                  type: "text-message",
+                  role: "user",
+                  text: "Please say: voice check complete.",
+                },
+              })
+            );
+          } else {
+            ws.send(
+              JSON.stringify({
+                realtimeInput: { text: "Please say: voice check complete." },
+              })
+            );
+          }
         } else if (event.type === "audio") {
           if (!tFirstAudio) {
             tFirstAudio = Date.now() - tSent;
@@ -114,11 +137,13 @@ async function run(): Promise<string> {
         } else if (event.type === "turn-complete") {
           clearTimeout(timer);
           finish(
-            `PASS model=${grant.model} token=${tToken}ms setupComplete=${tSetup}ms firstAudio=${tFirstAudio}ms audio=${(audioBytes / 48_000).toFixed(1)}s transcript="${transcript.trim().slice(0, 80)}"`
+            `PASS transport=${grant.transport} model=${grant.model} token=${tToken}ms setupComplete=${tSetup}ms firstAudio=${tFirstAudio}ms audio=${(audioBytes / 48_000).toFixed(1)}s transcript="${transcript.trim().slice(0, 80)}"`
           );
         } else if (event.type === "error") {
           clearTimeout(timer);
-          finish(`FAIL server error: ${event.message.slice(0, 160)}`);
+          finish(
+            `FAIL server error (${grant.transport}): ${event.message.slice(0, 160)}`
+          );
         }
       }
     };

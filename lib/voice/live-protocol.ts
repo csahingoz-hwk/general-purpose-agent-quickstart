@@ -11,11 +11,16 @@ export const LIVE_OUTPUT_SAMPLE_RATE = 24_000;
 export const LIVE_FRAME_SAMPLES = 640;
 export const LIVE_FRAME_MS = 40;
 export const DEFAULT_LIVE_MODEL = "gemini-3.8-live";
+export const DEFAULT_GATEWAY_LIVE_MODEL = "google/gemini-3.8-live";
 export const DEFAULT_LIVE_VOICE = "Kore";
+
+export type LiveTransportKind = "gateway" | "google-direct";
 
 /** Only Gemini Live voice models are allowed for the speech-to-speech lane. */
 export function isAllowedLiveModel(model: string): boolean {
-  return /^gemini-\d+(\.\d+)?-live(-[a-z0-9-]+)?$/.test(model.trim());
+  return /^(google\/)?gemini-\d+(\.\d+)?-live(-[a-z0-9-]+)?$/.test(
+    model.trim()
+  );
 }
 
 export type LiveVadConfig = {
@@ -95,6 +100,53 @@ export function buildLiveSetupMessage(opts: {
 
 export function liveConstrainedSocketUrl(token: string): string {
   return `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=${encodeURI(token)}`;
+}
+
+/** Normalized AI Gateway Realtime `session-update` message for Gemini 3.8 Live. */
+export function buildGatewayLiveSetupMessage(opts: {
+  systemInstruction: string;
+  voiceName?: string;
+}) {
+  return {
+    type: "session-update" as const,
+    config: {
+      instructions: opts.systemInstruction,
+      voice: opts.voiceName ?? DEFAULT_LIVE_VOICE,
+      outputModalities: ["audio"],
+      inputAudioFormat: { type: "audio/pcm", rate: LIVE_INPUT_SAMPLE_RATE },
+      outputAudioFormat: { type: "audio/pcm", rate: LIVE_OUTPUT_SAMPLE_RATE },
+      inputAudioTranscription: {},
+      outputAudioTranscription: {},
+    },
+  };
+}
+
+export function buildLiveAudioClientMessage(
+  transport: LiveTransportKind,
+  base64Pcm16k: string
+) {
+  if (transport === "gateway") {
+    return { type: "input-audio-append", audio: base64Pcm16k };
+  }
+  return {
+    realtimeInput: {
+      audio: {
+        data: base64Pcm16k,
+        mimeType: "audio/pcm;rate=16000",
+      },
+    },
+  };
+}
+
+export function buildLiveStreamEndMessage(transport: LiveTransportKind) {
+  if (transport === "gateway") {
+    return { type: "input-audio-commit" };
+  }
+  return { realtimeInput: { audioStreamEnd: true } };
+}
+
+export function buildLiveCancelMessage(transport: LiveTransportKind) {
+  return transport === "gateway" ? { type: "response-cancel" } : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -463,6 +515,7 @@ export type LiveServerEvent =
   | { type: "audio"; data: string }
   | { type: "input-transcript"; text: string }
   | { type: "output-transcript"; text: string }
+  | { type: "speech-started" }
   | { type: "interrupted" }
   | { type: "turn-complete" }
   | { type: "generation-complete" }
@@ -470,7 +523,7 @@ export type LiveServerEvent =
   | { type: "go-away"; timeLeftMs: number }
   | { type: "error"; message: string };
 
-type RawServerMessage = {
+type RawGoogleMessage = {
   setupComplete?: unknown;
   serverContent?: {
     modelTurn?: {
@@ -487,6 +540,16 @@ type RawServerMessage = {
   error?: { message?: string };
 };
 
+type RawGatewayMessage = {
+  type: string;
+  delta?: string;
+  transcript?: string;
+  speaker?: "user" | "assistant";
+  message?: string;
+  rawType?: string;
+  raw?: RawGoogleMessage;
+};
+
 function parseDurationMs(value: string | undefined): number {
   if (!value) {
     return 0;
@@ -495,14 +558,80 @@ function parseDurationMs(value: string | undefined): number {
   return match ? Math.round(Number.parseFloat(match[1] ?? "0") * 1000) : 0;
 }
 
-/** Splits one server frame into ordered events (a frame can carry several). */
+function parseGatewayMessage(msg: RawGatewayMessage): LiveServerEvent[] {
+  switch (msg.type) {
+    case "session-created":
+    case "session-updated":
+      return [{ type: "setup-complete" }];
+    case "audio-delta":
+    case "audio-chunk":
+      return msg.delta ? [{ type: "audio", data: msg.delta }] : [];
+    case "audio-transcript-delta":
+      return msg.delta ? [{ type: "output-transcript", text: msg.delta }] : [];
+    case "transcript-fragment":
+      if (!msg.delta) {
+        return [];
+      }
+      return [
+        {
+          type:
+            msg.speaker === "user" ? "input-transcript" : "output-transcript",
+          text: msg.delta,
+        },
+      ];
+    case "input-transcription-completed":
+      return msg.transcript
+        ? [{ type: "input-transcript", text: msg.transcript }]
+        : [];
+    case "speech-started":
+      return [{ type: "speech-started" }];
+    case "response-done":
+      return [{ type: "turn-complete" }];
+    case "error":
+      return msg.message ? [{ type: "error", message: msg.message }] : [];
+    case "custom": {
+      const events: LiveServerEvent[] = [];
+      const raw = msg.raw;
+      if (raw?.serverContent?.interrupted) {
+        events.push({ type: "interrupted" });
+      }
+      if (raw?.serverContent?.generationComplete) {
+        events.push({ type: "generation-complete" });
+      }
+      if (
+        raw?.sessionResumptionUpdate?.resumable &&
+        raw.sessionResumptionUpdate.newHandle
+      ) {
+        events.push({
+          type: "resumption",
+          handle: raw.sessionResumptionUpdate.newHandle,
+        });
+      }
+      if (raw?.goAway) {
+        events.push({
+          type: "go-away",
+          timeLeftMs: parseDurationMs(raw.goAway.timeLeft),
+        });
+      }
+      return events;
+    }
+    default:
+      return [];
+  }
+}
+
+/** Splits one server frame into ordered events (supports AI Gateway & Google Direct). */
 export function parseLiveServerMessage(raw: string): LiveServerEvent[] {
-  let msg: RawServerMessage;
+  let parsed: RawGoogleMessage & Partial<RawGatewayMessage>;
   try {
-    msg = JSON.parse(raw) as RawServerMessage;
+    parsed = JSON.parse(raw) as RawGoogleMessage & Partial<RawGatewayMessage>;
   } catch {
     return [];
   }
+  if (typeof parsed.type === "string") {
+    return parseGatewayMessage(parsed as RawGatewayMessage);
+  }
+  const msg = parsed;
   const events: LiveServerEvent[] = [];
   if (msg.setupComplete !== undefined) {
     events.push({ type: "setup-complete" });

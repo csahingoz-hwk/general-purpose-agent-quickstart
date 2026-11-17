@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
+import { gatewayEnabled } from "@/lib/ai/routing/catalog";
 import {
   createPostgresBotRosterStore,
   filterFactsForBot,
@@ -57,13 +58,14 @@ export async function POST(request: Request) {
   }
 
   const userId = session.user.id;
-  const apiKey = await resolveLiveGeminiKey(userId);
-  if (!apiKey) {
+  const useGateway = gatewayEnabled();
+  const apiKey = useGateway ? null : await resolveLiveGeminiKey(userId);
+  if (!useGateway && !apiKey) {
     return NextResponse.json(
       {
         status: "setup_required",
         message:
-          "Live voice needs a Google AI Studio key. Open Setup to add it once.",
+          "Live voice needs Vercel AI Gateway enabled or a Google AI Studio key.",
       },
       { status: 503 }
     );
@@ -136,6 +138,7 @@ export async function POST(request: Request) {
   try {
     const grant = await mintLiveVoiceToken({
       apiKey,
+      preferGateway: useGateway,
       systemInstruction,
       resumeHandle: body.resumeHandle ?? null,
     });

@@ -51,13 +51,12 @@ export async function GET() {
     const hasOpenAi = Boolean(openAiKey?.trim());
     return NextResponse.json({
       serverSttReady: gatewayReady || hasGemini || hasOpenAi,
-      // Live voice is speech-to-speech on Gemini Live: needs a Gemini key.
-      liveReady: hasGemini,
+      liveReady: gatewayReady || hasGemini,
     });
   } catch {
     return NextResponse.json({
       serverSttReady: gatewayReady,
-      liveReady: Boolean(process.env.GEMINI_API_KEY?.trim()),
+      liveReady: gatewayReady || Boolean(process.env.GEMINI_API_KEY?.trim()),
     });
   }
 }

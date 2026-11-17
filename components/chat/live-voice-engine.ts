@@ -2,6 +2,9 @@
 
 import {
   base64ToInt16,
+  buildLiveAudioClientMessage,
+  buildLiveCancelMessage,
+  buildLiveStreamEndMessage,
   type CommittedLiveTurn,
   EchoGate,
   echoSimilarity,
@@ -9,6 +12,7 @@ import {
   LIVE_FRAME_MS,
   LIVE_FRAME_SAMPLES,
   LIVE_OUTPUT_SAMPLE_RATE,
+  type LiveTransportKind,
   LiveTurnAssembler,
   parseLiveServerMessage,
   pcm16ToFloat32,
@@ -35,8 +39,10 @@ export type LiveEngineCallbacks = {
 
 type TokenGrant = {
   status: "ready";
+  transport?: LiveTransportKind;
   token: string;
   wsUrl: string;
+  protocols?: string[];
   model: string;
   setup: unknown;
 };
@@ -141,6 +147,7 @@ export class LiveVoiceEngine {
   private readonly gate = new EchoGate();
   private readonly turns = new LiveTurnAssembler();
   private phase: LivePhase = "connecting";
+  private transport: LiveTransportKind = "google-direct";
   private ready = false;
   private muted = false;
   private stopped = false;
@@ -392,7 +399,11 @@ export class LiveVoiceEngine {
   private connect(grant: TokenGrant) {
     this.ready = false;
     this.goAwayPending = false;
-    const ws = new WebSocket(grant.wsUrl);
+    this.transport = grant.transport ?? "google-direct";
+    const ws =
+      grant.protocols && grant.protocols.length > 0
+        ? new WebSocket(grant.wsUrl, grant.protocols)
+        : new WebSocket(grant.wsUrl);
     this.ws = ws;
     ws.onopen = () => {
       if (this.ws === ws) {
@@ -431,8 +442,12 @@ export class LiveVoiceEngine {
       if (this.stopped || this.phase === "paused") {
         return;
       }
-      if (ev.code === 1008 || ev.code === 1007) {
-        if (this.resumeHandle) {
+      if (
+        ev.code === 1008 ||
+        ev.code === 1007 ||
+        (ev.code === 1011 && /credit|quota|billing/i.test(ev.reason))
+      ) {
+        if (this.resumeHandle && ev.code !== 1011) {
           // Expired or invalid session resumption handle: retry cleanly without it.
           this.resumeHandle = null;
           this.reconnect();
@@ -483,11 +498,13 @@ export class LiveVoiceEngine {
     for (const event of parseLiveServerMessage(raw)) {
       switch (event.type) {
         case "setup-complete":
-          this.ready = true;
-          this.reconnectAttempts = 0;
-          this.dropStaleAudio = false;
-          this.gate.reset();
-          this.setPhase("listening");
+          if (!this.ready) {
+            this.ready = true;
+            this.reconnectAttempts = 0;
+            this.dropStaleAudio = false;
+            this.gate.reset();
+            this.setPhase("listening");
+          }
           break;
         case "input-transcript":
           this.dropStaleAudio = false;
@@ -516,6 +533,17 @@ export class LiveVoiceEngine {
             this.turns.addOutput(event.text);
             this.activeAssistantCaption = this.turns.assistantCaption;
             this.emitCaptions();
+          }
+          break;
+        case "speech-started":
+          if (this.sources.size > 0 || !this.turnCompleteReceived) {
+            this.turns.markBargeIn();
+            this.activeAssistantCaption = "";
+            this.flushPlayback();
+            this.dropStaleAudio = false;
+            this.turnCompleteReceived = true;
+            this.commitTurn(true);
+            this.setPhase(this.gateIsOpen ? "user-speaking" : "listening");
           }
           break;
         case "interrupted":
@@ -623,14 +651,9 @@ export class LiveVoiceEngine {
 
     for (const out of decision.frames) {
       this.ws.send(
-        JSON.stringify({
-          realtimeInput: {
-            audio: {
-              data: int16ToBase64(out),
-              mimeType: "audio/pcm;rate=16000",
-            },
-          },
-        })
+        JSON.stringify(
+          buildLiveAudioClientMessage(this.transport, int16ToBase64(out))
+        )
       );
     }
   }
@@ -808,9 +831,7 @@ export class LiveVoiceEngine {
       this.gate.reset();
       this.gateIsOpen = false;
       if (this.ws?.readyState === WebSocket.OPEN && this.ready) {
-        this.ws.send(
-          JSON.stringify({ realtimeInput: { audioStreamEnd: true } })
-        );
+        this.ws.send(JSON.stringify(buildLiveStreamEndMessage(this.transport)));
       }
     }
   }
@@ -822,6 +843,10 @@ export class LiveVoiceEngine {
     this.flushPlayback();
     this.dropStaleAudio = serverStillStreaming;
     this.turnCompleteReceived = true;
+    const cancel = buildLiveCancelMessage(this.transport);
+    if (cancel && this.ws?.readyState === WebSocket.OPEN && this.ready) {
+      this.ws.send(JSON.stringify(cancel));
+    }
     this.commitTurn(true);
     this.setPhase("listening");
   }
@@ -870,7 +895,7 @@ export class LiveVoiceEngine {
       ws.onclose = null;
       try {
         if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ realtimeInput: { audioStreamEnd: true } }));
+          ws.send(JSON.stringify(buildLiveStreamEndMessage(this.transport)));
         }
         ws.close(1000, "client-closed");
       } catch {

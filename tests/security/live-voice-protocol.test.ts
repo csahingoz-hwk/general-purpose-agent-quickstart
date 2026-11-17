@@ -2,8 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   base64ToInt16,
+  buildGatewayLiveSetupMessage,
+  buildLiveAudioClientMessage,
+  buildLiveCancelMessage,
   buildLiveConnectConfig,
   buildLiveSetupMessage,
+  buildLiveStreamEndMessage,
+  DEFAULT_GATEWAY_LIVE_MODEL,
   DEFAULT_LIVE_MODEL,
   downsampleTo16k,
   EchoGate,
@@ -25,8 +30,11 @@ const dbToRms = (db: number) => 10 ** (db / 20);
 
 test("live setup locks gemini-3.8-live, audio-only output, transcription, compression and noise-resistant VAD", () => {
   assert.equal(DEFAULT_LIVE_MODEL, "gemini-3.8-live");
+  assert.equal(DEFAULT_GATEWAY_LIVE_MODEL, "google/gemini-3.8-live");
   assert.equal(isAllowedLiveModel("gemini-3.8-live"), true);
+  assert.equal(isAllowedLiveModel("google/gemini-3.8-live"), true);
   assert.equal(isAllowedLiveModel("gemini-3.8-flash"), false);
+  assert.equal(isAllowedLiveModel("google/gemini-3.8-flash"), false);
 
   const msg = buildLiveSetupMessage({
     model: "gemini-3.8-live",
@@ -262,6 +270,62 @@ test("server message parser yields ordered events incl. multi-part audio, interr
     [{ type: "go-away", timeLeftMs: 4500 }]
   );
   assert.deepEqual(parseLiveServerMessage("not json"), []);
+
+  // Zero-key Vercel AI Gateway normalized Realtime V4 frames:
+  const gwSetup = buildGatewayLiveSetupMessage({
+    systemInstruction: "Be brief.",
+  });
+  assert.equal(gwSetup.type, "session-update");
+  assert.deepEqual(gwSetup.config.inputAudioFormat, {
+    type: "audio/pcm",
+    rate: 16_000,
+  });
+  assert.deepEqual(gwSetup.config.outputAudioFormat, {
+    type: "audio/pcm",
+    rate: 24_000,
+  });
+  assert.deepEqual(buildLiveAudioClientMessage("gateway", "AAA="), {
+    type: "input-audio-append",
+    audio: "AAA=",
+  });
+  assert.deepEqual(buildLiveStreamEndMessage("gateway"), {
+    type: "input-audio-commit",
+  });
+  assert.deepEqual(buildLiveCancelMessage("gateway"), {
+    type: "response-cancel",
+  });
+  assert.deepEqual(
+    parseLiveServerMessage(JSON.stringify({ type: "session-created" })),
+    [{ type: "setup-complete" }]
+  );
+  assert.deepEqual(
+    parseLiveServerMessage(
+      JSON.stringify({ type: "audio-delta", delta: "PCM=" })
+    ),
+    [{ type: "audio", data: "PCM=" }]
+  );
+  assert.deepEqual(
+    parseLiveServerMessage(
+      JSON.stringify({
+        type: "input-transcription-completed",
+        transcript: "Hello there",
+      })
+    ),
+    [{ type: "input-transcript", text: "Hello there" }]
+  );
+  assert.deepEqual(
+    parseLiveServerMessage(
+      JSON.stringify({
+        type: "audio-transcript-delta",
+        delta: "Good morning!",
+      })
+    ),
+    [{ type: "output-transcript", text: "Good morning!" }]
+  );
+  assert.deepEqual(
+    parseLiveServerMessage(JSON.stringify({ type: "response-done" })),
+    [{ type: "turn-complete" }]
+  );
 });
 
 test("voice system instruction enforces language mirroring, brevity, no guessing, and carries context", () => {

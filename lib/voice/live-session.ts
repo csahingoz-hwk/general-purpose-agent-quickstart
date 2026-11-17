@@ -1,12 +1,16 @@
 import { GoogleGenAI } from "@google/genai";
+import { gateway } from "ai";
+import { gatewayEnabled } from "@/lib/ai/routing/catalog";
 import {
   createPostgresVaultStore,
   isVaultConfigured,
 } from "@/lib/vault/secret-vault";
 import {
+  buildGatewayLiveSetupMessage,
   buildLiveConnectConfig,
   buildLiveSetupMessage,
   DEFAULT_LIVE_VOICE,
+  type LiveTransportKind,
   liveConstrainedSocketUrl,
 } from "./live-protocol";
 import {
@@ -92,37 +96,112 @@ export function buildVoiceSystemInstruction(opts: {
 }
 
 export type LiveTokenGrant = {
+  transport: LiveTransportKind;
   token: string;
   model: string;
   wsUrl: string;
-  setup: ReturnType<typeof buildLiveSetupMessage>;
+  protocols?: string[];
+  setup:
+    | ReturnType<typeof buildLiveSetupMessage>
+    | ReturnType<typeof buildGatewayLiveSetupMessage>;
   expiresAt: string;
 };
 
 /**
- * Mints a single-use ephemeral token whose session config is locked
- * server-side (model, voice, VAD, transcription, system instruction). The
- * long-lived Gemini key never reaches the browser.
+ * Mints a zero-key Vercel AI Gateway realtime grant for `google/gemini-3.8-live`
+ * (using `vcst_` client secret when `AI_GATEWAY_API_KEY` is set, or Vercel OIDC
+ * on Preview/Production), falling back to a single-use Google Direct ephemeral
+ * token when AI Gateway is disabled and a personal `GEMINI_API_KEY` is present.
  */
 export async function mintLiveVoiceToken(opts: {
-  apiKey: string;
+  apiKey?: string | null;
+  preferGateway?: boolean;
   systemInstruction: string;
   resumeHandle?: string | null;
   voiceName?: string;
 }): Promise<LiveTokenGrant> {
-  let model: string;
+  let baseModel: string;
   try {
-    model = resolveLiveVoiceModelName();
+    baseModel = resolveLiveVoiceModelName().replace(/^google\//, "");
   } catch (err) {
     throw new LiveVoiceSetupError(
       "model_blocked",
       err instanceof Error ? err.message : "Blocked voice model"
     );
   }
-  const voiceName = opts.voiceName ?? process.env.GEMINI_LIVE_VOICE?.trim();
+  const voiceName =
+    opts.voiceName ??
+    (process.env.GEMINI_LIVE_VOICE?.trim() || DEFAULT_LIVE_VOICE);
+
+  if (opts.preferGateway ?? gatewayEnabled()) {
+    const gatewayModel = `google/${baseModel}`;
+    try {
+      let token = "";
+      let wsUrl = "";
+      let expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      try {
+        const secret = await gateway.experimental_realtime.getToken({
+          model: gatewayModel,
+        });
+        token = secret.token;
+        wsUrl = secret.url;
+        if (secret.expiresAt) {
+          expiresAt = String(secret.expiresAt);
+        }
+      } catch {
+        // Vercel OIDC deployment mode: use short-lived OIDC subprotocol auth.
+        const rtModel = gateway.experimental_realtime(
+          gatewayModel
+        ) as unknown as {
+          getServerWebSocketConfig: () => Promise<{
+            url: string;
+            headers: Record<string, string>;
+          }>;
+        };
+        const serverCfg = await rtModel.getServerWebSocketConfig();
+        const rawAuth =
+          serverCfg.headers.authorization ??
+          serverCfg.headers.Authorization ??
+          "";
+        token = rawAuth.replace(/^Bearer\s+/i, "").trim();
+        wsUrl = serverCfg.url;
+      }
+      if (token && wsUrl) {
+        return {
+          transport: "gateway",
+          token,
+          model: gatewayModel,
+          wsUrl,
+          protocols: ["ai-gateway-realtime-v1", `ai-gateway-auth.${token}`],
+          setup: buildGatewayLiveSetupMessage({
+            systemInstruction: opts.systemInstruction,
+            voiceName,
+          }),
+          expiresAt,
+        };
+      }
+    } catch (err) {
+      if (!opts.apiKey) {
+        throw new LiveVoiceSetupError(
+          "token_failed",
+          err instanceof Error
+            ? `Live voice gateway setup failed: ${err.message.slice(0, 120)}`
+            : "Live voice gateway setup failed."
+        );
+      }
+    }
+  }
+
+  if (!opts.apiKey) {
+    throw new LiveVoiceSetupError(
+      "key_missing",
+      "Live voice needs AI Gateway enabled or a Google AI Studio key."
+    );
+  }
+
   const config = buildLiveConnectConfig({
     systemInstruction: opts.systemInstruction,
-    voiceName: voiceName || DEFAULT_LIVE_VOICE,
+    voiceName,
     resumeHandle: opts.resumeHandle,
   });
 
@@ -141,7 +220,7 @@ export async function mintLiveVoiceToken(opts: {
         expireTime,
         newSessionExpireTime,
         liveConnectConstraints: {
-          model,
+          model: baseModel,
           config: config as any,
         },
         lockAdditionalFields: [],
@@ -167,13 +246,14 @@ export async function mintLiveVoiceToken(opts: {
   }
 
   return {
+    transport: "google-direct",
     token: tokenName,
-    model,
+    model: baseModel,
     wsUrl: liveConstrainedSocketUrl(tokenName),
     setup: buildLiveSetupMessage({
-      model,
+      model: baseModel,
       systemInstruction: opts.systemInstruction,
-      voiceName: voiceName || DEFAULT_LIVE_VOICE,
+      voiceName,
       resumeHandle: opts.resumeHandle,
     }),
     expiresAt: expireTime,
