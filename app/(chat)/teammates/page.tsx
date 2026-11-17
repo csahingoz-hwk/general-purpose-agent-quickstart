@@ -49,11 +49,23 @@ export default function TeammatesPage() {
     setActiveSlug(bot.slug);
     try {
       window.localStorage.setItem(ACTIVE_BOT_STORAGE_KEY, bot.slug);
+      window.localStorage.setItem(
+        "assistant-active-bot-name",
+        bot.slug === "chief-of-staff" ? "" : bot.name
+      );
       window.localStorage.setItem(MASCOT_STORAGE_KEY, bot.mascotVariant);
       document.documentElement.dataset.botTheme = bot.mascotVariant;
+      const maxAge = 60 * 60 * 24 * 365;
+      // biome-ignore lint/suspicious/noDocumentCookie: sync active teammate default model cookie
+      document.cookie = `chat-model=${encodeURIComponent(bot.defaultModel)}; path=/; max-age=${maxAge}`;
       window.dispatchEvent(
         new CustomEvent("assistant-mascot-change", {
           detail: bot.mascotVariant,
+        })
+      );
+      window.dispatchEvent(
+        new CustomEvent("assistant-bot-change", {
+          detail: { slug: bot.slug, name: bot.name },
         })
       );
     } catch {

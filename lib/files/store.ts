@@ -6,8 +6,11 @@ import {
   randomUUID,
 } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { put } from "@vercel/blob";
+import postgres from "postgres";
+import { ensureParitySchema } from "@/lib/db/ensure-parity-schema";
 import type { AllowedAttachmentMediaType } from "./attachment-validator";
 
 export type StoredPrivateFile = {
@@ -158,7 +161,22 @@ function hasUsableBlobToken(): boolean {
 }
 
 function resolveLocalCacheDir(): string {
-  return path.join(process.cwd(), ".next", "cache", "private-files");
+  return path.join(os.tmpdir(), "assistant-private-files");
+}
+
+let pgFileClient: ReturnType<typeof postgres> | undefined;
+async function getFileSql() {
+  const url = (process.env.POSTGRES_URL ?? "").trim();
+  if (!url || url === "****") {
+    return null;
+  }
+  pgFileClient ??= postgres(url, {
+    max: 2,
+    prepare: false,
+    idle_timeout: 2,
+  });
+  await ensureParitySchema(pgFileClient);
+  return pgFileClient;
 }
 
 function isAllowedVercelBlobUrl(rawUrl: string): boolean {
@@ -204,6 +222,18 @@ export function getDefaultPrivateFileStore(): PrivateFileStore {
         };
       }
 
+      const sql = await getFileSql();
+      if (sql) {
+        await sql`
+          INSERT INTO "PrivateFile" ("id", "userId", "envelope")
+          VALUES (${fileId}, ${userId}, ${envelope})
+        `;
+        return {
+          fileId,
+          storageRef: `pg:${fileId}`,
+        };
+      }
+
       const dir = resolveLocalCacheDir();
       await mkdir(dir, { recursive: true });
       const localFile = `${fileId}.enc`;
@@ -230,6 +260,28 @@ export function getDefaultPrivateFileStore(): PrivateFileStore {
           fileId,
           contentType,
           envelope,
+        });
+      }
+
+      if (storageRef.startsWith("pg:")) {
+        const sql = await getFileSql();
+        if (!sql) {
+          return null;
+        }
+        const rows = await sql`
+          SELECT "envelope" FROM "PrivateFile"
+          WHERE "id" = ${fileId} AND "userId" = ${userId}
+          LIMIT 1
+        `;
+        const raw = rows[0]?.envelope as Uint8Array | Buffer | undefined;
+        if (!raw) {
+          return null;
+        }
+        return decryptFileBytes({
+          userId,
+          fileId,
+          contentType,
+          envelope: new Uint8Array(raw),
         });
       }
 

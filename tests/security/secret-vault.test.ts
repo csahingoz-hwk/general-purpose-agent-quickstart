@@ -11,10 +11,12 @@ import {
 
 const TEST_MASTER_KEY = "unit-test-only-vault-master-key-at-least-32-bytes";
 
-test("secret vault fails closed when SECRET_VAULT_KEY is missing or too short", () => {
+test("secret vault fails closed when both SECRET_VAULT_KEY and AUTH_SECRET are missing or too short, and derives a subkey from AUTH_SECRET when configured", () => {
   const prev = process.env.SECRET_VAULT_KEY;
+  const prevAuth = process.env.AUTH_SECRET;
   try {
     Reflect.deleteProperty(process.env, "SECRET_VAULT_KEY");
+    Reflect.deleteProperty(process.env, "AUTH_SECRET");
     assert.equal(isVaultConfigured(), false);
     assert.throws(
       () =>
@@ -37,9 +39,35 @@ test("secret vault fails closed when SECRET_VAULT_KEY is missing or too short", 
       (err: unknown) =>
         err instanceof VaultError && err.code === "vault_key_missing"
     );
+
+    process.env.AUTH_SECRET =
+      "owner-auth-secret-at-least-thirty-two-bytes-long";
+    assert.equal(isVaultConfigured(), true);
+    const encFromAuth = encryptSecretPayload({
+      userId: "user-1",
+      name: "GEMINI_API_KEY",
+      plaintext: "AIzaSyExampleKey123456",
+    });
+    assert.equal(
+      decryptSecretPayload({
+        userId: "user-1",
+        name: "GEMINI_API_KEY",
+        ciphertext: encFromAuth.ciphertext,
+        iv: encFromAuth.iv,
+        authTag: encFromAuth.authTag,
+      }),
+      "AIzaSyExampleKey123456"
+    );
   } finally {
     if (prev !== undefined) {
       process.env.SECRET_VAULT_KEY = prev;
+    } else {
+      Reflect.deleteProperty(process.env, "SECRET_VAULT_KEY");
+    }
+    if (prevAuth !== undefined) {
+      process.env.AUTH_SECRET = prevAuth;
+    } else {
+      Reflect.deleteProperty(process.env, "AUTH_SECRET");
     }
   }
 });

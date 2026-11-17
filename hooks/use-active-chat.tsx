@@ -163,6 +163,14 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
             (part) => "state" in part && part.state === "approval-responded"
           );
 
+        let activeBotSlug: string | null = null;
+        try {
+          activeBotSlug =
+            window.localStorage.getItem("assistant-active-bot")?.trim() || null;
+        } catch {
+          activeBotSlug = null;
+        }
+
         return {
           body: {
             id: request.id,
@@ -174,6 +182,7 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
             selectedChatModel: currentModelIdRef.current,
             selectedVisibilityType: visibility,
             timeZone: browserTimeZone(),
+            ...(activeBotSlug ? { selectedBotSlug: activeBotSlug } : {}),
             ...request.body,
           },
         };

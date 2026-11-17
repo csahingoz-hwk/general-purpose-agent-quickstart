@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { buildSoulPrompt } from "@/lib/ai/prompts";
+import { ensureParitySchema } from "@/lib/db/ensure-parity-schema";
 import { isMascotVariant, type MascotVariant } from "@/lib/mascot";
 import type { ProfileFact } from "@/lib/memory/store";
 
@@ -234,6 +235,7 @@ export function createPostgresBotRosterStore(): BotRosterStore {
         return [...merged.values()];
       }
       try {
+        await ensureParitySchema(sql);
         const rows = await sql`
           SELECT * FROM "BotProfile"
           WHERE "userId" = ${userId}
@@ -287,6 +289,7 @@ export function createPostgresBotRosterStore(): BotRosterStore {
       if (!sql) {
         throw new Error("Database is not configured for custom teammates");
       }
+      await ensureParitySchema(sql);
       const normalized = normalizeBotSlug(slug);
       const safeMascot: MascotVariant = isMascotVariant(mascotVariant)
         ? mascotVariant

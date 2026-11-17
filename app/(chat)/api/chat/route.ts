@@ -65,6 +65,7 @@ import {
   composeTeammateSoul,
   createPostgresBotRosterStore,
   extractRequestedBotSlug,
+  filterFactsForBot,
 } from "@/lib/bots/roster";
 import { isGithubConnectorEnabled } from "@/lib/connectors/calendar-and-github";
 import { isGoogleConnectorsEnabled } from "@/lib/connectors/google-vault-auth";
@@ -329,11 +330,31 @@ export async function POST(request: Request) {
             .catch(() => [])
         ).find((s) => s.slug === requestedSkillSlug) ?? null)
       : null;
-    const baseContext = contextBlock({
+    const rawBaseContext = contextBlock({
       now: requestNow,
       timeZone: requestTimeZone ?? homeLocation?.timeZone ?? null,
       home: homeLocation,
     });
+    const storedFacts =
+      session.user.type !== "guest" && isMemoryToolsEnabled()
+        ? await createPostgresMemoryStore()
+            .listProfileFacts({ userId: session.user.id })
+            .catch(() => [])
+        : [];
+    const scopedFacts = filterFactsForBot(
+      storedFacts,
+      activeTeammate?.slug ?? "chief-of-staff"
+    ).slice(0, 15);
+    const memoryContextBlock =
+      scopedFacts.length > 0
+        ? `Owner profile facts (durable memory):\n${scopedFacts
+            .map((f) => `- [${f.category}] ${f.key}: ${f.value}`)
+            .join("\n")
+            .slice(0, 1200)}`
+        : "";
+    const baseContext = memoryContextBlock
+      ? `${rawBaseContext}\n\n${memoryContextBlock}`
+      : rawBaseContext;
     const replySystemPrompt = systemPrompt({
       supportsTools,
       soul: effectiveSoul,

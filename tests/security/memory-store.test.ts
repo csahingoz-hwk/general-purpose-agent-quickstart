@@ -98,21 +98,28 @@ test("journal entries support chronological order, keyword/tag search, and memor
   assert.equal(recalled.journalEntries[0].title, "SA90 EOSB reconciliation");
 });
 
-test("memory tools stay off by default and never coexist with webSearch when enabled", () => {
+test("memory tools default on for verified owner, stay off for guests or when disabled, and never coexist with webSearch", () => {
   const prev = process.env.MEMORY_TOOLS_ENABLED;
   try {
     Reflect.deleteProperty(process.env, "MEMORY_TOOLS_ENABLED");
+    assert.equal(isMemoryToolsEnabled(), true);
+    assert.deepEqual(
+      selectActiveTools([userMsg("Save to my profile that I use GBP")], false),
+      []
+    );
+    assert.deepEqual(
+      selectActiveTools([userMsg("Save to my profile that I use GBP")], true),
+      ["saveProfileFact"]
+    );
+
+    process.env.MEMORY_TOOLS_ENABLED = "false";
     assert.equal(isMemoryToolsEnabled(), false);
     assert.deepEqual(
       selectActiveTools([userMsg("Save to my profile that I use GBP")], true),
       []
     );
 
-    process.env.MEMORY_TOOLS_ENABLED = "true";
-    assert.deepEqual(
-      selectActiveTools([userMsg("Save to my profile that I use GBP")], true),
-      ["saveProfileFact"]
-    );
+    Reflect.deleteProperty(process.env, "MEMORY_TOOLS_ENABLED");
     assert.deepEqual(
       selectActiveTools(
         [userMsg("Search the web for GBP rates and save to my profile")],

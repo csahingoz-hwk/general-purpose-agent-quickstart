@@ -70,6 +70,7 @@ function PureMultimodalInput({
   stop,
   attachments,
   setAttachments,
+  messages,
   setMessages,
   sendMessage,
   className,
@@ -576,6 +577,33 @@ function PureMultimodalInput({
             />
             <VoiceMemoControls
               disabled={status !== "ready"}
+              latestAssistantSpeech={
+                status === "ready"
+                  ? ([...messages]
+                      .reverse()
+                      .find((m) => m.role === "assistant")
+                      ?.parts.filter(
+                        (p): p is { type: "text"; text: string } =>
+                          p.type === "text" && "text" in p
+                      )
+                      .map((p) => p.text)
+                      .join("\n") ?? null)
+                  : null
+              }
+              onSendVoiceTurn={(spoken) => {
+                if (!modelReady || !spoken.trim()) {
+                  return;
+                }
+                window.history.pushState(
+                  {},
+                  "",
+                  `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/chat/${chatId}`
+                );
+                (sendMessage as UseChatHelpers<ChatMessage>["sendMessage"])({
+                  role: "user",
+                  parts: [{ type: "text", text: spoken.trim() }],
+                });
+              }}
               onTranscript={(spoken) => {
                 setInput((prev) =>
                   prev.trim() ? `${prev.trim()} ${spoken}` : spoken
@@ -644,6 +672,9 @@ export const MultimodalInput = memo(
       return false;
     }
     if (prevProps.messages.length !== nextProps.messages.length) {
+      return false;
+    }
+    if (prevProps.messages.at(-1) !== nextProps.messages.at(-1)) {
       return false;
     }
 
@@ -716,7 +747,7 @@ function PureModelSelectorCompact({
       <ModelSelectorTrigger asChild>
         <Button
           aria-label={`${copy.modelMenuLabel}: ${selected.name}`}
-          className="h-11 max-w-[9.5rem] gap-1.5 rounded-full px-3 text-[15px] text-muted-foreground hover:bg-control md:h-11"
+          className="h-11 max-w-[8.5rem] gap-1.5 rounded-full px-3 text-[15px] text-muted-foreground hover:bg-control sm:max-w-[9.5rem] md:h-11"
           data-testid="model-selector"
           variant="ghost"
         >

@@ -92,7 +92,10 @@ export async function POST(request: Request) {
       bytes,
     });
 
-    if (result.status === "setup_required" && gatewayEnabled()) {
+    if (
+      (result.status === "setup_required" || result.status === "error") &&
+      gatewayEnabled()
+    ) {
       const ledger = createUsageLedger(session.user.id, randomUUID());
       let reservationId: string | null = null;
       try {

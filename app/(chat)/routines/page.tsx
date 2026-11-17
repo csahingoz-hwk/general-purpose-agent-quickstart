@@ -10,8 +10,9 @@ import {
   Trash2Icon,
   XCircleIcon,
 } from "lucide-react";
-import { useState } from "react";
-import useSWR from "swr";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import useSWR, { useSWRConfig } from "swr";
 import { SubpageHeader } from "@/components/chat/subpage-header";
 import { toast } from "@/components/chat/toast";
 import { cn, fetcher } from "@/lib/utils";
@@ -89,9 +90,56 @@ function describeCron(cron: string): string {
   return match ? match.label : cron;
 }
 
+const SERVICE_SECRET_PRESETS: Record<
+  string,
+  { defaultName: string; hint: string }
+> = {
+  gemini: {
+    defaultName: "GEMINI_API_KEY",
+    hint: "Unlocks Live Voice sessions and Imagen/Veo Media Studio (personal use).",
+  },
+  google: {
+    defaultName: "GOOGLE_CONNECTOR_ACCESS_TOKEN",
+    hint: "Unlocks Gmail, Drive, and Calendar read & draft-only tools.",
+  },
+  github: {
+    defaultName: "GITHUB_CONNECTOR_PAT",
+    hint: "Unlocks GitHub pull request & issue reads and pending draft reviews.",
+  },
+  openai: {
+    defaultName: "OPENAI_VOICE_API_KEY",
+    hint: "Optional direct OpenAI voice transcription key.",
+  },
+  custom: {
+    defaultName: "",
+    hint: "Stored encrypted with AES-256-GCM; never exposed in prompts.",
+  },
+};
+
 export default function RoutinesPage() {
+  return (
+    <Suspense fallback={<div className="h-dvh w-full bg-background" />}>
+      <RoutinesPageContent />
+    </Suspense>
+  );
+}
+
+function RoutinesPageContent() {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+  const searchParams = useSearchParams();
+  const { mutate: globalMutate } = useSWRConfig();
   const [tab, setTab] = useState<"routines" | "tasks" | "vault">("routines");
+
+  useEffect(() => {
+    const requested = searchParams.get("tab");
+    if (
+      requested === "vault" ||
+      requested === "tasks" ||
+      requested === "routines"
+    ) {
+      setTab(requested);
+    }
+  }, [searchParams]);
 
   const [scheduleChoice, setScheduleChoice] = useState<string>("0 8 * * 1-5");
   const [cronExpression, setCronExpression] = useState("0 8 * * 1-5");
@@ -99,8 +147,8 @@ export default function RoutinesPage() {
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const [secretName, setSecretName] = useState("");
-  const [secretProvider, setSecretProvider] = useState("google");
+  const [secretProvider, setSecretProvider] = useState("gemini");
+  const [secretName, setSecretName] = useState("GEMINI_API_KEY");
   const [secretPlaintext, setSecretPlaintext] = useState("");
 
   const { data: schedulesData, mutate: mutateSchedules } =
@@ -238,12 +286,16 @@ export default function RoutinesPage() {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error ?? "Could not store credential");
       }
-      setSecretName("");
       setSecretPlaintext("");
-      await mutateVault();
+      setSecretName(SERVICE_SECRET_PRESETS[secretProvider]?.defaultName ?? "");
+      await Promise.all([
+        mutateVault(),
+        globalMutate(`${basePath}/api/connectors`),
+        globalMutate(`${basePath}/api/voice/transcribe`),
+      ]);
       toast({
         type: "success",
-        description: "Encrypted credential saved.",
+        description: "Encrypted credential saved and connected.",
       });
     } catch (err) {
       toast({
@@ -262,7 +314,11 @@ export default function RoutinesPage() {
       { method: "DELETE" }
     );
     if (response.ok) {
-      await mutateVault();
+      await Promise.all([
+        mutateVault(),
+        globalMutate(`${basePath}/api/connectors`),
+        globalMutate(`${basePath}/api/voice/transcribe`),
+      ]);
     }
   }
 
@@ -272,7 +328,7 @@ export default function RoutinesPage() {
         <SubpageHeader
           badge={
             <span className="rounded-full border border-[color:var(--hairline)] bg-card px-3 py-1 text-muted-foreground text-xs">
-              Preview mode
+              {vaultData?.status === "ready" ? "Vault active" : "Preview mode"}
             </span>
           }
         />
@@ -503,6 +559,11 @@ export default function RoutinesPage() {
                     <p className="whitespace-pre-wrap text-[15px]">
                       {job.prompt}
                     </p>
+                    {job.lastOutput && (
+                      <p className="whitespace-pre-wrap rounded-xl bg-muted/50 p-3 text-[13px] text-foreground">
+                        {job.lastOutput}
+                      </p>
+                    )}
                     <p className="text-muted-foreground text-xs tabular-nums">
                       Next window: {new Date(job.nextRunAt).toLocaleString()} ·
                       Last run:{" "}
@@ -626,33 +687,46 @@ export default function RoutinesPage() {
 
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="space-y-1.5 text-sm">
+                  <span className="text-muted-foreground text-xs">Service</span>
+                  <select
+                    className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                    onChange={(e) => {
+                      const nextProvider = e.target.value;
+                      setSecretProvider(nextProvider);
+                      const preset = SERVICE_SECRET_PRESETS[nextProvider];
+                      if (preset) {
+                        setSecretName(preset.defaultName);
+                      }
+                    }}
+                    value={secretProvider}
+                  >
+                    <option value="gemini">Google Gemini</option>
+                    <option value="google">Google Workspace</option>
+                    <option value="github">GitHub</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="custom">Custom</option>
+                  </select>
+                </label>
+
+                <label className="space-y-1.5 text-sm">
                   <span className="text-muted-foreground text-xs">
                     Credential name
                   </span>
                   <input
-                    className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                    className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 font-mono text-[15px] text-foreground"
                     onChange={(e) => setSecretName(e.target.value)}
                     placeholder="e.g. GEMINI_API_KEY"
                     required
                     value={secretName}
                   />
                 </label>
-
-                <label className="space-y-1.5 text-sm">
-                  <span className="text-muted-foreground text-xs">Service</span>
-                  <select
-                    className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
-                    onChange={(e) => setSecretProvider(e.target.value)}
-                    value={secretProvider}
-                  >
-                    <option value="google">Google Workspace</option>
-                    <option value="gemini">Google Gemini</option>
-                    <option value="github">GitHub</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="custom">Custom</option>
-                  </select>
-                </label>
               </div>
+
+              {SERVICE_SECRET_PRESETS[secretProvider]?.hint && (
+                <p className="text-muted-foreground text-xs">
+                  {SERVICE_SECRET_PRESETS[secretProvider]?.hint}
+                </p>
+              )}
 
               <label className="block space-y-1.5 text-sm">
                 <span className="text-muted-foreground text-xs">

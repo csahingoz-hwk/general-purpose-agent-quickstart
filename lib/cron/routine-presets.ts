@@ -50,7 +50,7 @@ export const ROUTINE_PRESETS: readonly RoutinePreset[] = [
 ];
 
 export function isRoutinesEnabled(): boolean {
-  return process.env.ROUTINES_ENABLED === "true";
+  return process.env.ROUTINES_ENABLED !== "false";
 }
 
 export function validateRoutineInput(input: {

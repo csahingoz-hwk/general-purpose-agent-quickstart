@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/app/(auth)/auth";
 import {
+  GITHUB_VAULT_SECRET_NAME,
+  isGithubConnectorEnabled,
+} from "@/lib/connectors/calendar-and-github";
+import {
   GOOGLE_VAULT_SECRET_NAMES,
   isGoogleConnectorsEnabled,
 } from "@/lib/connectors/google-vault-auth";
@@ -9,6 +13,7 @@ import {
   isVaultConfigured,
   VaultError,
 } from "@/lib/vault/secret-vault";
+import { VOICE_VAULT_SECRET_NAMES } from "@/lib/voice/voice-service";
 
 export async function GET() {
   const session = await auth();
@@ -17,6 +22,7 @@ export async function GET() {
   }
 
   const enabled = isGoogleConnectorsEnabled();
+  const githubEnabled = isGithubConnectorEnabled();
   const vaultKeyReady = isVaultConfigured();
 
   if (!vaultKeyReady) {
@@ -26,6 +32,10 @@ export async function GET() {
       policy: "read_and_draft_only_never_send",
       gmailReady: false,
       driveReady: false,
+      calendarReady: false,
+      geminiReady: false,
+      githubReady: false,
+      voiceSttKeyReady: false,
       configuredKeys: [],
       requiredAnyOf: [
         [GOOGLE_VAULT_SECRET_NAMES.accessToken],
@@ -49,6 +59,9 @@ export async function GET() {
       names.has(GOOGLE_VAULT_SECRET_NAMES.clientId) &&
       names.has(GOOGLE_VAULT_SECRET_NAMES.clientSecret);
     const ready = enabled && (hasAccess || hasRefreshSet);
+    const hasGemini = names.has(VOICE_VAULT_SECRET_NAMES.geminiApiKey);
+    const hasOpenAiVoice = names.has(VOICE_VAULT_SECRET_NAMES.openaiApiKey);
+    const hasGithub = names.has(GITHUB_VAULT_SECRET_NAME);
 
     return NextResponse.json({
       enabled,
@@ -56,17 +69,16 @@ export async function GET() {
       policy: "read_and_draft_only_never_send",
       gmailReady: ready,
       driveReady: ready,
-      configuredKeys: secrets
-        .filter((s) =>
-          (Object.values(GOOGLE_VAULT_SECRET_NAMES) as string[]).includes(
-            s.name
-          )
-        )
-        .map((s) => ({
-          name: s.name,
-          keyHint: s.keyHint,
-          updatedAt: s.updatedAt,
-        })),
+      calendarReady: ready,
+      geminiReady: hasGemini,
+      githubReady: githubEnabled && hasGithub,
+      voiceSttKeyReady: hasGemini || hasOpenAiVoice,
+      configuredKeys: secrets.map((s) => ({
+        name: s.name,
+        provider: s.provider,
+        keyHint: s.keyHint,
+        updatedAt: s.updatedAt,
+      })),
       requiredAnyOf: [
         [GOOGLE_VAULT_SECRET_NAMES.accessToken],
         [
@@ -84,6 +96,10 @@ export async function GET() {
         policy: "read_and_draft_only_never_send",
         gmailReady: false,
         driveReady: false,
+        calendarReady: false,
+        geminiReady: false,
+        githubReady: false,
+        voiceSttKeyReady: false,
         configuredKeys: [],
         setupRequired: true,
       });

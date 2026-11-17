@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
+import { ensureParitySchema } from "@/lib/db/ensure-parity-schema";
 
 export type SkillItem = {
   id: string;
@@ -158,11 +159,18 @@ function isMissingTable(error: unknown): boolean {
   );
 }
 
+async function readySql() {
+  const sql = getSql();
+  await ensureParitySchema(sql);
+  return sql;
+}
+
 export function createPostgresSkillStore(): SkillStore {
   return {
     async listSkills(userId) {
       try {
-        const rows = await getSql()`
+        const sql = await readySql();
+        const rows = await sql`
           SELECT "id", "slug", "name", "description", "instructions", "updatedAt"
           FROM "SkillEntry"
           WHERE "userId" = ${userId}
@@ -199,7 +207,8 @@ export function createPostgresSkillStore(): SkillStore {
       }
       const id = randomUUID();
       try {
-        const [row] = await getSql()`
+        const sql = await readySql();
+        const [row] = await sql`
           INSERT INTO "SkillEntry" ("id", "userId", "slug", "name", "description", "instructions")
           VALUES (${id}, ${userId}, ${cleanSlug}, ${name.trim()}, ${description.trim()}, ${instructions.trim()})
           ON CONFLICT ("userId", "slug")
@@ -228,7 +237,8 @@ export function createPostgresSkillStore(): SkillStore {
     },
     async deleteSkill({ userId, slug }) {
       try {
-        const deleted = await getSql()`
+        const sql = await readySql();
+        const deleted = await sql`
           DELETE FROM "SkillEntry"
           WHERE "userId" = ${userId} AND "slug" = ${normalizeSkillSlug(slug)}
           RETURNING "id"

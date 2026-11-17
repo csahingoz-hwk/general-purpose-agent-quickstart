@@ -10,8 +10,20 @@ import {
   executeDryRunTask,
 } from "../../lib/tasks/runner";
 
-test("all built-in routine presets validate cleanly and invalid cron/timezones fail", () => {
-  assert.equal(isRoutinesEnabled(), false);
+test("all built-in routine presets validate cleanly, routines default on for owner, and invalid cron/timezones fail", () => {
+  const prev = process.env.ROUTINES_ENABLED;
+  try {
+    Reflect.deleteProperty(process.env, "ROUTINES_ENABLED");
+    assert.equal(isRoutinesEnabled(), true);
+    process.env.ROUTINES_ENABLED = "false";
+    assert.equal(isRoutinesEnabled(), false);
+  } finally {
+    if (prev === undefined) {
+      Reflect.deleteProperty(process.env, "ROUTINES_ENABLED");
+    } else {
+      process.env.ROUTINES_ENABLED = prev;
+    }
+  }
   for (const preset of ROUTINE_PRESETS) {
     const res = validateRoutineInput(preset);
     assert.equal(res.ok, true, preset.id);

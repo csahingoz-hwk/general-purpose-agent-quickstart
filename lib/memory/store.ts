@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
+import { ensureParitySchema } from "@/lib/db/ensure-parity-schema";
 
 export type MemoryCategory =
   | "identity"
@@ -66,7 +67,7 @@ export interface MemoryStore {
 export class MemoryStoreUnavailableError extends Error {}
 
 export function isMemoryToolsEnabled(): boolean {
-  return process.env.MEMORY_TOOLS_ENABLED === "true";
+  return process.env.MEMORY_TOOLS_ENABLED !== "false";
 }
 
 function normalizeFactKey(key: string): string {
@@ -206,6 +207,12 @@ function isMissingTable(error: unknown): boolean {
   );
 }
 
+async function readySql() {
+  const sql = getSql();
+  await ensureParitySchema(sql);
+  return sql;
+}
+
 export function createPostgresMemoryStore(): MemoryStore {
   return {
     async upsertProfileFact({
@@ -214,20 +221,23 @@ export function createPostgresMemoryStore(): MemoryStore {
       key,
       value,
       sharedAcrossBots = true,
+      botSlug = null,
     }) {
       const normalizedKey = normalizeFactKey(key);
       const id = randomUUID();
       try {
-        const [row] = await getSql()`
-          INSERT INTO "MemoryProfileFact" ("id", "userId", "category", "key", "value", "sharedAcrossBots")
-          VALUES (${id}, ${userId}, ${category}, ${normalizedKey}, ${value.trim()}, ${sharedAcrossBots})
+        const sql = await readySql();
+        const [row] = await sql`
+          INSERT INTO "MemoryProfileFact" ("id", "userId", "category", "key", "value", "sharedAcrossBots", "botSlug")
+          VALUES (${id}, ${userId}, ${category}, ${normalizedKey}, ${value.trim()}, ${sharedAcrossBots}, ${botSlug})
           ON CONFLICT ("userId", "key")
           DO UPDATE SET
             "category" = EXCLUDED."category",
             "value" = EXCLUDED."value",
             "sharedAcrossBots" = EXCLUDED."sharedAcrossBots",
+            "botSlug" = EXCLUDED."botSlug",
             "updatedAt" = now()
-          RETURNING "id", "userId", "category", "key", "value", "sharedAcrossBots", "updatedAt"
+          RETURNING "id", "userId", "category", "key", "value", "sharedAcrossBots", "botSlug", "updatedAt"
         `;
         return {
           id: String(row.id),
@@ -236,6 +246,7 @@ export function createPostgresMemoryStore(): MemoryStore {
           key: String(row.key),
           value: String(row.value),
           sharedAcrossBots: Boolean(row.sharedAcrossBots),
+          botSlug: row.botSlug ? String(row.botSlug) : null,
           updatedAt: new Date(row.updatedAt).toISOString(),
         };
       } catch (error) {
@@ -247,15 +258,16 @@ export function createPostgresMemoryStore(): MemoryStore {
     },
     async listProfileFacts({ userId, sharedOnly = false }) {
       try {
+        const sql = await readySql();
         const rows = sharedOnly
-          ? await getSql()`
-              SELECT "id", "userId", "category", "key", "value", "sharedAcrossBots", "updatedAt"
+          ? await sql`
+              SELECT "id", "userId", "category", "key", "value", "sharedAcrossBots", "botSlug", "updatedAt"
               FROM "MemoryProfileFact"
               WHERE "userId" = ${userId} AND "sharedAcrossBots" = true
               ORDER BY "updatedAt" DESC
             `
-          : await getSql()`
-              SELECT "id", "userId", "category", "key", "value", "sharedAcrossBots", "updatedAt"
+          : await sql`
+              SELECT "id", "userId", "category", "key", "value", "sharedAcrossBots", "botSlug", "updatedAt"
               FROM "MemoryProfileFact"
               WHERE "userId" = ${userId}
               ORDER BY "updatedAt" DESC
@@ -267,6 +279,7 @@ export function createPostgresMemoryStore(): MemoryStore {
           key: String(row.key),
           value: String(row.value),
           sharedAcrossBots: Boolean(row.sharedAcrossBots),
+          botSlug: row.botSlug ? String(row.botSlug) : null,
           updatedAt: new Date(row.updatedAt).toISOString(),
         }));
       } catch (error) {
@@ -278,7 +291,8 @@ export function createPostgresMemoryStore(): MemoryStore {
     },
     async deleteProfileFact({ userId, id }) {
       try {
-        const deleted = await getSql()`
+        const sql = await readySql();
+        const deleted = await sql`
           DELETE FROM "MemoryProfileFact"
           WHERE "userId" = ${userId} AND "id" = ${id}
           RETURNING "id"
@@ -302,7 +316,8 @@ export function createPostgresMemoryStore(): MemoryStore {
       ];
       const id = randomUUID();
       try {
-        const [row] = await getSql()`
+        const sql = await readySql();
+        const [row] = await sql`
           INSERT INTO "MemoryJournalEntry" ("id", "userId", "title", "body", "tags", "source")
           VALUES (${id}, ${userId}, ${title.trim()}, ${body.trim()}, ${JSON.stringify(cleanTags)}::jsonb, ${source})
           RETURNING "id", "userId", "title", "body", "tags", "source", "createdAt"
@@ -325,7 +340,8 @@ export function createPostgresMemoryStore(): MemoryStore {
     },
     async listJournalEntries({ userId, query, tag, limit = 25 }) {
       try {
-        const rows = await getSql()`
+        const sql = await readySql();
+        const rows = await sql`
           SELECT "id", "userId", "title", "body", "tags", "source", "createdAt"
           FROM "MemoryJournalEntry"
           WHERE "userId" = ${userId}
@@ -368,7 +384,8 @@ export function createPostgresMemoryStore(): MemoryStore {
     },
     async deleteJournalEntry({ userId, id }) {
       try {
-        const deleted = await getSql()`
+        const sql = await readySql();
+        const deleted = await sql`
           DELETE FROM "MemoryJournalEntry"
           WHERE "userId" = ${userId} AND "id" = ${id}
           RETURNING "id"

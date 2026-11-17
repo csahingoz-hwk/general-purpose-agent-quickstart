@@ -1004,3 +1004,198 @@ test("voice dictation works out-of-the-box via Web Speech API without server key
     await browser.close();
   }
 });
+
+test("owner credentials vault, sticky subpage header, and teammate chat wiring work end to end", async () => {
+  const browser = await launchBrowser();
+  try {
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+    });
+    const token = await encode({
+      secret,
+      salt: "authjs.session-token",
+      token: { id: userId, email: owner, type: "regular" },
+    });
+    await context.addCookies([
+      { name: "authjs.session-token", value: token, url: origin },
+    ]);
+
+    const storedSecrets: Array<{
+      id: string;
+      name: string;
+      provider: string;
+      keyHint: string;
+      updatedAt: string;
+    }> = [];
+    const captured: {
+      vaultPost?: Record<string, unknown>;
+      chatBody?: Record<string, unknown>;
+    } = {};
+
+    const page = await context.newPage();
+    await page.route("**/a-4-a/c.js*", (route) =>
+      route.fulfill({
+        contentType: "application/javascript",
+        body: "window.V_C.push({b:1,d:0});",
+      })
+    );
+    await page.route("**/api/history*", (route) =>
+      route.fulfill({ json: { chats: [], hasMore: false } })
+    );
+    await page.route("**/api/messages*", (route) =>
+      route.fulfill({
+        json: {
+          messages: [],
+          visibility: "private",
+          userId,
+          isReadonly: false,
+        },
+      })
+    );
+    await page.route("**/api/schedules", (route) =>
+      route.fulfill({
+        json: { schedules: [], presets: [], routinesEnabled: true },
+      })
+    );
+    await page.route("**/api/tasks", (route) =>
+      route.fulfill({ json: { status: "ready", tasks: [] } })
+    );
+    await page.route("**/api/vault*", (route) => {
+      if (route.request().method() === "POST") {
+        const body = JSON.parse(route.request().postData() ?? "{}");
+        captured.vaultPost = body;
+        const created = {
+          id: "sec-1",
+          name: String(body.name ?? "").toUpperCase(),
+          provider: String(body.provider ?? "gemini"),
+          keyHint: "••••6789",
+          updatedAt: new Date().toISOString(),
+        };
+        storedSecrets.splice(0, storedSecrets.length, created);
+        return route.fulfill({ status: 201, json: { secret: created } });
+      }
+      return route.fulfill({
+        json: { status: "ready", secrets: storedSecrets },
+      });
+    });
+    await page.route("**/api/voice/transcribe", (route) =>
+      route.fulfill({
+        json: {
+          serverSttReady: true,
+          liveReady: storedSecrets.some((s) => s.name === "GEMINI_API_KEY"),
+        },
+      })
+    );
+    await page.route("**/api/voice/live-session", (route) =>
+      route.fulfill({
+        json: {
+          status: "ready",
+          sessionId: "live-1",
+          model: "gemini-live-current",
+          estimatedTokensPerMinute: 1620,
+        },
+      })
+    );
+    await page.route("**/api/models", (route) =>
+      route.fulfill({
+        json: {
+          status: "ready",
+          defaultModelId: "gpt-6-luna",
+          checkedAt: "2026-11-17T10:00:00Z",
+          models: [
+            {
+              id: "gpt-6-luna",
+              name: "Everyday chat",
+              provider: "openai",
+              description: "GPT-6 Luna",
+            },
+            {
+              id: "gpt-6.1-terra",
+              name: "Detailed chat",
+              provider: "openai",
+              description: "GPT-6.1 Terra",
+            },
+          ],
+          capabilities: {},
+        },
+      })
+    );
+    await page.route("**/api/chat", (route) => {
+      captured.chatBody = JSON.parse(route.request().postData() ?? "{}");
+      return route.fulfill({
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream",
+          "x-vercel-ai-ui-message-stream": "v1",
+        },
+        body: [
+          'data: {"type":"start","messageId":"asst-1"}\n\n',
+          'data: {"type":"text-start","id":"txt-1"}\n\n',
+          'data: {"type":"text-delta","id":"txt-1","delta":"Ready to reconcile."}\n\n',
+          'data: {"type":"text-end","id":"txt-1"}\n\n',
+          'data: {"type":"finish"}\n\n',
+          "data: [DONE]\n\n",
+        ].join(""),
+      });
+    });
+
+    // 1. Deep-link to /routines?tab=vault, verify sticky header + auto-filled GEMINI_API_KEY + Encrypt & save
+    await page.goto(`${origin}/routines?tab=vault`);
+    await page.getByText("Save encrypted credential").waitFor();
+    const nameInput = page.getByPlaceholder("e.g. GEMINI_API_KEY");
+    await expect(nameInput).toHaveValue("GEMINI_API_KEY");
+
+    // Scroll main container and verify SubpageHeader stays sticky at top = 0
+    await page
+      .locator("main")
+      .last()
+      .evaluate((el) => el.scrollTo(0, 260));
+    const headerTop = await page
+      .locator("main")
+      .last()
+      .locator("header")
+      .first()
+      .evaluate((el) => Math.round(el.getBoundingClientRect().top));
+    assert.equal(headerTop, 0);
+
+    await page
+      .getByPlaceholder("Paste key or token")
+      .fill("AIzaSyTestKey123456789");
+    const saveBtn = page.getByRole("button", { name: /Encrypt & save/i });
+    await expect(saveBtn).toBeEnabled();
+    await saveBtn.click();
+    await page.getByText("••••6789").waitFor();
+    assert.equal(captured.vaultPost?.name, "GEMINI_API_KEY");
+    assert.equal(captured.vaultPost?.provider, "gemini");
+
+    // 2. Switch to Teammates via sticky top nav, activate Finance Controller, return to chat
+    await page.getByRole("link", { name: "Teammates" }).click();
+    await page.waitForURL("**/teammates");
+    const fcRow = page
+      .locator("article")
+      .filter({ hasText: "Finance Controller" });
+    await fcRow.getByRole("button", { name: "Use" }).click();
+    await expect(fcRow.getByRole("button", { name: "Active" })).toBeVisible();
+
+    await page.getByRole("link", { name: /Back to chat/i }).click();
+    await page.waitForURL(`${origin}/`);
+
+    // 3. Verify header displays active teammate + Live Voice button is visible on mobile + /api/chat receives selectedBotSlug
+    await page.getByText("Finance Controller").first().waitFor();
+    await expect(page.getByTestId("live-voice-button")).toBeVisible();
+
+    const composer = page.getByTestId("multimodal-input").last();
+    await composer.fill("Prepare close checklist");
+    await page.getByTestId("send-button").click();
+    await page.getByText("Ready to reconcile.").waitFor();
+    assert.equal(captured.chatBody?.selectedBotSlug, "finance-controller");
+
+    console.log(
+      "PASS: owner vault save, sticky header, mobile live voice button, and teammate -> /api/chat wiring verified"
+    );
+  } finally {
+    await browser.close();
+  }
+});

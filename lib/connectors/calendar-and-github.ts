@@ -10,7 +10,7 @@ import {
 export const GITHUB_VAULT_SECRET_NAME = "GITHUB_CONNECTOR_PAT";
 
 export function isGithubConnectorEnabled(): boolean {
-  return process.env.GITHUB_CONNECTOR_ENABLED === "true";
+  return process.env.GITHUB_CONNECTOR_ENABLED !== "false";
 }
 
 const FORBIDDEN_CALENDAR_GITHUB_SEGMENTS =

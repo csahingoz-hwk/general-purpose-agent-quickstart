@@ -32,7 +32,7 @@ export const VIDEO_RESERVE_USD = 0.35;
 export const MEDIA_VAULT_SECRET_NAME = "GEMINI_API_KEY";
 
 export function isMediaStudioEnabled(): boolean {
-  return process.env.MEDIA_STUDIO_ENABLED === "true";
+  return process.env.MEDIA_STUDIO_ENABLED !== "false";
 }
 
 export function resolveImagenModelName(): string {

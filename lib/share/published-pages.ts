@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
+import { ensureParitySchema } from "@/lib/db/ensure-parity-schema";
 
 export type SanitizedShareItem = {
   kind: "openui" | "fixture" | "weather" | "document" | "summary";
@@ -260,6 +261,7 @@ export function createPostgresPublishedPageStore(): PublishedPageStore {
       ).toISOString();
 
       try {
+        await ensureParitySchema(sql);
         const [row] = await sql`
           INSERT INTO "PublishedPage" (
             "id", "userId", "tokenHash", "title", "sanitizedPayload", "expiresAt"
@@ -332,6 +334,7 @@ export function createPostgresPublishedPageStore(): PublishedPageStore {
         return fallbackMemStore.listForOwner(userId);
       }
       try {
+        await ensureParitySchema(sql);
         const rows = await sql`
           SELECT "id", "title", "sanitizedPayload", "createdAt", "expiresAt", "revokedAt"
           FROM "PublishedPage"

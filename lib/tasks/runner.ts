@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
+import { ensureParitySchema } from "@/lib/db/ensure-parity-schema";
 
 export type BackgroundTaskStatus =
   | "queued"
@@ -244,6 +245,12 @@ function mapRow(row: Record<string, any>): BackgroundTaskRecord {
   };
 }
 
+async function readySql() {
+  const sql = getSql();
+  await ensureParitySchema(sql);
+  return sql;
+}
+
 export function createPostgresTaskStore(): BackgroundTaskStore {
   return {
     async enqueueTask({
@@ -263,7 +270,8 @@ export function createPostgresTaskStore(): BackgroundTaskStore {
         },
       ];
       try {
-        const [row] = await getSql()`
+        const sql = await readySql();
+        const [row] = await sql`
           INSERT INTO "BackgroundTask" ("id", "userId", "kind", "title", "prompt", "status", "riskLevel", "scheduleId", "steps")
           VALUES (${id}, ${userId}, ${kind}, ${title.trim()}, ${prompt.trim()}, 'queued', ${riskLevel}, ${scheduleId}, ${JSON.stringify(steps)}::jsonb)
           RETURNING *
@@ -278,14 +286,15 @@ export function createPostgresTaskStore(): BackgroundTaskStore {
     },
     async listTasks({ userId, status, limit = 25 }) {
       try {
+        const sql = await readySql();
         const rows = status
-          ? await getSql()`
+          ? await sql`
               SELECT * FROM "BackgroundTask"
               WHERE "userId" = ${userId} AND "status" = ${status}
               ORDER BY "createdAt" DESC
               LIMIT ${Math.max(1, limit)}
             `
-          : await getSql()`
+          : await sql`
               SELECT * FROM "BackgroundTask"
               WHERE "userId" = ${userId}
               ORDER BY "createdAt" DESC
@@ -301,7 +310,8 @@ export function createPostgresTaskStore(): BackgroundTaskStore {
     },
     async getTask({ userId, id }) {
       try {
-        const [row] = await getSql()`
+        const sql = await readySql();
+        const [row] = await sql`
           SELECT * FROM "BackgroundTask"
           WHERE "userId" = ${userId} AND "id" = ${id}
           LIMIT 1
@@ -338,7 +348,8 @@ export function createPostgresTaskStore(): BackgroundTaskStore {
       const nextOutput = output !== undefined ? output : existing.output;
       const nextError = error !== undefined ? error : existing.error;
 
-      const [updated] = await getSql()`
+      const sql = await readySql();
+      const [updated] = await sql`
         UPDATE "BackgroundTask"
         SET
           "status" = ${status},

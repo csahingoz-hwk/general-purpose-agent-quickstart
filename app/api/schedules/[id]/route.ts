@@ -1,17 +1,26 @@
+import { generateText } from "ai";
 import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
 import { isOwnerIdentity } from "@/lib/access-policy";
+import { getRequestModelAvailability } from "@/lib/ai/model-runtime";
+import { DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
+import { getLanguageModel } from "@/lib/ai/providers";
+import { isPremiumModel, premiumLaneEnabled } from "@/lib/ai/routing/catalog";
+import { createUsageLedger } from "@/lib/ai/routing/ledger";
+import { inferenceSession } from "@/lib/ai/routing/session";
 import { computeNextRunAt } from "@/lib/cron/cron-utils";
 import {
   deleteCronJob,
   getCronJobByIdAndUser,
   setCronJobEnabled,
+  updateCronJobAfterRun,
 } from "@/lib/db/queries";
 import {
   createPostgresTaskStore,
   executeDryRunTask,
   TaskStoreUnavailableError,
 } from "@/lib/tasks/runner";
+import { generateUUID } from "@/lib/utils";
 
 const toggleSchema = z.object({
   enabled: z.boolean(),
@@ -97,6 +106,71 @@ export async function POST(
       riskLevel: "medium",
       scheduleId: job.id,
     });
+
+    const availability = await getRequestModelAvailability();
+    if (premiumLaneEnabled() && availability.status === "ready") {
+      await store.transitionTask({
+        userId: session.user.id,
+        id: task.id,
+        status: "running",
+        stepMessage: "Executing routine prompt with assistant model",
+      });
+      const execution = {
+        ledger: createUsageLedger(session.user.id, generateUUID()),
+        available: availability.models.map((m) => m.id).filter(isPremiumModel),
+        exposed: false,
+        toolBoundary: false,
+        fallbackUsed: false,
+      };
+      try {
+        const generated = await inferenceSession.run(execution, () =>
+          generateText({
+            model: getLanguageModel(DEFAULT_CHAT_MODEL),
+            system:
+              "You are executing a scheduled briefing routine for the workspace owner. Return a crisp, well-structured, factual response with no filler.",
+            prompt: job.prompt,
+            maxOutputTokens: 900,
+            maxRetries: 0,
+            abortSignal: AbortSignal.timeout(35_000),
+          })
+        );
+        const output = generated.text.trim() || "Routine completed.";
+        const completed = await store.transitionTask({
+          userId: session.user.id,
+          id: task.id,
+          status: "succeeded",
+          stepMessage: "Routine run completed",
+          output,
+        });
+        await updateCronJobAfterRun({
+          id: job.id,
+          nextRunAt: computeNextRunAt(job.cronExpression, job.timezone),
+          lastRunAt: new Date(),
+          lastError: null,
+          lastOutput: output.slice(0, 4000),
+        });
+        return Response.json({ task: completed ?? task }, { status: 201 });
+      } catch (runErr) {
+        const errMsg =
+          runErr instanceof Error ? runErr.message : "Model execution failed";
+        const failed = await store.transitionTask({
+          userId: session.user.id,
+          id: task.id,
+          status: "failed",
+          stepMessage: "Routine execution failed",
+          error: errMsg.slice(0, 500),
+        });
+        await updateCronJobAfterRun({
+          id: job.id,
+          nextRunAt: computeNextRunAt(job.cronExpression, job.timezone),
+          lastRunAt: new Date(),
+          lastError: errMsg.slice(0, 500),
+          lastOutput: job.lastOutput,
+        });
+        return Response.json({ task: failed ?? task }, { status: 201 });
+      }
+    }
+
     const completed = await executeDryRunTask({
       store,
       userId: session.user.id,

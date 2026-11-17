@@ -66,7 +66,42 @@ function PureChatHeader({
   const { variant } = useMascotPreference();
   const { openMobile, setOpenMobile, toggleSidebar } = useSidebar();
   const [optionsOpen, setOptionsOpen] = useState(false);
+  const [activeBotLabel, setActiveBotLabel] = useState<string>("");
   const toolbarSlotRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const syncBot = () => {
+      try {
+        const slug = window.localStorage.getItem("assistant-active-bot") ?? "";
+        const savedName =
+          window.localStorage.getItem("assistant-active-bot-name") ?? "";
+        if (!slug || slug === "chief-of-staff") {
+          setActiveBotLabel("");
+          return;
+        }
+        if (savedName.trim()) {
+          setActiveBotLabel(savedName.trim());
+          return;
+        }
+        if (slug === "finance-controller") {
+          setActiveBotLabel("Finance Controller");
+        } else if (slug === "vibecoder") {
+          setActiveBotLabel("Vibecoder");
+        } else {
+          setActiveBotLabel(slug);
+        }
+      } catch {
+        setActiveBotLabel("");
+      }
+    };
+    syncBot();
+    window.addEventListener("assistant-bot-change", syncBot);
+    window.addEventListener("storage", syncBot);
+    return () => {
+      window.removeEventListener("assistant-bot-change", syncBot);
+      window.removeEventListener("storage", syncBot);
+    };
+  }, []);
 
   useEffect(() => {
     const slot = toolbarSlotRef.current;
@@ -143,7 +178,7 @@ function PureChatHeader({
                 {title}
               </span>
             ) : (
-              copy.assistant
+              activeBotLabel || copy.assistant
             )}
           </span>
           <span

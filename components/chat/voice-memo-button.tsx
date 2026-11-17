@@ -1,6 +1,12 @@
 "use client";
 
-import { MicIcon, PhoneCallIcon, SquareIcon } from "lucide-react";
+import {
+  MicIcon,
+  PhoneCallIcon,
+  SquareIcon,
+  Volume2Icon,
+  VolumeXIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import useSWR from "swr";
@@ -88,12 +94,33 @@ function pickSupportedRecorderMime(): string {
   return "";
 }
 
+function extensionForAudioMime(mime: string): string {
+  const lower = mime.toLowerCase();
+  if (lower.includes("mp4") || lower.includes("m4a")) {
+    return "m4a";
+  }
+  if (lower.includes("ogg")) {
+    return "ogg";
+  }
+  if (lower.includes("wav")) {
+    return "wav";
+  }
+  if (lower.includes("mpeg") || lower.includes("mp3")) {
+    return "mp3";
+  }
+  return "webm";
+}
+
 export function VoiceMemoControls({
   disabled,
   onTranscript,
+  onSendVoiceTurn,
+  latestAssistantSpeech,
 }: {
   disabled: boolean;
   onTranscript: (text: string) => void;
+  onSendVoiceTurn?: (text: string) => void;
+  latestAssistantSpeech?: string | null;
 }) {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
   const [hasSpeechApi, setHasSpeechApi] = useState(false);
@@ -102,7 +129,11 @@ export function VoiceMemoControls({
   const [liveOpen, setLiveOpen] = useState(false);
   const [liveLoading, setLiveLoading] = useState(false);
   const [liveSession, setLiveSession] = useState<LiveSessionInfo | null>(null);
+  const [lastSpokenTurn, setLastSpokenTurn] = useState<string>("");
+  const [autoSpeakReplies, setAutoSpeakReplies] = useState(true);
 
+  const captureModeRef = useRef<"dictate" | "live">("dictate");
+  const lastReadAssistantRef = useRef<string>("");
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const uncommittedInterimRef = useRef<string>("");
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -117,6 +148,45 @@ export function VoiceMemoControls({
       shouldRetryOnError: false,
     }
   );
+
+  const deliverSpokenText = useCallback(
+    (raw: string) => {
+      const cleaned = raw.trim();
+      if (!cleaned) {
+        return;
+      }
+      if (captureModeRef.current === "live" && onSendVoiceTurn) {
+        setLastSpokenTurn(cleaned);
+        onSendVoiceTurn(cleaned);
+      } else {
+        onTranscript(cleaned);
+      }
+    },
+    [onSendVoiceTurn, onTranscript]
+  );
+
+  useEffect(() => {
+    if (!liveOpen) {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+      return;
+    }
+    const text = latestAssistantSpeech?.trim() ?? "";
+    if (!text || !autoSpeakReplies || text === lastReadAssistantRef.current) {
+      return;
+    }
+    lastReadAssistantRef.current = text;
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      try {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text.slice(0, 1200));
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        /* ignore browser TTS errors */
+      }
+    }
+  }, [autoSpeakReplies, latestAssistantSpeech, liveOpen]);
 
   useEffect(() => {
     setHasSpeechApi(Boolean(getSpeechRecognitionCtor()));
@@ -191,7 +261,7 @@ export function VoiceMemoControls({
           }
           if (finalChunk.trim()) {
             uncommittedInterimRef.current = "";
-            onTranscript(finalChunk.trim());
+            deliverSpokenText(finalChunk.trim());
           } else {
             uncommittedInterimRef.current = interimChunk.trim();
           }
@@ -220,7 +290,7 @@ export function VoiceMemoControls({
           recognitionRef.current = null;
           setRecording(false);
           if (leftover) {
-            onTranscript(leftover);
+            deliverSpokenText(leftover);
           }
         };
 
@@ -235,7 +305,7 @@ export function VoiceMemoControls({
         );
       }
     },
-    [cleanupRecognition, onTranscript]
+    [cleanupRecognition, deliverSpokenText]
   );
 
   const startServerAudioMemo = useCallback(async () => {
@@ -276,8 +346,9 @@ export function VoiceMemoControls({
 
         setTranscribing(true);
         try {
+          const ext = extensionForAudioMime(effectiveType);
           const form = new FormData();
-          form.append("audio", blob, "voice-memo.webm");
+          form.append("audio", blob, `voice-memo.${ext}`);
           const res = await fetch(`${basePath}/api/voice/transcribe`, {
             method: "POST",
             body: form,
@@ -287,7 +358,7 @@ export function VoiceMemoControls({
             message?: string;
           };
           if (res.ok && data.transcript) {
-            onTranscript(data.transcript);
+            deliverSpokenText(data.transcript);
           } else {
             toast.error(
               data.message ?? "Could not transcribe that voice clip."
@@ -310,7 +381,7 @@ export function VoiceMemoControls({
         "Microphone access is turned off. Allow microphone access in browser settings or type your message."
       );
     }
-  }, [basePath, cleanupMediaStream, onTranscript]);
+  }, [basePath, cleanupMediaStream, deliverSpokenText]);
 
   const initializeLiveSession = useCallback(async () => {
     setLiveLoading(true);
@@ -359,6 +430,7 @@ export function VoiceMemoControls({
               stopDictation();
               return;
             }
+            captureModeRef.current = "dictate";
             const SpeechCtor = getSpeechRecognitionCtor();
             if (SpeechCtor && !serverSttReady) {
               // Synchronous start inside click handler (required by iOS Safari WebKit)
@@ -396,7 +468,11 @@ export function VoiceMemoControls({
           onOpenChange={(next) => {
             setLiveOpen(next);
             if (next) {
+              lastReadAssistantRef.current =
+                latestAssistantSpeech?.trim() ?? "";
               initializeLiveSession().catch(() => null);
+            } else if (recording) {
+              stopDictation();
             }
           }}
           open={liveOpen}
@@ -404,7 +480,7 @@ export function VoiceMemoControls({
           <SheetTrigger asChild>
             <Button
               aria-label="Live voice session"
-              className="hidden size-11! rounded-full border-transparent bg-control p-0 text-foreground shadow-none transition-colors motion-reduce:transition-none hover:bg-control sm:inline-flex"
+              className="inline-flex size-11! rounded-full border-transparent bg-control p-0 text-foreground shadow-none transition-colors motion-reduce:transition-none hover:bg-control"
               data-testid="live-voice-button"
               disabled={disabled}
               title="Live voice session"
@@ -418,7 +494,8 @@ export function VoiceMemoControls({
             <SheetHeader>
               <SheetTitle>Live Voice Session</SheetTitle>
               <SheetDescription>
-                Real-time two-way voice · personal assistant use only.
+                Speak hands-free turns into the current conversation · personal
+                assistant use only.
               </SheetDescription>
             </SheetHeader>
 
@@ -428,17 +505,112 @@ export function VoiceMemoControls({
                   Preparing voice session…
                 </p>
               ) : liveSession?.status === "ready" ? (
-                <div className="space-y-3 rounded-2xl border border-[color:var(--hairline)] bg-card p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">Session ready</span>
-                    <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 font-medium text-emerald-700 text-xs dark:text-emerald-300">
-                      {liveSession.model}
-                    </span>
+                <div className="space-y-4">
+                  <div className="space-y-3 rounded-2xl border border-[color:var(--hairline)] bg-card p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">
+                        {recording
+                          ? "Listening — tap below to send"
+                          : transcribing
+                            ? "Transcribing your turn…"
+                            : disabled
+                              ? "Assistant is replying…"
+                              : "Ready for your voice"}
+                      </span>
+                      <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 font-medium text-emerald-700 text-xs dark:text-emerald-300">
+                        {liveSession.model}
+                      </span>
+                    </div>
+
+                    <button
+                      className={cn(
+                        "inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full font-medium text-sm transition-colors disabled:opacity-50",
+                        recording
+                          ? "bg-destructive text-destructive-foreground"
+                          : "bg-primary text-primary-foreground"
+                      )}
+                      disabled={(disabled && !recording) || transcribing}
+                      onClick={() => {
+                        if (recording) {
+                          stopDictation();
+                          return;
+                        }
+                        if (
+                          typeof window !== "undefined" &&
+                          "speechSynthesis" in window
+                        ) {
+                          window.speechSynthesis.cancel();
+                        }
+                        captureModeRef.current = "live";
+                        const SpeechCtor = getSpeechRecognitionCtor();
+                        if (serverSttReady) {
+                          startServerAudioMemo().catch(() => null);
+                          return;
+                        }
+                        if (SpeechCtor) {
+                          startBrowserSpeechDictation(SpeechCtor);
+                        }
+                      }}
+                      type="button"
+                    >
+                      {recording ? (
+                        <>
+                          <SquareIcon className="size-4 fill-current" />
+                          Stop &amp; send turn
+                        </>
+                      ) : (
+                        <>
+                          <MicIcon className="size-4" />
+                          {transcribing ? "Transcribing…" : "Tap to speak"}
+                        </>
+                      )}
+                    </button>
+
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-muted-foreground text-xs">
+                        Est. ~{liveSession.estimatedTokensPerMinute} audio
+                        tokens/min
+                      </span>
+                      <button
+                        className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] px-3 text-xs hover:bg-muted"
+                        onClick={() => {
+                          setAutoSpeakReplies((prev) => {
+                            const next = !prev;
+                            if (
+                              !next &&
+                              typeof window !== "undefined" &&
+                              "speechSynthesis" in window
+                            ) {
+                              window.speechSynthesis.cancel();
+                            }
+                            return next;
+                          });
+                        }}
+                        type="button"
+                      >
+                        {autoSpeakReplies ? (
+                          <>
+                            <Volume2Icon className="size-3.5" />
+                            Read replies aloud
+                          </>
+                        ) : (
+                          <>
+                            <VolumeXIcon className="size-3.5" />
+                            Replies muted
+                          </>
+                        )}
+                      </button>
+                    </div>
                   </div>
-                  <p className="text-muted-foreground text-xs">
-                    Est. ~{liveSession.estimatedTokensPerMinute} audio
-                    tokens/min
-                  </p>
+
+                  {lastSpokenTurn && (
+                    <div className="rounded-2xl border border-[color:var(--hairline)] bg-card p-3.5 text-xs">
+                      <p className="text-muted-foreground">You said</p>
+                      <p className="mt-1 text-foreground text-sm">
+                        {lastSpokenTurn}
+                      </p>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p className="text-muted-foreground text-sm">

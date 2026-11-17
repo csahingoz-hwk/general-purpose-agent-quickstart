@@ -27,7 +27,7 @@ export type ResolvedGoogleAuth =
     };
 
 export function isGoogleConnectorsEnabled(): boolean {
-  return process.env.GOOGLE_CONNECTORS_ENABLED === "true";
+  return process.env.GOOGLE_CONNECTORS_ENABLED !== "false";
 }
 
 export async function resolveGoogleAccessTokenFromVault(opts: {

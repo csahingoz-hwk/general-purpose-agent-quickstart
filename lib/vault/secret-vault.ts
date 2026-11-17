@@ -6,6 +6,7 @@ import {
   randomUUID,
 } from "node:crypto";
 import postgres from "postgres";
+import { ensureParitySchema } from "@/lib/db/ensure-parity-schema";
 
 export type VaultErrorCode =
   | "vault_key_missing"
@@ -45,17 +46,26 @@ export interface SecretVaultStore {
   }) => Promise<string | null>;
 }
 
+function resolveMasterSecret(rawKey?: string): string {
+  const candidate = (
+    rawKey ??
+    process.env.SECRET_VAULT_KEY ??
+    process.env.AUTH_SECRET ??
+    ""
+  ).trim();
+  return candidate === "****" ? "" : candidate;
+}
+
 export function isVaultConfigured(rawKey?: string): boolean {
-  const candidate = (rawKey ?? process.env.SECRET_VAULT_KEY ?? "").trim();
-  return candidate.length >= 32;
+  return resolveMasterSecret(rawKey).length >= 32;
 }
 
 function deriveVaultKey(rawKey?: string): Buffer {
-  const candidate = (rawKey ?? process.env.SECRET_VAULT_KEY ?? "").trim();
+  const candidate = resolveMasterSecret(rawKey);
   if (candidate.length < 32) {
     throw new VaultError(
       "vault_key_missing",
-      "SECRET_VAULT_KEY must be at least 32 characters"
+      "SECRET_VAULT_KEY or AUTH_SECRET must be at least 32 characters"
     );
   }
   return Buffer.from(
@@ -257,6 +267,12 @@ function isMissingTable(error: unknown): boolean {
   );
 }
 
+async function readySql() {
+  const sql = getSql();
+  await ensureParitySchema(sql);
+  return sql;
+}
+
 export function createPostgresVaultStore(masterKey?: string): SecretVaultStore {
   return {
     async upsertSecret({ userId, name, provider = "custom", plaintext }) {
@@ -269,7 +285,8 @@ export function createPostgresVaultStore(masterKey?: string): SecretVaultStore {
       });
       const id = randomUUID();
       try {
-        const [row] = await getSql()`
+        const sql = await readySql();
+        const [row] = await sql`
           INSERT INTO "VaultSecret" ("id", "userId", "name", "provider", "ciphertext", "iv", "authTag", "keyHint")
           VALUES (${id}, ${userId}, ${trimmedName}, ${provider.trim() || "custom"}, ${encrypted.ciphertext}, ${encrypted.iv}, ${encrypted.authTag}, ${encrypted.keyHint})
           ON CONFLICT ("userId", "name")
@@ -302,7 +319,8 @@ export function createPostgresVaultStore(masterKey?: string): SecretVaultStore {
     },
     async listSecrets(userId) {
       try {
-        const rows = await getSql()`
+        const sql = await readySql();
+        const rows = await sql`
           SELECT "id", "name", "provider", "keyHint", "createdAt", "updatedAt"
           FROM "VaultSecret"
           WHERE "userId" = ${userId}
@@ -328,7 +346,8 @@ export function createPostgresVaultStore(masterKey?: string): SecretVaultStore {
     },
     async deleteSecret({ userId, name }) {
       try {
-        const deleted = await getSql()`
+        const sql = await readySql();
+        const deleted = await sql`
           DELETE FROM "VaultSecret"
           WHERE "userId" = ${userId} AND "name" = ${normalizeSecretName(name)}
           RETURNING "id"
@@ -346,7 +365,8 @@ export function createPostgresVaultStore(masterKey?: string): SecretVaultStore {
     },
     async resolveSecret({ userId, name }) {
       try {
-        const [row] = await getSql()`
+        const sql = await readySql();
+        const [row] = await sql`
           SELECT "name", "ciphertext", "iv", "authTag"
           FROM "VaultSecret"
           WHERE "userId" = ${userId} AND "name" = ${normalizeSecretName(name)}

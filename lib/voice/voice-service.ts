@@ -30,7 +30,7 @@ export const VOICE_VAULT_SECRET_NAMES = {
 } as const;
 
 export function isVoiceEnabled(): boolean {
-  return process.env.VOICE_ENABLED === "true";
+  return process.env.VOICE_ENABLED !== "false";
 }
 
 export function resolveLiveVoiceModelName(): string {

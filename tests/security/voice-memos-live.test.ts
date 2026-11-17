@@ -137,6 +137,10 @@ test("voice service enforces 10MB audio limit, blocks 3.x model slugs, uses gemi
       false
     );
   } finally {
-    process.env.VOICE_ENABLED = prevEnabled ?? "";
+    if (prevEnabled === undefined) {
+      Reflect.deleteProperty(process.env, "VOICE_ENABLED");
+    } else {
+      process.env.VOICE_ENABLED = prevEnabled;
+    }
   }
 });

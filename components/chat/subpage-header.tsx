@@ -53,7 +53,7 @@ export function SubpageHeader({ badge }: { badge?: React.ReactNode }) {
   }, []);
 
   return (
-    <header className="space-y-3 pt-[max(1rem,calc(env(safe-area-inset-top)+0.5rem))] md:pt-2">
+    <header className="sticky top-0 z-30 -mx-4 space-y-3 border-[color:var(--hairline)] border-b bg-background/95 px-4 pt-[max(0.75rem,calc(env(safe-area-inset-top)+0.375rem))] pb-2.5 backdrop-blur-md md:mx-0 md:px-0 md:pt-3">
       <div className="flex flex-wrap items-center justify-between gap-2.5">
         <Link
           className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-card pr-4 pl-3 font-medium text-foreground text-sm shadow-[var(--shadow-float)] transition-colors hover:bg-muted"

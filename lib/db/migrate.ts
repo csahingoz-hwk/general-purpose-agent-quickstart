@@ -2,6 +2,7 @@ import { config } from "dotenv";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
+import { ensureParitySchema } from "./ensure-parity-schema";
 
 config({
   path: ".env.local",
@@ -20,6 +21,7 @@ const runMigrate = async () => {
 
   const start = Date.now();
   await migrate(db, { migrationsFolder: "./lib/db/migrations" });
+  await ensureParitySchema(connection);
   const end = Date.now();
 
   console.log("Migrations completed in", end - start, "ms");

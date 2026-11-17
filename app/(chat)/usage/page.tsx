@@ -1,6 +1,7 @@
 "use client";
 
-import { MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
+import { KeyRoundIcon, MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
+import Link from "next/link";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
@@ -38,6 +39,9 @@ type UsageResponse = {
 type ConnectorStatusResponse = {
   gmailReady?: boolean;
   driveReady?: boolean;
+  calendarReady?: boolean;
+  geminiReady?: boolean;
+  githubReady?: boolean;
   vaultConfigured?: boolean;
 };
 
@@ -145,14 +149,23 @@ export default function UsagePage() {
         </section>
 
         <section className="space-y-3">
-          <div>
-            <h2 className="font-semibold text-xl tracking-tight">
-              Capabilities
-            </h2>
-            <p className="mt-1 text-muted-foreground text-sm">
-              Live connection status for voice, workspace drafts, and background
-              schedules.
-            </p>
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <div>
+              <h2 className="font-semibold text-xl tracking-tight">
+                Capabilities
+              </h2>
+              <p className="mt-1 text-muted-foreground text-sm">
+                Live connection status for voice, media, workspace drafts, and
+                credentials.
+              </p>
+            </div>
+            <Link
+              className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-card px-3.5 font-medium text-foreground text-xs transition-colors hover:bg-muted"
+              href="/routines?tab=vault"
+            >
+              <KeyRoundIcon className="size-3.5" />
+              Manage credentials
+            </Link>
           </div>
 
           <ul className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card text-sm">
@@ -174,14 +187,65 @@ export default function UsagePage() {
             <li className="flex items-center justify-between gap-3 px-4 py-3.5">
               <div>
                 <p className="font-medium text-foreground">
+                  Google Gemini (Live Voice &amp; Media Studio)
+                </p>
+                <p className="text-muted-foreground text-xs">
+                  Two-way Live Voice and Imagen / Veo generation (personal use)
+                </p>
+              </div>
+              <span
+                className={cn(
+                  "shrink-0 rounded-full px-2.5 py-1 font-medium text-xs",
+                  connectors?.geminiReady || voice?.liveReady
+                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                    : "bg-muted text-muted-foreground"
+                )}
+              >
+                {connectors?.geminiReady || voice?.liveReady
+                  ? "Connected"
+                  : "Add GEMINI_API_KEY"}
+              </span>
+            </li>
+            <li className="flex items-center justify-between gap-3 px-4 py-3.5">
+              <div>
+                <p className="font-medium text-foreground">
                   Gmail, Drive &amp; Calendar
                 </p>
                 <p className="text-muted-foreground text-xs">
                   Read &amp; unsent drafts only — never sends automatically
                 </p>
               </div>
-              <span className="shrink-0 rounded-full bg-muted px-2.5 py-1 font-medium text-muted-foreground text-xs">
+              <span
+                className={cn(
+                  "shrink-0 rounded-full px-2.5 py-1 font-medium text-xs",
+                  connectors?.gmailReady
+                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                    : "bg-muted text-muted-foreground"
+                )}
+              >
                 {connectors?.gmailReady
+                  ? "Connected (draft-only)"
+                  : "Not connected"}
+              </span>
+            </li>
+            <li className="flex items-center justify-between gap-3 px-4 py-3.5">
+              <div>
+                <p className="font-medium text-foreground">
+                  GitHub Pull Requests
+                </p>
+                <p className="text-muted-foreground text-xs">
+                  Read PRs &amp; issues and create pending draft reviews
+                </p>
+              </div>
+              <span
+                className={cn(
+                  "shrink-0 rounded-full px-2.5 py-1 font-medium text-xs",
+                  connectors?.githubReady
+                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                    : "bg-muted text-muted-foreground"
+                )}
+              >
+                {connectors?.githubReady
                   ? "Connected (draft-only)"
                   : "Not connected"}
               </span>
@@ -195,7 +259,14 @@ export default function UsagePage() {
                   AES-256-GCM server credential store
                 </p>
               </div>
-              <span className="shrink-0 rounded-full bg-muted px-2.5 py-1 font-medium text-muted-foreground text-xs">
+              <span
+                className={cn(
+                  "shrink-0 rounded-full px-2.5 py-1 font-medium text-xs",
+                  connectors?.vaultConfigured
+                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                    : "bg-muted text-muted-foreground"
+                )}
+              >
                 {connectors?.vaultConfigured ? "Ready" : "Preview mode"}
               </span>
             </li>

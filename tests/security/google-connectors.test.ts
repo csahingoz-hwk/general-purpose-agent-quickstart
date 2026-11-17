@@ -340,6 +340,10 @@ test("selectActiveTools gates Google connectors behind GOOGLE_CONNECTORS_ENABLED
     );
     assert.deepEqual(draftTurn, ["gmailCreateDraft"]);
   } finally {
-    process.env.GOOGLE_CONNECTORS_ENABLED = prev ?? "";
+    if (prev === undefined) {
+      Reflect.deleteProperty(process.env, "GOOGLE_CONNECTORS_ENABLED");
+    } else {
+      process.env.GOOGLE_CONNECTORS_ENABLED = prev;
+    }
   }
 });

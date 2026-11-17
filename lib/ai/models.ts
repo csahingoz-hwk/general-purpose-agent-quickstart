@@ -52,7 +52,11 @@ export function getCapabilities(): Record<string, ModelCapabilities> {
   return Object.fromEntries(
     chatModels.map((model) => [
       model.id,
-      { tools: true, vision: false, reasoning: true },
+      {
+        tools: true,
+        vision: model.provider === "openai",
+        reasoning: true,
+      },
     ])
   );
 }
