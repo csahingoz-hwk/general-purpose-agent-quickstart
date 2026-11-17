@@ -141,12 +141,12 @@ export async function GET() {
       connectedProvider: githubConnected ? "github" : undefined,
     },
     {
-      id: "gemini_veo",
-      label: "Veo video generation",
+      id: "gemini_live",
+      label: "Live voice conversations & Veo video",
       summary: geminiReady
-        ? "Active (personal Gemini key configured)."
-        : "Optional — add a Google AI Studio key only if you want short Veo video clips.",
-      status: geminiReady ? "ready" : "optional",
+        ? "Active — hands-free voice runs on Gemini 3.8 Live."
+        : "Add a Google AI Studio key once to turn on hands-free live voice.",
+      status: geminiReady ? "ready" : "action_needed",
       actionKind: geminiReady ? "none" : "external_link",
       externalUrl: geminiReady
         ? undefined

@@ -1092,26 +1092,12 @@ test("owner credentials vault, sticky subpage header, and teammate chat wiring w
       route.fulfill({
         json: {
           status: "ready",
-          sessionId: "live-1",
-          model: "gemini-live-current",
-          estimatedTokensPerMinute: 1620,
+          token: "auth_tokens/test",
+          model: "gemini-3.8-live",
+          wsUrl: "ws://127.0.0.1:1/ws",
+          setup: { setup: { model: "models/gemini-3.8-live" } },
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
         },
-      })
-    );
-    await page.route("**/api/voice/turn", (route) =>
-      route.fulfill({
-        status: 200,
-        headers: { "content-type": "application/x-ndjson; charset=utf-8" },
-        body: `${[
-          JSON.stringify({
-            type: "text-delta",
-            delta: "Good morning! Ready to plan your day.",
-          }),
-          JSON.stringify({
-            type: "done",
-            fullText: "Good morning! Ready to plan your day.",
-          }),
-        ].join("\n")}\n`,
       })
     );
     await page.route("**/api/models", (route) =>

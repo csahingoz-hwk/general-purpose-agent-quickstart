@@ -46,16 +46,18 @@ export async function GET() {
         })
         .catch(() => null),
     ]);
-    const hasGemini = Boolean(geminiKey?.trim());
+    const hasGemini =
+      Boolean(geminiKey?.trim()) || Boolean(process.env.GEMINI_API_KEY?.trim());
     const hasOpenAi = Boolean(openAiKey?.trim());
     return NextResponse.json({
       serverSttReady: gatewayReady || hasGemini || hasOpenAi,
-      liveReady: gatewayReady || hasGemini || hasOpenAi,
+      // Live voice is speech-to-speech on Gemini Live: needs a Gemini key.
+      liveReady: hasGemini,
     });
   } catch {
     return NextResponse.json({
       serverSttReady: gatewayReady,
-      liveReady: gatewayReady,
+      liveReady: Boolean(process.env.GEMINI_API_KEY?.trim()),
     });
   }
 }

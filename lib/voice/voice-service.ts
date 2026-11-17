@@ -6,6 +6,7 @@ import {
   type SecretVaultStore,
   VaultError,
 } from "@/lib/vault/secret-vault";
+import { DEFAULT_LIVE_MODEL, isAllowedLiveModel } from "./live-protocol";
 
 export const MAX_VOICE_MEMO_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -20,10 +21,11 @@ export const ALLOWED_AUDIO_MIME_TYPES = [
 
 export type AllowedAudioMimeType = (typeof ALLOWED_AUDIO_MIME_TYPES)[number];
 
-// Owner model floor rule: NEVER use Gemini 3.8 Flash or any 3.x model.
+// Owner model floor rule for chat/STT: never a 3.x text model. The single
+// exception (owner-approved) is the Gemini Live speech-to-speech lane below.
 export const VOICE_STT_GEMINI_MODEL = "gemini-4-hydrogen";
 export const VOICE_STT_OPENAI_MODEL = "gpt-4o-mini-transcribe";
-export const DEFAULT_GEMINI_LIVE_MODEL = "gemini-live-current";
+export const DEFAULT_GEMINI_LIVE_MODEL = DEFAULT_LIVE_MODEL;
 
 export const VOICE_VAULT_SECRET_NAMES = {
   geminiApiKey: "GEMINI_API_KEY",
@@ -39,10 +41,10 @@ export function resolveLiveVoiceModelName(): string {
   if (!configured) {
     return DEFAULT_GEMINI_LIVE_MODEL;
   }
-  // Enforce owner rule: block any 3.x Flash / 3.8 model slug
-  if (/3\.\d/i.test(configured)) {
+  // Only Gemini *Live* voice models are allowed here; 3.x text/Flash models stay blocked.
+  if (!isAllowedLiveModel(configured)) {
     throw new Error(
-      "Blocked voice model configuration: 3.x models are disallowed by owner policy."
+      "Blocked voice model configuration: only Gemini Live voice models are allowed (3.x text models are disallowed by owner policy)."
     );
   }
   return configured;

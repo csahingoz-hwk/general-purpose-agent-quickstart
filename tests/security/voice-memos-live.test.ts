@@ -38,17 +38,24 @@ test("voice service enforces 10MB audio limit, blocks 3.x model slugs, uses gemi
     false
   );
 
-  // Model floor guard blocks any 3.8 / 3.x model
+  // Model floor guard: 3.x text/Flash models stay blocked; only Gemini Live voice models pass
   assert.equal(VOICE_STT_GEMINI_MODEL, "gemini-4-hydrogen");
   const prevModel = process.env.GEMINI_LIVE_MODEL;
   try {
     process.env.GEMINI_LIVE_MODEL = "gemini-3.8-flash";
     assert.throws(
       () => resolveLiveVoiceModelName(),
-      /3\.x models are disallowed/
+      /3\.x text models are disallowed/
+    );
+    process.env.GEMINI_LIVE_MODEL = "gemini-3.8-flash-tts";
+    assert.throws(() => resolveLiveVoiceModelName(), /only Gemini Live/);
+    process.env.GEMINI_LIVE_MODEL = "gemini-3.8-live-extended-thinking";
+    assert.equal(
+      resolveLiveVoiceModelName(),
+      "gemini-3.8-live-extended-thinking"
     );
     process.env.GEMINI_LIVE_MODEL = "";
-    assert.equal(resolveLiveVoiceModelName(), "gemini-live-current");
+    assert.equal(resolveLiveVoiceModelName(), "gemini-3.8-live");
   } finally {
     process.env.GEMINI_LIVE_MODEL = prevModel ?? "";
   }
