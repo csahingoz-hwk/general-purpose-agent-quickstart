@@ -6,6 +6,7 @@ import { GITHUB_VAULT_SECRET_NAME } from "@/lib/connectors/calendar-and-github";
 import { GOOGLE_VAULT_SECRET_NAMES } from "@/lib/connectors/google-vault-auth";
 import { isGoogleSignInConfigured } from "@/lib/google-owner";
 import { isMacBridgeConfigured } from "@/lib/mac-bridge/client";
+import { pingRedis } from "@/lib/ratelimit";
 import {
   createPostgresVaultStore,
   isVaultConfigured,
@@ -36,7 +37,8 @@ export async function GET() {
   const githubOAuthReady = Boolean(
     process.env.AUTH_GITHUB_ID?.trim() && process.env.AUTH_GITHUB_SECRET?.trim()
   );
-  const redisReady = Boolean(process.env.REDIS_URL?.trim());
+  const redisConfigured = Boolean(process.env.REDIS_URL?.trim());
+  const redisReady = redisConfigured && (await pingRedis());
   const cloudComputerReady = isCloudComputerConfigured();
   const macBridgeReady = isMacBridgeConfigured();
 
@@ -180,11 +182,17 @@ export async function GET() {
     },
     {
       id: "redis_store",
-      label: "Background stream resume",
+      label: "Background stream resume & rate limits",
       summary: redisReady
-        ? "Active via Redis store."
-        : "Optional — add a Redis store in Vercel only if you want mid-stream mobile reconnects.",
-      status: redisReady ? "ready" : "optional",
+        ? "Active via Vercel Redis (ephemeral rate limits & mid-stream resume only — zero permanent data)."
+        : redisConfigured
+          ? "Redis URL is set, but the store could not be reached."
+          : "Optional — add a Redis store in Vercel only if you want mid-stream mobile reconnects.",
+      status: redisReady
+        ? "ready"
+        : redisConfigured
+          ? "action_needed"
+          : "optional",
       actionKind: redisReady ? "none" : "external_link",
       externalUrl: redisReady
         ? undefined

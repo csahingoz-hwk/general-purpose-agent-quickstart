@@ -10,7 +10,10 @@ import {
 } from "ai";
 import { checkBotId } from "botid/server";
 import { after } from "next/server";
-import { createResumableStreamContext } from "resumable-stream";
+import {
+  createResumableStreamContext,
+  type ResumableStreamContext,
+} from "resumable-stream";
 import { auth } from "@/app/(auth)/auth";
 import {
   budgetModelMessages,
@@ -152,12 +155,24 @@ function dropWebSearchHistory(messages: ChatMessage[]): ChatMessage[] {
   }));
 }
 
+let globalStreamContext: ResumableStreamContext | null = null;
+
 function getStreamContext() {
-  try {
-    return createResumableStreamContext({ waitUntil: after });
-  } catch (_) {
+  if (!process.env.REDIS_URL?.trim()) {
     return null;
   }
+  if (!globalStreamContext) {
+    try {
+      // Ephemeral Pub/Sub + sentinel only (eph-stream:*); chat history stays in Postgres.
+      globalStreamContext = createResumableStreamContext({
+        waitUntil: after,
+        keyPrefix: "eph-stream",
+      });
+    } catch (_) {
+      return null;
+    }
+  }
+  return globalStreamContext;
 }
 
 export { getStreamContext };
