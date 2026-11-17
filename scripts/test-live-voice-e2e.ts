@@ -15,6 +15,7 @@ import {
   DEFAULT_LIVE_MODEL,
   int16ToBase64,
   LIVE_OUTPUT_SAMPLE_RATE,
+  LIVE_VOICE_TOOL_DECLARATIONS,
 } from "../lib/voice/live-protocol";
 
 const origin = "http://localhost:3100";
@@ -894,6 +895,232 @@ test("live voice E2E: zero-key Vercel AI Gateway (google/gemini-3.8-live) subpro
     assert.equal(persistedTurns[0]?.userText, "Check my evening");
     console.log(
       "PASS: zero-key Vercel AI Gateway (google/gemini-3.8-live) live voice turn verified end to end"
+    );
+  } finally {
+    await browser.close();
+    await mock.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("live voice E2E: Gemini Live function calling mirrors Connect Google card, TaskCard, and ApprovalCard into chat with spoken filler", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "live-voice-tools-e2e-"));
+  const wavPath = join(dir, "tools.wav");
+  writeTestWav(wavPath, [
+    { durationMs: 300, amplitude: 20 },
+    { durationMs: 560, amplitude: 9200, freqHz: 430 },
+    { durationMs: 3500, amplitude: 20 },
+  ]);
+
+  let sawToolDeclarations = false;
+  let speechFrames = 0;
+  let toolTriggered = false;
+  const receivedToolOutputs: Array<{ callId: string; name: string }> = [];
+
+  const mock = await startMockLiveWsServer({
+    onMessage: (ws, msg) => {
+      if (msg.type === "session-update") {
+        sawToolDeclarations =
+          Array.isArray(msg.config?.tools) && msg.config.tools.length >= 10;
+        ws.sendJson({ type: "session-updated" });
+        return;
+      }
+      if (msg.type === "input-audio-append" && typeof msg.audio === "string") {
+        const { maxAbs } = pcmMaxAbs(msg.audio);
+        if (maxAbs > 1000) {
+          speechFrames += 1;
+        } else if (!toolTriggered && speechFrames >= 8) {
+          toolTriggered = true;
+          ws.sendJson({
+            type: "input-transcription-completed",
+            itemId: "item_u1",
+            transcript: "Check my inbox, start a repo task, and draft an email",
+          });
+          ws.sendJson({
+            type: "audio-transcript-delta",
+            responseId: "r1",
+            itemId: "i1",
+            delta: "Checking your inbox… ",
+          });
+          ws.sendJson({
+            type: "function-call-arguments-done",
+            responseId: "r1",
+            itemId: "i_fc1",
+            callId: "call_gmail_1",
+            name: "gmailReadMessages",
+            arguments: '{"query":"is:unread"}',
+          });
+          ws.sendJson({
+            type: "function-call-arguments-done",
+            responseId: "r1",
+            itemId: "i_fc2",
+            callId: "call_task_1",
+            name: "delegateTask",
+            arguments:
+              '{"title":"Audit open branches","prompt":"List stale branches"}',
+          });
+          ws.sendJson({
+            type: "function-call-arguments-done",
+            responseId: "r1",
+            itemId: "i_fc3",
+            callId: "call_draft_1",
+            name: "gmailCreateDraft",
+            arguments:
+              '{"recipient":"ali@example.com","subject":"Hello","body":"Hi Ali"}',
+          });
+          ws.sendJson({
+            type: "response-done",
+            responseId: "r1",
+            status: "completed",
+          });
+        }
+        return;
+      }
+      if (
+        msg.type === "conversation-item-create" &&
+        msg.item?.type === "function-call-output"
+      ) {
+        receivedToolOutputs.push({
+          callId: String(msg.item.callId),
+          name: String(msg.item.name),
+        });
+        return;
+      }
+      if (msg.type === "response-create" && receivedToolOutputs.length >= 3) {
+        for (const chunk of makeAssistantAudioChunks(300)) {
+          ws.sendJson({
+            type: "audio-delta",
+            responseId: "r2",
+            itemId: "i2",
+            delta: chunk,
+          });
+        }
+        ws.sendJson({
+          type: "audio-transcript-delta",
+          responseId: "r2",
+          itemId: "i2",
+          delta:
+            "Google isn't connected yet—tap Connect Google in chat, and your task and draft approval cards are ready.",
+        });
+        ws.sendJson({
+          type: "response-done",
+          responseId: "r2",
+          status: "completed",
+        });
+      }
+    },
+  });
+
+  const browser = await launchWithFakeMic(wavPath);
+  try {
+    const context = await browser.newContext({
+      viewport: { width: 390, height: 844 },
+      isMobile: true,
+      hasTouch: true,
+      permissions: ["microphone"],
+    });
+    const sessionJwt = await encode({
+      secret,
+      salt: "authjs.session-token",
+      token: { id: userId, email: owner, name: "Çağlar", type: "regular" },
+    });
+    await context.addCookies([
+      { name: "authjs.session-token", value: sessionJwt, url: origin },
+    ]);
+    const page = await context.newPage();
+
+    await page.route("**/a-4-a/c.js*", (route) =>
+      route.fulfill({
+        contentType: "application/javascript",
+        body: "window.V_C.push({b:1,d:0});",
+      })
+    );
+    await page.route("**/api/history*", (route) =>
+      route.fulfill({ json: { chats: [], hasMore: false } })
+    );
+    await page.route("**/api/messages*", (route) =>
+      route.fulfill({
+        json: {
+          messages: [],
+          visibility: "private",
+          userId,
+          isReadonly: false,
+        },
+      })
+    );
+    await page.route("**/api/tasks*", (route) =>
+      route.fulfill({ json: { status: "ready", tasks: [] } })
+    );
+    await page.route("**/api/models", (route) =>
+      route.fulfill({
+        json: {
+          status: "ready",
+          defaultModelId: "gpt-6-luna",
+          checkedAt: "2026-11-17T12:00:00Z",
+          models: [
+            {
+              id: "gpt-6-luna",
+              name: "Everyday chat",
+              provider: "openai",
+              description: "GPT-6 Luna",
+            },
+          ],
+          capabilities: {},
+        },
+      })
+    );
+    await page.route("**/api/voice/transcribe", (route) =>
+      route.fulfill({ json: { serverSttReady: true, liveReady: true } })
+    );
+    await page.route("**/api/voice/live-session", (route) =>
+      route.fulfill({
+        json: {
+          status: "ready",
+          transport: "gateway",
+          token: "vcst_mock_tools",
+          model: DEFAULT_GATEWAY_LIVE_MODEL,
+          wsUrl: mock.wsUrl,
+          protocols: [
+            "ai-gateway-realtime-v1",
+            "ai-gateway-auth.vcst_mock_tools",
+          ],
+          setup: buildGatewayLiveSetupMessage({
+            systemInstruction: "Sys",
+            tools: LIVE_VOICE_TOOL_DECLARATIONS,
+          }),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+      })
+    );
+    await page.route("**/api/voice/live-transcript", (route) =>
+      route.fulfill({ json: { saved: true } })
+    );
+
+    await page.goto(origin);
+    await page.getByTestId("live-voice-button").click();
+    const overlay = page.getByTestId("live-voice-overlay");
+    await expect(overlay).toBeVisible();
+
+    await expect(
+      page.getByTestId("live-voice-assistant-caption")
+    ).toContainText("tap Connect Google in chat", { timeout: 8000 });
+    await expect(page.getByTestId("live-voice-open-chat-card")).toBeVisible();
+
+    // Tap the 1-tap banner to return to chat and verify all 3 mirrored cards!
+    await page.getByTestId("live-voice-open-chat-card").click();
+    await expect(overlay).toHaveCount(0);
+
+    await expect(page.getByTestId("connect-google-button")).toBeVisible();
+    await expect(page.getByTestId("task-card")).toBeVisible();
+    await expect(page.getByText("Audit open branches")).toBeVisible();
+    await expect(
+      page.getByText("Save unsent Gmail draft (never sends)")
+    ).toBeVisible();
+
+    assert.equal(sawToolDeclarations, true);
+    assert.equal(receivedToolOutputs.length, 3);
+    console.log(
+      "PASS: Live Voice function calling + filler + Connect Google card + TaskCard + ApprovalCard verified in Chrome"
     );
   } finally {
     await browser.close();

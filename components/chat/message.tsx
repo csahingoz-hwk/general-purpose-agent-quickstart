@@ -18,6 +18,11 @@ import {
 } from "../ai-elements/tool";
 import { AgentMascot } from "./agent-mascot";
 import { ApprovalCard } from "./approval-card";
+import {
+  ConnectorConnectCard,
+  ConnectorSummaryCard,
+  isSetupRequiredOutput,
+} from "./connector-connect-card";
 import { useDataStream } from "./data-stream-provider";
 import { DocumentToolResult } from "./document";
 import { DocumentPreview } from "./document-preview";
@@ -31,6 +36,7 @@ import { OpenUiCard } from "./openui-card";
 import { OutboundDraftCard } from "./outbound-draft-card";
 import { PreviewAttachment } from "./preview-attachment";
 import { QuestionCard } from "./question-card";
+import { isTaskCardPayload, TaskCard } from "./task-card";
 import { Weather } from "./weather";
 import { WebSearchCard } from "./web-search-card";
 
@@ -497,6 +503,63 @@ const PurePreviewMessage = ({
             locale={locale}
             state={state}
             title={friendlyTitles[toolName] ?? toolName}
+            toolName={toolName}
+          />
+        );
+      }
+
+      if (
+        toolName === "delegateTask" ||
+        (state === "output-available" && isTaskCardPayload(output))
+      ) {
+        return (
+          <TaskCard
+            input={input}
+            isReadonly={isReadonly}
+            key={toolCallId}
+            locale={locale}
+            payload={isTaskCardPayload(output) ? output : undefined}
+            state={state}
+          />
+        );
+      }
+
+      if (
+        state === "output-available" &&
+        isSetupRequiredOutput(output) &&
+        (toolName.startsWith("gmail") ||
+          toolName.startsWith("calendar") ||
+          toolName.startsWith("drive") ||
+          toolName.startsWith("github"))
+      ) {
+        const provider =
+          output.connectProvider ??
+          (toolName.startsWith("github") ? "github" : "google");
+        return (
+          <ConnectorConnectCard
+            chatId={chatId}
+            key={toolCallId}
+            locale={locale}
+            provider={provider}
+          />
+        );
+      }
+
+      if (
+        state === "output-available" &&
+        output &&
+        typeof output === "object" &&
+        (output as { status?: string }).status === "ok" &&
+        (toolName === "gmailReadMessages" ||
+          toolName === "calendarReadEvents" ||
+          toolName === "driveReadFiles" ||
+          toolName === "githubReadPullRequests")
+      ) {
+        return (
+          <ConnectorSummaryCard
+            key={toolCallId}
+            locale={locale}
+            output={output as Record<string, unknown>}
             toolName={toolName}
           />
         );

@@ -18,7 +18,12 @@ import type { ChatMessage } from "@/lib/types";
 import { cn, fetcher, generateUUID } from "@/lib/utils";
 import type { CommittedLiveTurn } from "@/lib/voice/live-protocol";
 import { AgentMascot } from "./agent-mascot";
-import { type LivePhase, LiveVoiceEngine } from "./live-voice-engine";
+import {
+  type LivePhase,
+  type LiveToolDoneEvent,
+  type LiveToolStartEvent,
+  LiveVoiceEngine,
+} from "./live-voice-engine";
 import { useMascotPreference } from "./mascot-preference";
 
 export type VoiceReadiness = {
@@ -385,8 +390,13 @@ export function LiveVoiceButton({
   const [muted, setMuted] = useState(false);
   const [captions, setCaptions] = useState({ user: "", assistant: "" });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [toolActivity, setToolActivity] = useState<string | null>(null);
+  const [pendingChatCardHint, setPendingChatCardHint] = useState<string | null>(
+    null
+  );
   const [level, setLevel] = useState(0);
   const engineRef = useRef<LiveVoiceEngine | null>(null);
+  const toolPlaceholderIdsRef = useRef<Map<string, string>>(new Map());
   const urlPushedRef = useRef(false);
   const persistChainRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -490,9 +500,73 @@ export function LiveVoiceButton({
     };
   }, []);
 
+  const handleToolStart = useCallback(
+    (ev: LiveToolStartEvent) => {
+      const placeholderId = generateUUID();
+      const safeCallId = ev.callId.replace(/[^a-zA-Z0-9_-]/g, "_");
+      toolPlaceholderIdsRef.current.set(ev.callId, placeholderId);
+      if (!urlPushedRef.current) {
+        urlPushedRef.current = true;
+        window.history.pushState({}, "", `${basePath}/chat/${chatId}`);
+      }
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: placeholderId,
+          role: "assistant",
+          parts: [
+            {
+              type: `tool-${ev.name}`,
+              toolCallId: safeCallId,
+              state: "input-available",
+              input: ev.args,
+            } as unknown as ChatMessage["parts"][number],
+          ],
+          metadata: { createdAt: new Date().toISOString() },
+        } as ChatMessage,
+      ]);
+    },
+    [basePath, chatId, setMessages]
+  );
+
+  const handleToolDone = useCallback(
+    (ev: LiveToolDoneEvent) => {
+      if (ev.blocked) {
+        toast.error(
+          "Voice mode stopped: employer work material can't go to the personal voice service."
+        );
+        return;
+      }
+      const placeholderId = toolPlaceholderIdsRef.current.get(ev.callId);
+      toolPlaceholderIdsRef.current.delete(ev.callId);
+      const status = String(ev.voiceResult?.status ?? "");
+      if (status === "setup_required") {
+        setPendingChatCardHint("Tap to connect account in chat");
+      } else if (status === "awaiting_approval") {
+        setPendingChatCardHint("Tap to review approval card in chat");
+      }
+      setMessages((prev) => {
+        const nextMsg: ChatMessage = {
+          id: ev.assistantMessageId,
+          role: "assistant",
+          parts: [ev.toolPart as unknown as ChatMessage["parts"][number]],
+          metadata: { createdAt: new Date().toISOString() },
+        };
+        if (placeholderId && prev.some((m) => m.id === placeholderId)) {
+          return prev.map((m) => (m.id === placeholderId ? nextMsg : m));
+        }
+        return [...prev, nextMsg];
+      });
+    },
+    [setMessages]
+  );
+
   const launch = () => {
     engineRef.current?.stop();
+    toolPlaceholderIdsRef.current.clear();
     setErrorMessage(null);
+    setToolActivity(null);
+    setPendingChatCardHint(null);
     setCaptions({ user: "", assistant: "" });
     setMuted(false);
     setPhase("connecting");
@@ -507,6 +581,9 @@ export function LiveVoiceButton({
           persistTurn(turn);
         },
         onError: setErrorMessage,
+        onToolActivity: setToolActivity,
+        onToolStart: handleToolStart,
+        onToolDone: handleToolDone,
       },
     });
     engineRef.current = engine;
@@ -593,9 +670,11 @@ export function LiveVoiceButton({
                 )}
               />
               <span className="font-medium text-foreground text-xs">
-                {muted && listeningLike
-                  ? "Microphone muted"
-                  : PHASE_LABEL[phase]}
+                {toolActivity
+                  ? toolActivity
+                  : muted && listeningLike
+                    ? "Microphone muted"
+                    : PHASE_LABEL[phase]}
               </span>
             </div>
 
@@ -668,6 +747,18 @@ export function LiveVoiceButton({
                           : "Talk naturally. You can interrupt anytime."}
                   </p>
                 )}
+                {pendingChatCardHint ? (
+                  <div className="pt-2">
+                    <button
+                      className="inline-flex min-h-11 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs shadow-sm transition-colors hover:bg-primary/90"
+                      data-testid="live-voice-open-chat-card"
+                      onClick={close}
+                      type="button"
+                    >
+                      {pendingChatCardHint}
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </div>
 

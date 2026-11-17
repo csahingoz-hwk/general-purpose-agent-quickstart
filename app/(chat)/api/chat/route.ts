@@ -45,6 +45,7 @@ import { askUserQuestion } from "@/lib/ai/tools/ask-question";
 import { createCalendarAndGithubTools } from "@/lib/ai/tools/calendar-github-connectors";
 import { cancelSchedule } from "@/lib/ai/tools/cancel-schedule";
 import { createDocument } from "@/lib/ai/tools/create-document";
+import { createDelegateTaskTool } from "@/lib/ai/tools/delegate-task";
 import { demoInbox } from "@/lib/ai/tools/demo-inbox";
 import { draftOutboundMessage } from "@/lib/ai/tools/draft-outbound";
 import { editDocument } from "@/lib/ai/tools/edit-document";
@@ -352,9 +353,36 @@ export async function POST(request: Request) {
             .join("\n")
             .slice(0, 1200)}`
         : "";
-    const baseContext = memoryContextBlock
-      ? `${rawBaseContext}\n\n${memoryContextBlock}`
-      : rawBaseContext;
+    const ownerDisplayName =
+      session.user.type !== "guest"
+        ? session.user.name?.trim() ||
+          process.env.APP_OWNER_NAME?.trim() ||
+          "Çağlar"
+        : null;
+    const ownerHeader = ownerDisplayName ? `Owner: ${ownerDisplayName}` : "";
+    const baseContext = [ownerHeader, rawBaseContext, memoryContextBlock]
+      .filter(Boolean)
+      .join("\n\n");
+    const hasOperatorToolOnTurn = requestedTools.some((name) =>
+      [
+        "gmailReadMessages",
+        "driveReadFiles",
+        "calendarReadEvents",
+        "githubReadPullRequests",
+        "gmailCreateDraft",
+        "driveCreateDraftDoc",
+        "calendarCreateDraftEvent",
+        "githubCreateDraftReview",
+        "saveProfileFact",
+        "addJournalEntry",
+        "recallMemories",
+        "scheduleTask",
+        "listMySchedules",
+        "cancelSchedule",
+        "draftOutboundMessage",
+        "delegateTask",
+      ].includes(name)
+    );
     const replySystemPrompt = systemPrompt({
       supportsTools,
       soul: effectiveSoul,
@@ -362,6 +390,7 @@ export async function POST(request: Request) {
       includeArtifacts: needsArtifactInstructions(requestedTools),
       includeWebSearch: searchLane && requestedTools.includes("webSearch"),
       includeFixtures: requestedTools.includes("getFixtures"),
+      includeOperatorTools: hasOperatorToolOnTurn,
       includeVisual: requestedTools.some(
         (name) => name === "webSearch" || name === "getWeather"
       ),
@@ -459,6 +488,10 @@ export async function POST(request: Request) {
                     draftOutboundMessage: draftOutboundMessage({
                       hasUntrustedContext: hasUntrusted,
                     }),
+                    delegateTask: createDelegateTaskTool({
+                      userId: session.user.id,
+                      hasUntrustedContext: hasUntrusted,
+                    }),
                     ...(isRoutinesEnabled()
                       ? { scheduleTask: scheduleTask({ session }) }
                       : {}),
@@ -529,17 +562,15 @@ export async function POST(request: Request) {
             model: getLanguageModel(chatModel),
             instructions: replySystemPrompt,
             messages: prepared.messages,
-            // Step 1 = tool call(s); step 2 = the written answer. AI Gateway runs
-            // webSearch inside step 1's model call (provider-executed), so the
-            // search result and the answer need no extra step. The number of
-            // searches is capped in the routed model (WEB_SEARCH_MAX_CALLS).
+            // Multi-step agent loop: 0 tools = 1 step; single tool = up to 4 steps
+            // (tool call + retry/follow-up + written answer); multi-tool / operator
+            // turns = bounded 8-step loop.
             stopWhen: isStepCount(
               activeTools.length === 0
                 ? 1
-                : activeTools.includes("getFixtures") &&
-                    activeTools.includes("webSearch")
-                  ? 3
-                  : 2
+                : activeTools.length > 1 || activeTools.includes("delegateTask")
+                  ? 8
+                  : 4
             ),
             maxOutputTokens: replyTokens,
             maxRetries: 0,

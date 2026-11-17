@@ -9,8 +9,14 @@
 import postgres from "postgres";
 import { gatewayEnabled } from "../lib/ai/routing/catalog";
 import { createPostgresVaultStore } from "../lib/vault/secret-vault";
-import { parseLiveServerMessage } from "../lib/voice/live-protocol";
-import { mintLiveVoiceToken } from "../lib/voice/live-session";
+import {
+  buildLiveToolOutputItemMessage,
+  parseLiveServerMessage,
+} from "../lib/voice/live-protocol";
+import {
+  buildVoiceSystemInstruction,
+  mintLiveVoiceToken,
+} from "../lib/voice/live-session";
 import { VOICE_VAULT_SECRET_NAMES } from "../lib/voice/voice-service";
 
 const HARD_TIMEOUT_MS = 25_000;
@@ -52,7 +58,10 @@ async function run(): Promise<string> {
     return "SKIP (no AI Gateway OIDC or Gemini key in build environment)";
   }
   const t0 = Date.now();
-  const systemInstruction = "Self-check. Answer in one short English sentence.";
+  const systemInstruction = buildVoiceSystemInstruction({
+    ownerName: "Çağlar",
+    timeZone: "Europe/London",
+  });
   const grant = await mintLiveVoiceToken({
     apiKey,
     preferGateway: hasGatewayCreds,
@@ -71,6 +80,10 @@ async function run(): Promise<string> {
     let audioBytes = 0;
     let transcript = "";
     let promptSent = false;
+    let toolCalled = "";
+    let awaitingToolAnswer = false;
+    let pendingGatewayResume = false;
+    const seenCallIds = new Set<string>();
     const finish = (status: string) => {
       try {
         ws.close();
@@ -81,7 +94,7 @@ async function run(): Promise<string> {
     };
     const timer = setTimeout(() => {
       finish(
-        `FAIL timeout (transport=${grant.transport}, token ${tToken}ms, setup ${tSetup ? `${tSetup}ms` : "none"}, audio ${audioBytes}B)`
+        `FAIL timeout (transport=${grant.transport}, token ${tToken}ms, setup ${tSetup ? `${tSetup}ms` : "none"}, tool=${toolCalled || "none"}, audio ${audioBytes}B)`
       );
     }, HARD_TIMEOUT_MS - 3000);
 
@@ -109,6 +122,8 @@ async function run(): Promise<string> {
           promptSent = true;
           tSetup = Date.now() - t0;
           tSent = Date.now();
+          const promptText =
+            "What is the weather in London right now? Call getWeather.";
           if (grant.transport === "gateway") {
             ws.send(
               JSON.stringify({
@@ -116,16 +131,38 @@ async function run(): Promise<string> {
                 item: {
                   type: "text-message",
                   role: "user",
-                  text: "Please say: voice check complete.",
+                  text: promptText,
                 },
               })
             );
+            ws.send(JSON.stringify({ type: "response-create" }));
           } else {
-            ws.send(
-              JSON.stringify({
-                realtimeInput: { text: "Please say: voice check complete." },
+            ws.send(JSON.stringify({ realtimeInput: { text: promptText } }));
+          }
+        } else if (event.type === "tool-call") {
+          if (seenCallIds.has(event.callId)) {
+            continue;
+          }
+          seenCallIds.add(event.callId);
+          toolCalled = event.name;
+          awaitingToolAnswer = true;
+          ws.send(
+            JSON.stringify(
+              buildLiveToolOutputItemMessage(grant.transport, {
+                callId: event.callId,
+                name: event.name,
+                output: {
+                  status: "ok",
+                  city: "London",
+                  currentTemperature: 16,
+                  unit: "°C",
+                  rainChancePercent: 10,
+                },
               })
-            );
+            )
+          );
+          if (grant.transport === "gateway") {
+            pendingGatewayResume = true;
           }
         } else if (event.type === "audio") {
           if (!tFirstAudio) {
@@ -135,9 +172,19 @@ async function run(): Promise<string> {
         } else if (event.type === "output-transcript") {
           transcript += event.text;
         } else if (event.type === "turn-complete") {
+          if (pendingGatewayResume) {
+            pendingGatewayResume = false;
+            awaitingToolAnswer = false;
+            ws.send(JSON.stringify({ type: "response-create" }));
+            continue;
+          }
+          if (awaitingToolAnswer && audioBytes === 0) {
+            awaitingToolAnswer = false;
+            continue;
+          }
           clearTimeout(timer);
           finish(
-            `PASS transport=${grant.transport} model=${grant.model} token=${tToken}ms setupComplete=${tSetup}ms firstAudio=${tFirstAudio}ms audio=${(audioBytes / 48_000).toFixed(1)}s transcript="${transcript.trim().slice(0, 80)}"`
+            `PASS transport=${grant.transport} model=${grant.model} tool=${toolCalled || "direct"} token=${tToken}ms setupComplete=${tSetup}ms firstAudio=${tFirstAudio}ms audio=${(audioBytes / 48_000).toFixed(1)}s transcript="${transcript.trim().slice(0, 80)}"`
           );
         } else if (event.type === "error") {
           clearTimeout(timer);

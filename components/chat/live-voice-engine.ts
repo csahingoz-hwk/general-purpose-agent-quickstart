@@ -5,6 +5,7 @@ import {
   buildLiveAudioClientMessage,
   buildLiveCancelMessage,
   buildLiveStreamEndMessage,
+  buildLiveToolOutputItemMessage,
   type CommittedLiveTurn,
   EchoGate,
   echoSimilarity,
@@ -29,13 +30,80 @@ export type LivePhase =
   | "error"
   | "ended";
 
+export type LiveToolStartEvent = {
+  callId: string;
+  name: string;
+  args: Record<string, unknown>;
+  filler: string;
+};
+
+export type LiveToolDoneEvent = {
+  callId: string;
+  name: string;
+  assistantMessageId: string;
+  toolPart: Record<string, unknown>;
+  voiceResult: Record<string, unknown>;
+  blocked: boolean;
+};
+
 export type LiveEngineCallbacks = {
   onPhase: (phase: LivePhase) => void;
   onCaptions: (captions: { user: string; assistant: string }) => void;
   onLevel: (level: number) => void;
   onTurn: (turn: CommittedLiveTurn) => void;
   onError: (message: string) => void;
+  onToolActivity?: (filler: string | null) => void;
+  onToolStart?: (ev: LiveToolStartEvent) => void;
+  onToolDone?: (ev: LiveToolDoneEvent) => void;
 };
+
+const CLIENT_FILLERS_EN: Record<string, string> = {
+  gmailReadMessages: "Checking your inbox…",
+  calendarReadEvents: "Checking your calendar…",
+  driveReadFiles: "Searching Google Drive…",
+  githubReadPullRequests: "Checking GitHub…",
+  getWeather: "Checking the weather…",
+  getCurrentTime: "Checking the clock…",
+  webSearch: "Searching the web…",
+  getFixtures: "Checking fixtures…",
+  recallMemories: "Checking your memory…",
+  saveProfileFact: "Saving to memory…",
+  addJournalEntry: "Saving journal note…",
+  listMySchedules: "Checking routines…",
+  scheduleTask: "Preparing approval card…",
+  gmailCreateDraft: "Preparing Gmail draft card…",
+  calendarCreateDraftEvent: "Preparing Calendar card…",
+  driveCreateDraftDoc: "Preparing Drive draft card…",
+  draftOutboundMessage: "Preparing approval card…",
+  delegateTask: "Creating task card…",
+};
+
+const CLIENT_FILLERS_TR: Record<string, string> = {
+  gmailReadMessages: "Gelen kutuna bakıyorum…",
+  calendarReadEvents: "Takvimine bakıyorum…",
+  driveReadFiles: "Drive'da arıyorum…",
+  githubReadPullRequests: "GitHub'a bakıyorum…",
+  getWeather: "Hava durumuna bakıyorum…",
+  getCurrentTime: "Saate bakıyorum…",
+  webSearch: "Web'de arıyorum…",
+  getFixtures: "Fikstüre bakıyorum…",
+  recallMemories: "Belleğine bakıyorum…",
+  saveProfileFact: "Belleğe kaydediyorum…",
+  addJournalEntry: "Günlüğe ekliyorum…",
+  listMySchedules: "Rutinlere bakıyorum…",
+  scheduleTask: "Onay kartı hazırlıyorum…",
+  gmailCreateDraft: "Gmail onay kartı hazırlıyorum…",
+  calendarCreateDraftEvent: "Takvim kartı hazırlıyorum…",
+  driveCreateDraftDoc: "Drive kartı hazırlıyorum…",
+  draftOutboundMessage: "Onay kartı hazırlıyorum…",
+  delegateTask: "Görev kartı oluşturuyorum…",
+};
+
+function detectTurkishText(text: string): boolean {
+  return /[çğıöşüÇĞİÖŞÜ]|\b(merhaba|nasıl|nedir|var mı|hava|gelen kutu|takvim|bugün|yarın)\b/i.test(
+    text
+  );
+}
 
 type TokenGrant = {
   status: "ready";
@@ -167,6 +235,10 @@ export class LiveVoiceEngine {
   private lastAssistantText = "";
   private activeAssistantCaption = "";
   private turnCompleteReceived = true;
+  private readonly seenToolCalls = new Set<string>();
+  private readonly inFlightToolCalls = new Set<string>();
+  private readonly cancelledToolCalls = new Set<string>();
+  private pendingGatewayResponseCreate = false;
 
   private readonly onVisibility = () => {
     if (document.visibilityState === "hidden" && !this.stopped) {
@@ -535,6 +607,20 @@ export class LiveVoiceEngine {
             this.emitCaptions();
           }
           break;
+        case "tool-call":
+          this.handleToolCall(event.callId, event.name, event.args).catch(
+            () => null
+          );
+          break;
+        case "tool-call-cancelled":
+          for (const id of event.ids) {
+            this.cancelledToolCalls.add(id);
+            this.inFlightToolCalls.delete(id);
+          }
+          if (this.inFlightToolCalls.size === 0) {
+            this.cb.onToolActivity?.(null);
+          }
+          break;
         case "speech-started":
           if (this.sources.size > 0 || !this.turnCompleteReceived) {
             this.turns.markBargeIn();
@@ -561,8 +647,20 @@ export class LiveVoiceEngine {
         case "turn-complete":
           this.dropStaleAudio = false;
           this.turnCompleteReceived = true;
-          this.commitTurn(false);
-          this.maybeReturnToListening();
+          if (
+            this.pendingGatewayResponseCreate &&
+            this.inFlightToolCalls.size === 0 &&
+            this.ws?.readyState === WebSocket.OPEN
+          ) {
+            this.pendingGatewayResponseCreate = false;
+            this.turnCompleteReceived = false;
+            this.ws.send(JSON.stringify({ type: "response-create" }));
+            break;
+          }
+          if (this.inFlightToolCalls.size === 0) {
+            this.commitTurn(false);
+            this.maybeReturnToListening();
+          }
           break;
         case "resumption":
           this.resumeHandle = event.handle;
@@ -658,11 +756,112 @@ export class LiveVoiceEngine {
     }
   }
 
+  private async handleToolCall(
+    callId: string,
+    name: string,
+    args: Record<string, unknown>
+  ) {
+    if (this.seenToolCalls.has(callId) || this.stopped) {
+      return;
+    }
+    this.seenToolCalls.add(callId);
+    this.inFlightToolCalls.add(callId);
+    this.clearThinkingTimer();
+
+    const locale = detectTurkishText(this.turns.userCaption) ? "tr" : "en";
+    const filler =
+      (locale === "tr" ? CLIENT_FILLERS_TR[name] : CLIENT_FILLERS_EN[name]) ??
+      (locale === "tr" ? "Kontrol ediyorum…" : "Checking that now…");
+
+    this.cb.onToolActivity?.(filler);
+    if (!this.turns.assistantCaption) {
+      this.activeAssistantCaption = filler;
+      this.emitCaptions();
+    }
+    if (!this.assistantAudible) {
+      this.setPhase("thinking");
+    }
+    this.cb.onToolStart?.({ callId, name, args, filler });
+
+    try {
+      const res = await fetch(`${this.basePath}/api/voice/live-tool`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chatId: this.sessionBody.chatId,
+          toolCallId: callId,
+          toolName: name,
+          args,
+          timeZone: this.sessionBody.timeZone,
+          locale,
+        }),
+        cache: "no-store",
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        assistantMessageId?: string;
+        toolPart?: Record<string, unknown>;
+        voiceResult?: Record<string, unknown>;
+        blocked?: boolean;
+      };
+
+      this.inFlightToolCalls.delete(callId);
+      if (this.inFlightToolCalls.size === 0) {
+        this.cb.onToolActivity?.(null);
+      }
+
+      if (this.stopped || this.cancelledToolCalls.has(callId)) {
+        return;
+      }
+
+      const voiceResult = data.voiceResult ?? { status: "error" };
+      if (data.toolPart && data.assistantMessageId) {
+        this.cb.onToolDone?.({
+          callId,
+          name,
+          assistantMessageId: data.assistantMessageId,
+          toolPart: data.toolPart,
+          voiceResult,
+          blocked: data.blocked === true,
+        });
+      }
+
+      if (data.blocked) {
+        this.stop();
+        return;
+      }
+
+      if (this.ws?.readyState === WebSocket.OPEN && this.ready) {
+        this.ws.send(
+          JSON.stringify(
+            buildLiveToolOutputItemMessage(this.transport, {
+              callId,
+              name,
+              output: voiceResult,
+            })
+          )
+        );
+        if (this.transport === "gateway") {
+          if (this.turnCompleteReceived && this.inFlightToolCalls.size === 0) {
+            this.turnCompleteReceived = false;
+            this.ws.send(JSON.stringify({ type: "response-create" }));
+          } else {
+            this.pendingGatewayResponseCreate = true;
+          }
+        }
+      }
+    } catch {
+      this.inFlightToolCalls.delete(callId);
+      if (this.inFlightToolCalls.size === 0) {
+        this.cb.onToolActivity?.(null);
+      }
+    }
+  }
+
   private armThinkingTimer() {
     this.clearThinkingTimer();
     // Noise that never became a turn: quietly go back to listening.
     this.thinkingTimer = setTimeout(() => {
-      if (this.phase === "thinking") {
+      if (this.phase === "thinking" && this.inFlightToolCalls.size === 0) {
         this.setPhase("listening");
       }
     }, 7000);

@@ -129,6 +129,10 @@ export async function POST(request: Request) {
   ).map((f) => f.value);
 
   const systemInstruction = buildVoiceSystemInstruction({
+    ownerName:
+      session.user.name?.trim() ||
+      process.env.APP_OWNER_NAME?.trim() ||
+      "Çağlar",
     timeZone: validTimeZone(body.timeZone),
     teammate: teammate ? { name: teammate.name, soul: teammate.soul } : null,
     facts: scopedFacts,

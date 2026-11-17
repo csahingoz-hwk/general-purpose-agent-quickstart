@@ -35,6 +35,7 @@ export const AVAILABLE_CHAT_TOOLS = [
   "githubCreateDraftReview",
   "generateImageAsset",
   "generateVideoClip",
+  "delegateTask",
 ] as const;
 
 export type ChatToolName = (typeof AVAILABLE_CHAT_TOOLS)[number];
@@ -78,6 +79,9 @@ const FIXTURE_PATTERN_TR =
 const LOCAL_COMMAND_PATTERN =
   /\b(demo|mock|fictional|sample|test inbox|my home city|set my city|my city is|i live in|i'?m based in|home is in|my schedules|scheduled tasks|recurring tasks|cancel schedule|schedule a task|schedule a routine|create a routine|customize your personality|change your personality|remember my preferred style|set your personality|draft an? email|draft a message|draft a slack|draft a telegram|prepare an? outbound draft|ask me a clarifying question|give me clickable options|save to my profile|log in my journal|search my memory|recall from memory|check (?:my )?gmail|read (?:my )?gmail|search (?:my )?gmail|create (?:a )?gmail draft|save (?:a )?draft in gmail|search (?:my )?(?:google )?drive|read (?:from )?(?:my )?(?:google )?drive|list (?:my )?(?:google )?drive files|create (?:a )?(?:google )?drive draft|save (?:a )?draft (?:doc|document) in (?:google )?drive|check (?:my )?(?:google )?calendar|upcoming calendar events|read (?:my )?calendar|create (?:a )?(?:google )?calendar draft|draft (?:a )?calendar event|list (?:open )?(?:github )?(?:prs|pull requests)|read (?:github )?(?:prs|pull requests)|check github prs|draft (?:a )?(?:github )?(?:pr|pull request) review|create (?:a )?github draft review|generate (?:an? )?(?:image|illustration|picture|poster|video|video clip)|create (?:an? )?(?:image|video clip))\b|hayal[iî]|örnek gelen kutusu|sahte e.?posta|ev şehrim|şehrim|yaşıyorum|zamanlanmış görev|planlanmış görev|görevlerimi listele|görevi iptal|rutin oluştur|kişiliğini değiştir|tarzını kaydet|kişiselleştir|taslak e-?posta hazırla|gönderim taslağı|bana seçenek kartı göster|belleğime kaydet|günlüğüme ekle|gmail(?:imi|'imi)? (?:kontrol et|oku|ara)|gmail taslağı oluştur|gmail'e taslak kaydet|(?:google )?drive(?:'da|da| dosyalarımı) (?:ara|listele|oku)|(?:google )?drive taslağı oluştur|drive'a taslak kaydet|takvimimi (?:kontrol et|oku)|yaklaşan etkinliklerim|takvim taslağı oluştur|github açık pr|github pr taslak inceleme|görsel üret|resim oluştur|video klibi oluştur/;
 
+const PRIVATE_PERSONAL_INTENT =
+  /\b(did [\p{L}\s]{1,25} e-?mail me|any (?:new |unread |recent )?e-?mails?|what'?s in my inbox|check (?:my )?(?:inbox|e-?mails?)|read (?:my )?(?:inbox|e-?mails?)|e-?mails? from |what'?s on my calendar|am i free |do i have (?:any )?meetings?|my meetings? (?:today|tomorrow|this week)|find .{1,40} in (?:my )?drive|delegate (?:a |this )?task|create a task card|run (?:this )?in the background|background task)\b|(?<![\p{L}])(?:bana (?:e-?posta|mail) geldi mi|okunmamış (?:e-?posta|mail)\p{L}*|gelen kutum\p{L}*|mailimi kontrol et|maillerime bak|takvimimde ne var|bugün toplantım var mı|yarın .{0,20}boş muyum|görev kartı|arka planda çalıştır|görev olarak başlat)(?![\p{L}])/iu;
+
 /** Tools that change stored state; never offered in a turn that reads web content. */
 const STATE_CHANGING_TOOLS: readonly ChatToolName[] = [
   "setHomeLocation",
@@ -97,6 +101,7 @@ const STATE_CHANGING_TOOLS: readonly ChatToolName[] = [
   "githubCreateDraftReview",
   "generateImageAsset",
   "generateVideoClip",
+  "delegateTask",
 ];
 
 function userText(message: ChatMessage): string {
@@ -164,7 +169,9 @@ export function shouldOfferWebSearch(
     return false;
   }
   const localOnly =
-    (DOCUMENT_PATTERN.test(phrase) || LOCAL_COMMAND_PATTERN.test(phrase)) &&
+    (DOCUMENT_PATTERN.test(phrase) ||
+      LOCAL_COMMAND_PATTERN.test(phrase) ||
+      PRIVATE_PERSONAL_INTENT.test(phrase)) &&
     !factual;
   if (localOnly) {
     return false;
@@ -302,23 +309,32 @@ export function selectActiveTools(
     enabled.push("scheduleTask");
   }
 
+  if (
+    canPersonalize &&
+    /\b(delegate (?:a |this )?task|create a task card|run (?:this )?in the background|background task|start a task)\b|(?<![\p{L}])(?:görev kartı|arka planda çalıştır|görev olarak başlat)(?![\p{L}])/iu.test(
+      phrase
+    )
+  ) {
+    enabled.push("delegateTask");
+  }
+
   if (canPersonalize && isMemoryToolsEnabled()) {
     if (
-      /\b(save to my profile|remember this fact|store in my profile)\b|profilime kaydet|belleğime kaydet/.test(
+      /\b(save to my profile|remember (?:this fact|that i\b)|store in my profile)\b|profilime kaydet|belleğime kaydet|unutma ki/i.test(
         phrase
       )
     ) {
       enabled.push("saveProfileFact");
     }
     if (
-      /\b(log in my journal|add to my journal|journal entry)\b|günlüğüme ekle|günlük kaydı/.test(
+      /\b(log in my journal|add to my journal|journal entry)\b|günlüğüme ekle|günlük kaydı/i.test(
         phrase
       )
     ) {
       enabled.push("addJournalEntry");
     }
     if (
-      /\b(search my memory|recall from memory|what do you remember about|check my journal)\b|belleğimi ara|hakkımda ne hatırlıyorsun|günlüğümü kontrol et/.test(
+      /\b(search my memory|recall from memory|what do you remember|check my journal)\b|belleğimi ara|hakkımda ne hatırlıyorsun|günlüğümü kontrol et/i.test(
         phrase
       )
     ) {
@@ -341,7 +357,7 @@ export function selectActiveTools(
         enabled.push("gmailCreateDraft");
       }
       if (
-        /\b(check (?:my )?gmail|read (?:my )?(?:gmail|unread emails? in gmail)|search (?:my )?gmail|latest emails? in (?:my )?gmail)\b|gmail(?:imi|'imi)? (?:kontrol et|oku|ara)/.test(
+        /\b(check (?:my )?(?:gmail|inbox|e-?mails?)|read (?:my )?(?:gmail|inbox|unread emails?(?: in gmail)?|e-?mails?)|search (?:my )?gmail|latest emails? in (?:my )?gmail|did [\p{L}\s]{1,25} e-?mail me|any (?:new |unread |recent )?e-?mails?|what'?s in my inbox|e-?mails? from )\b|gmail(?:imi|'imi)? (?:kontrol et|oku|ara)|(?<![\p{L}])(?:bana (?:e-?posta|mail) geldi mi|okunmamış (?:e-?posta|mail)\p{L}*|gelen kutum\p{L}*|mailimi kontrol et|maillerime bak)(?![\p{L}])/iu.test(
           phrase
         )
       ) {
@@ -356,7 +372,7 @@ export function selectActiveTools(
         enabled.push("driveCreateDraftDoc");
       }
       if (
-        /\b(search (?:my )?(?:google )?drive|read (?:from )?(?:my )?(?:google )?drive|find in (?:my )?(?:google )?drive|list (?:my )?(?:google )?drive files)\b|(?:google )?drive(?:'da|da| dosyalarımı) (?:ara|listele|oku)/.test(
+        /\b(search (?:my )?(?:google )?drive|read (?:from )?(?:my )?(?:google )?drive|find .{1,40} in (?:my )?(?:google )?drive|find in (?:my )?(?:google )?drive|list (?:my )?(?:google )?drive files)\b|(?:google )?drive(?:'da|da|'daki| dosyalarımı) (?:ara|listele|oku|bul)/iu.test(
           phrase
         )
       ) {
@@ -371,7 +387,7 @@ export function selectActiveTools(
         enabled.push("calendarCreateDraftEvent");
       }
       if (
-        /\b(check (?:my )?(?:google )?calendar|upcoming calendar events|read (?:my )?calendar)\b|takvimimi (?:kontrol et|oku)|yaklaşan etkinliklerim/.test(
+        /\b(check (?:my )?(?:google )?calendar|upcoming calendar events|read (?:my )?calendar|what'?s on my calendar|am i free |do i have (?:any )?meetings?|my meetings? (?:today|tomorrow|this week))\b|takvimimi (?:kontrol et|oku)|yaklaşan etkinliklerim|(?<![\p{L}])(?:takvimimde ne var|bugün toplantım var mı|yarın .{0,20}boş muyum)(?![\p{L}])/iu.test(
           phrase
         )
       ) {

@@ -21,6 +21,378 @@ export const DEFAULT_LIVE_VOICE = "Kore";
 
 export type LiveTransportKind = "gateway" | "google-direct";
 
+export type LiveToolDeclaration = {
+  type: "function";
+  name: string;
+  description: string;
+  parameters: {
+    type: "object";
+    properties: Record<string, unknown>;
+    required?: string[];
+  };
+};
+
+export const APPROVAL_REQUIRED_VOICE_TOOLS = new Set<string>([
+  "gmailCreateDraft",
+  "driveCreateDraftDoc",
+  "calendarCreateDraftEvent",
+  "githubCreateDraftReview",
+  "draftOutboundMessage",
+  "scheduleTask",
+  "cancelSchedule",
+]);
+
+export const LIVE_VOICE_TOOL_DECLARATIONS: readonly LiveToolDeclaration[] = [
+  {
+    type: "function",
+    name: "gmailReadMessages",
+    description:
+      "Read recent Gmail emails from the owner's connected Google account (unread inbox, messages from a person, or search query).",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description:
+            "Optional Gmail search query such as 'is:unread' or 'from:Ali'.",
+        },
+        maxResults: {
+          type: "number",
+          description: "Max emails to return (1 to 10, default 5).",
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    name: "calendarReadEvents",
+    description:
+      "Read upcoming events on the owner's connected Google Calendar.",
+    parameters: {
+      type: "object",
+      properties: {
+        timeMin: { type: "string", description: "Optional ISO start time." },
+        maxResults: {
+          type: "number",
+          description: "Max events to return (1 to 15, default 8).",
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    name: "driveReadFiles",
+    description:
+      "Search or read recent files in the owner's connected Google Drive.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Filename or keyword in Drive." },
+        maxResults: {
+          type: "number",
+          description: "Max files to return (1 to 10, default 5).",
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    name: "githubReadPullRequests",
+    description:
+      "List open pull requests for a repository using the owner's connected GitHub account.",
+    parameters: {
+      type: "object",
+      properties: {
+        owner: { type: "string" },
+        repo: { type: "string" },
+      },
+      required: ["owner", "repo"],
+    },
+  },
+  {
+    type: "function",
+    name: "getWeather",
+    description:
+      "Check current weather and 3-day forecast (temperature, rain chance, highs/lows) via Open-Meteo. Defaults to London if no city is named.",
+    parameters: {
+      type: "object",
+      properties: {
+        city: {
+          type: "string",
+          description:
+            "City name (e.g. 'London', 'Istanbul', 'Ankara'). Omit to use London / saved home city.",
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    name: "getCurrentTime",
+    description:
+      "Get exact current time and date in Europe/London or another requested IANA timezone.",
+    parameters: {
+      type: "object",
+      properties: {
+        timeZone: {
+          type: "string",
+          description: "IANA timezone such as 'Europe/London'.",
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    name: "webSearch",
+    description:
+      "Search the live web for current news, prices, exchange rates, scores, or up-to-date public facts.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Concise web search query." },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    type: "function",
+    name: "getFixtures",
+    description:
+      "Look up a football club's next match, kickoff time, and latest score.",
+    parameters: {
+      type: "object",
+      properties: {
+        team: { type: "string", description: "Club name, e.g. 'Galatasaray'." },
+      },
+      required: ["team"],
+    },
+  },
+  {
+    type: "function",
+    name: "recallMemories",
+    description:
+      "Search the owner's saved profile facts and journal notes from long-term memory.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Optional keyword filter." },
+      },
+    },
+  },
+  {
+    type: "function",
+    name: "saveProfileFact",
+    description: "Save a durable fact or preference to the owner's profile.",
+    parameters: {
+      type: "object",
+      properties: {
+        category: {
+          type: "string",
+          enum: ["identity", "preference", "finance", "project", "general"],
+        },
+        key: { type: "string" },
+        value: { type: "string" },
+      },
+      required: ["key", "value"],
+    },
+  },
+  {
+    type: "function",
+    name: "addJournalEntry",
+    description: "Add a timestamped note to the owner's personal journal.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        body: { type: "string" },
+      },
+      required: ["title", "body"],
+    },
+  },
+  {
+    type: "function",
+    name: "listMySchedules",
+    description: "List the owner's active recurring routines and schedules.",
+    parameters: { type: "object", properties: {} },
+  },
+  {
+    type: "function",
+    name: "scheduleTask",
+    description:
+      "Propose a recurring routine (creates an approval card in chat before activating).",
+    parameters: {
+      type: "object",
+      properties: {
+        cronExpression: { type: "string" },
+        timezone: { type: "string" },
+        prompt: { type: "string" },
+      },
+      required: ["cronExpression", "prompt"],
+    },
+  },
+  {
+    type: "function",
+    name: "gmailCreateDraft",
+    description:
+      "Prepare an unsent Gmail draft (places an approval card in chat; never sends without approval).",
+    parameters: {
+      type: "object",
+      properties: {
+        recipient: { type: "string" },
+        subject: { type: "string" },
+        body: { type: "string" },
+      },
+      required: ["recipient", "subject", "body"],
+    },
+  },
+  {
+    type: "function",
+    name: "calendarCreateDraftEvent",
+    description:
+      "Prepare a private [DRAFT] Google Calendar event (places an approval card in chat).",
+    parameters: {
+      type: "object",
+      properties: {
+        summary: { type: "string" },
+        startIso: { type: "string" },
+        endIso: { type: "string" },
+        description: { type: "string" },
+      },
+      required: ["summary", "startIso", "endIso"],
+    },
+  },
+  {
+    type: "function",
+    name: "driveCreateDraftDoc",
+    description:
+      "Prepare a private [DRAFT] Google Doc in Drive (places an approval card in chat).",
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        content: { type: "string" },
+      },
+      required: ["title", "content"],
+    },
+  },
+  {
+    type: "function",
+    name: "draftOutboundMessage",
+    description:
+      "Prepare an outbound email/Slack/Telegram message draft on an approval card in chat.",
+    parameters: {
+      type: "object",
+      properties: {
+        channel: {
+          type: "string",
+          enum: ["email", "slack", "telegram", "webhook"],
+        },
+        recipient: { type: "string" },
+        subject: { type: "string" },
+        body: { type: "string" },
+      },
+      required: ["channel", "recipient", "body"],
+    },
+  },
+  {
+    type: "function",
+    name: "delegateTask",
+    description:
+      "Delegate a multi-step task, coding job, Cloud Computer script, or Mac mini CLI run, creating a live Task Card in chat.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        prompt: { type: "string" },
+        kind: {
+          type: "string",
+          enum: [
+            "executor",
+            "research",
+            "coding_worktree",
+            "browser_agent",
+            "draft_review",
+            "routine",
+          ],
+        },
+        target: {
+          type: "string",
+          enum: ["auto", "cloud", "mac"],
+        },
+      },
+      required: ["title", "prompt"],
+    },
+  },
+];
+
+const FILLER_EN: Record<string, string> = {
+  gmailReadMessages: "Checking your inbox…",
+  calendarReadEvents: "Checking your calendar…",
+  driveReadFiles: "Searching your Google Drive…",
+  githubReadPullRequests: "Checking GitHub pull requests…",
+  getWeather: "Checking the weather…",
+  getCurrentTime: "Checking the clock…",
+  webSearch: "Searching the web…",
+  getFixtures: "Checking fixtures…",
+  recallMemories: "Checking your memory…",
+  saveProfileFact: "Saving to your profile…",
+  addJournalEntry: "Adding to your journal…",
+  listMySchedules: "Checking your routines…",
+  scheduleTask: "Preparing routine approval…",
+  gmailCreateDraft: "Preparing Gmail draft approval…",
+  calendarCreateDraftEvent: "Preparing Calendar approval…",
+  driveCreateDraftDoc: "Preparing Drive draft approval…",
+  draftOutboundMessage: "Preparing message approval…",
+  delegateTask: "Creating task card…",
+};
+
+const FILLER_TR: Record<string, string> = {
+  gmailReadMessages: "Gelen kutuna bakıyorum…",
+  calendarReadEvents: "Takvimine bakıyorum…",
+  driveReadFiles: "Google Drive'da arıyorum…",
+  githubReadPullRequests: "GitHub PR'larına bakıyorum…",
+  getWeather: "Hava durumuna bakıyorum…",
+  getCurrentTime: "Saate bakıyorum…",
+  webSearch: "Web'de arıyorum…",
+  getFixtures: "Fikstüre bakıyorum…",
+  recallMemories: "Belleğine bakıyorum…",
+  saveProfileFact: "Profiline kaydediyorum…",
+  addJournalEntry: "Günlüğüne ekliyorum…",
+  listMySchedules: "Rutinlerine bakıyorum…",
+  scheduleTask: "Rutin onay kartı hazırlıyorum…",
+  gmailCreateDraft: "Gmail taslak onayı hazırlıyorum…",
+  calendarCreateDraftEvent: "Takvim onayı hazırlıyorum…",
+  driveCreateDraftDoc: "Drive taslak onayı hazırlıyorum…",
+  draftOutboundMessage: "Mesaj onayı hazırlıyorum…",
+  delegateTask: "Görev kartı oluşturuyorum…",
+};
+
+export function fillerPhraseForTool(
+  toolName: string,
+  locale: "en" | "tr" = "en"
+): string {
+  const map = locale === "tr" ? FILLER_TR : FILLER_EN;
+  return (
+    map[toolName] ??
+    (locale === "tr" ? "Kontrol ediyorum…" : "Checking that now…")
+  );
+}
+
+function toGoogleFunctionDeclarations(tools?: readonly LiveToolDeclaration[]) {
+  if (!tools || tools.length === 0) {
+    return undefined;
+  }
+  return [
+    {
+      functionDeclarations: tools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        behavior: "NON_BLOCKING" as const,
+        parameters: t.parameters,
+      })),
+    },
+  ];
+}
+
 /** Only Gemini Live voice models are allowed for the speech-to-speech lane. */
 export function isAllowedLiveModel(model: string): boolean {
   return /^(google\/)?gemini-\d+(\.\d+)?-live(-[a-z0-9-]+)?$/.test(
@@ -56,7 +428,9 @@ export function buildLiveConnectConfig(opts: {
   systemInstruction: string;
   voiceName?: string;
   resumeHandle?: string | null;
+  tools?: readonly LiveToolDeclaration[];
 }) {
+  const googleTools = toGoogleFunctionDeclarations(opts.tools);
   return {
     responseModalities: ["AUDIO"],
     speechConfig: {
@@ -67,6 +441,7 @@ export function buildLiveConnectConfig(opts: {
       },
     },
     systemInstruction: { parts: [{ text: opts.systemInstruction }] },
+    ...(googleTools ? { tools: googleTools } : {}),
     realtimeInputConfig: {
       automaticActivityDetection: { ...LIVE_VAD },
       activityHandling: "START_OF_ACTIVITY_INTERRUPTS",
@@ -84,6 +459,7 @@ export function buildLiveSetupMessage(opts: {
   systemInstruction: string;
   voiceName?: string;
   resumeHandle?: string | null;
+  tools?: readonly LiveToolDeclaration[];
 }) {
   const config = buildLiveConnectConfig(opts);
   return {
@@ -94,6 +470,7 @@ export function buildLiveSetupMessage(opts: {
         speechConfig: config.speechConfig,
       },
       systemInstruction: config.systemInstruction,
+      ...(config.tools ? { tools: config.tools } : {}),
       realtimeInputConfig: config.realtimeInputConfig,
       inputAudioTranscription: config.inputAudioTranscription,
       outputAudioTranscription: config.outputAudioTranscription,
@@ -111,6 +488,7 @@ export function liveConstrainedSocketUrl(token: string): string {
 export function buildGatewayLiveSetupMessage(opts: {
   systemInstruction: string;
   voiceName?: string;
+  tools?: readonly LiveToolDeclaration[];
 }) {
   return {
     type: "session-update" as const,
@@ -122,6 +500,41 @@ export function buildGatewayLiveSetupMessage(opts: {
       outputAudioFormat: { type: "audio/pcm", rate: LIVE_OUTPUT_SAMPLE_RATE },
       inputAudioTranscription: {},
       outputAudioTranscription: {},
+      ...(opts.tools && opts.tools.length > 0
+        ? { tools: [...opts.tools] }
+        : {}),
+    },
+  };
+}
+
+export function buildLiveToolOutputItemMessage(
+  transport: LiveTransportKind,
+  opts: {
+    callId: string;
+    name: string;
+    output: Record<string, unknown>;
+  }
+) {
+  if (transport === "gateway") {
+    return {
+      type: "conversation-item-create" as const,
+      item: {
+        type: "function-call-output" as const,
+        callId: opts.callId,
+        name: opts.name,
+        output: JSON.stringify(opts.output),
+      },
+    };
+  }
+  return {
+    toolResponse: {
+      functionResponses: [
+        {
+          id: opts.callId,
+          name: opts.name,
+          response: { result: opts.output },
+        },
+      ],
     },
   };
 }
@@ -520,6 +933,13 @@ export type LiveServerEvent =
   | { type: "audio"; data: string }
   | { type: "input-transcript"; text: string }
   | { type: "output-transcript"; text: string }
+  | {
+      type: "tool-call";
+      callId: string;
+      name: string;
+      args: Record<string, unknown>;
+    }
+  | { type: "tool-call-cancelled"; ids: string[] }
   | { type: "speech-started" }
   | { type: "interrupted" }
   | { type: "turn-complete" }
@@ -527,6 +947,12 @@ export type LiveServerEvent =
   | { type: "resumption"; handle: string }
   | { type: "go-away"; timeLeftMs: number }
   | { type: "error"; message: string };
+
+type RawGoogleFunctionCall = {
+  id?: string;
+  name?: string;
+  args?: Record<string, unknown>;
+};
 
 type RawGoogleMessage = {
   setupComplete?: unknown;
@@ -540,6 +966,8 @@ type RawGoogleMessage = {
     turnComplete?: boolean;
     generationComplete?: boolean;
   };
+  toolCall?: { functionCalls?: RawGoogleFunctionCall[] };
+  toolCallCancellation?: { ids?: string[] };
   sessionResumptionUpdate?: { newHandle?: string; resumable?: boolean };
   goAway?: { timeLeft?: string };
   error?: { message?: string };
@@ -551,9 +979,26 @@ type RawGatewayMessage = {
   transcript?: string;
   speaker?: "user" | "assistant";
   message?: string;
+  callId?: string;
+  name?: string;
+  arguments?: string;
   rawType?: string;
   raw?: RawGoogleMessage;
 };
+
+function parseJsonArgs(raw: string | undefined): Record<string, unknown> {
+  if (!raw) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
 
 function parseDurationMs(value: string | undefined): number {
   if (!value) {
@@ -588,6 +1033,17 @@ function parseGatewayMessage(msg: RawGatewayMessage): LiveServerEvent[] {
       return msg.transcript
         ? [{ type: "input-transcript", text: msg.transcript }]
         : [];
+    case "function-call-arguments-done":
+      return msg.callId && msg.name
+        ? [
+            {
+              type: "tool-call",
+              callId: msg.callId,
+              name: msg.name,
+              args: parseJsonArgs(msg.arguments),
+            },
+          ]
+        : [];
     case "speech-started":
       return [{ type: "speech-started" }];
     case "response-done":
@@ -602,6 +1058,22 @@ function parseGatewayMessage(msg: RawGatewayMessage): LiveServerEvent[] {
       }
       if (raw?.serverContent?.generationComplete) {
         events.push({ type: "generation-complete" });
+      }
+      for (const call of raw?.toolCall?.functionCalls ?? []) {
+        if (call.id && call.name) {
+          events.push({
+            type: "tool-call",
+            callId: call.id,
+            name: call.name,
+            args: call.args && typeof call.args === "object" ? call.args : {},
+          });
+        }
+      }
+      if (raw?.toolCallCancellation?.ids?.length) {
+        events.push({
+          type: "tool-call-cancelled",
+          ids: raw.toolCallCancellation.ids,
+        });
       }
       if (
         raw?.sessionResumptionUpdate?.resumable &&
@@ -669,6 +1141,24 @@ export function parseLiveServerMessage(raw: string): LiveServerEvent[] {
     if (content.turnComplete) {
       events.push({ type: "turn-complete" });
     }
+  }
+  if (msg.toolCall?.functionCalls?.length) {
+    for (const call of msg.toolCall.functionCalls) {
+      if (call.id && call.name) {
+        events.push({
+          type: "tool-call",
+          callId: call.id,
+          name: call.name,
+          args: call.args && typeof call.args === "object" ? call.args : {},
+        });
+      }
+    }
+  }
+  if (msg.toolCallCancellation?.ids?.length) {
+    events.push({
+      type: "tool-call-cancelled",
+      ids: msg.toolCallCancellation.ids,
+    });
   }
   if (
     msg.sessionResumptionUpdate?.resumable &&

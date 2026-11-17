@@ -10,6 +10,8 @@ import {
   buildLiveConnectConfig,
   buildLiveSetupMessage,
   DEFAULT_LIVE_VOICE,
+  LIVE_VOICE_TOOL_DECLARATIONS,
+  type LiveToolDeclaration,
   type LiveTransportKind,
   liveConstrainedSocketUrl,
 } from "./live-protocol";
@@ -44,16 +46,19 @@ export async function resolveLiveGeminiKey(
 }
 
 export function buildVoiceSystemInstruction(opts: {
-  timeZone: string;
+  ownerName?: string;
+  timeZone?: string;
   teammate?: { name: string; soul: string } | null;
   facts?: string[];
   recentTurns?: Array<{ role: "user" | "assistant"; text: string }>;
 }): string {
+  const ownerName = opts.ownerName?.trim() || "Çağlar";
+  const timeZone = opts.timeZone?.trim() || "Europe/London";
   const now = new Date();
   let localTime = now.toISOString();
   try {
     localTime = now.toLocaleString("en-GB", {
-      timeZone: opts.timeZone,
+      timeZone,
       dateStyle: "full",
       timeStyle: "short",
     });
@@ -61,13 +66,18 @@ export function buildVoiceSystemInstruction(opts: {
     /* keep ISO */
   }
   const lines = [
-    "You are the owner's personal assistant in a live, hands-free voice conversation.",
-    "Speak like a warm, sharp human on a phone call: natural, concise, usually one to three sentences. Offer more detail only when asked.",
-    "Always reply in the language the owner is speaking (English or Turkish), and switch instantly if they switch.",
-    "Never read out markdown, lists, symbols, or URLs. Say numbers and dates the way people speak them.",
+    `You are ${ownerName}'s personal assistant in a live, hands-free voice conversation.`,
+    `Owner name: ${ownerName}. Default home timezone: Europe/London. Current local time: ${localTime} (${timeZone}).`,
+    "Speak like a warm, sharp human operator on a phone call: natural, concise, usually one to three sentences. Offer more detail only when asked.",
+    "Always reply in the exact language the owner is speaking (English or Turkish), and switch instantly if they switch.",
+    "You have real live tools connected right now: Gmail (gmailReadMessages), Google Calendar (calendarReadEvents), Google Drive (driveReadFiles), Weather via Open-Meteo (getWeather, defaulting to London if no city is named), Web Search (webSearch), Football Fixtures (getFixtures), Memory (recallMemories, saveProfileFact, addJournalEntry), Routines (listMySchedules, scheduleTask), Approval-gated Drafts (gmailCreateDraft, calendarCreateDraftEvent, driveCreateDraftDoc, draftOutboundMessage), and Delegated Tasks (delegateTask).",
+    "NEVER say 'I don't have access', 'I can't access your personal email', or 'I can't check the weather'. Always call the matching tool.",
+    "Right as you call any tool, speak a short natural filler in the owner's current language (for example: 'Checking your inbox…', 'Checking the weather…', 'Gelen kutuna bakıyorum…', 'Hava durumuna bakıyorum…'), then speak the answer naturally as soon as the tool result arrives.",
+    "If a connector tool returns status 'setup_required', tell the owner in ONE short sentence that their Google (or GitHub) account isn't connected yet and they can tap the Connect button you just placed in the chat. Never say 'I don't have access'.",
+    "If a write, send, draft, or destructive tool returns status 'awaiting_approval', tell the owner in ONE short sentence that an approval card is ready in the chat so they can tap Allow before anything runs.",
+    "Never read out markdown, JSON, raw symbols, or URLs. Say numbers and dates the way people speak them.",
     "If you did not clearly hear something, say so briefly and ask the owner to repeat it. Never guess words the owner did not say.",
-    "This is a personal assistant. If the owner starts discussing employer-confidential work material, politely say that it can't be handled in voice mode.",
-    `Local time for the owner: ${localTime} (${opts.timeZone}).`,
+    "This is a personal assistant. If the owner starts discussing employer-confidential or Korn Ferry work material, politely say in one sentence that work data can't be handled in personal voice mode.",
   ];
   if (opts.teammate) {
     lines.push(
@@ -119,7 +129,9 @@ export async function mintLiveVoiceToken(opts: {
   systemInstruction: string;
   resumeHandle?: string | null;
   voiceName?: string;
+  tools?: readonly LiveToolDeclaration[];
 }): Promise<LiveTokenGrant> {
+  const tools = opts.tools ?? LIVE_VOICE_TOOL_DECLARATIONS;
   let baseModel: string;
   try {
     baseModel = resolveLiveVoiceModelName().replace(/^google\//, "");
@@ -176,6 +188,7 @@ export async function mintLiveVoiceToken(opts: {
           setup: buildGatewayLiveSetupMessage({
             systemInstruction: opts.systemInstruction,
             voiceName,
+            tools,
           }),
           expiresAt,
         };
@@ -201,6 +214,7 @@ export async function mintLiveVoiceToken(opts: {
     systemInstruction: opts.systemInstruction,
     voiceName,
     resumeHandle: opts.resumeHandle,
+    tools,
   });
 
   const ai = new GoogleGenAI({
@@ -249,6 +263,7 @@ export async function mintLiveVoiceToken(opts: {
       systemInstruction: opts.systemInstruction,
       voiceName,
       resumeHandle: opts.resumeHandle,
+      tools,
     }),
     expiresAt: expireTime,
   };
