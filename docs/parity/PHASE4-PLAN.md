@@ -7,7 +7,7 @@
 **You text or talk in chat, and the assistant does the work itself on a real computer** — with live progress in chat and strict approval before anything destructive, outbound, or credit-spending happens:
 
 - **A) Its Own Cloud Computer:** A persistent, sandboxed Linux VM on your Google Cloud project (`hawkeyedlion`, billing `0140A2-72DEB2-62EDCD`, covered at **£0 net** by your $40/mo Google AI Ultra credit) with `bash`, persistent `/workspace` files, `git`, Python/Node, and headless Playwright Chromium.
-- **B) Your Mac mini (8 GB RAM):** Reached through the existing ~40 MB `launchd` worker (`scripts/mac-worker.ts`) upgraded into a secure, outbound-only terminal & repo bridge — running logged commands, isolated git worktrees, and your installed `claude`, `codex`, `agy`, and `t3` CLIs within the **8 GB limits** (`≤3` concurrent agents, `≤1` build at a time).
+- **B) Your Mac mini (8 GB RAM):** Reached from Cloud Computer (A) (`tag:bot`) over a locked-down **Tailscale SSH** bridge to **standalone Tailscale** on the Mac (`tag:mac`) as a single dedicated non-admin macOS user (`botrunner`) — running every command inside **`tmux`** with full session logging, driving isolated git worktrees and your `claude`, `codex`, `agy`, and `t3` CLIs within the **8 GB limits** (`≤3` concurrent agents, `≤1` build at a time), with **no `sudo`** and **zero Tailscale Funnel**.
 - **C) Visual Browser & Desktop Control (Later):** Computer-use agent streaming live screenshots into chat — first inside Cloud Computer (A)'s virtual display (`Xvfb` + VNC), then optionally on your Mac via macOS Accessibility under strict per-action approval.
 
 ### Non-Negotiable Global Rules
@@ -24,7 +24,7 @@
 | :--- | :--- | :--- | :---: |
 | **1** *(Detailed)* | **Agent Loop + Reliable Tool Calling + Live Task Card** | Ask naturally in EN/TR; the assistant chains multi-step tool calls (`maxSteps = 8`) and updates a live inline **Task Card** right inside chat instead of acting like a one-shot chatbot. | **S–M** *(~1 session)* |
 | **2** *(Detailed)* | **Cloud Computer (A): Linux VM + Shell, Files, Git & Browser** | Tell chat *"clone repo X, run the script, scrape page Y, and attach the CSV/chart"* — it executes on its own persistent Linux computer in the cloud and hands you downloadable files in chat. | **M** *(~1.5 sessions)* |
-| **3** *(Detailed)* | **Mac mini Bridge (B): Logged Terminal + Local CLIs** | Tell chat *"run tests in my local project"* or *"have Claude Code / Codex / agy fix bug Z"* — your Mac mini executes in an isolated git worktree, logs every command, and stops for approval before `git push`. | **M** *(~1.5 sessions)* |
+| **3** *(Detailed)* | **Mac mini Bridge (B): Tailscale SSH + `tmux` + Local CLIs** | Cloud VM (`tag:bot`) SSHes over Tailscale to dedicated non-admin `botrunner` on your Mac mini inside logged `tmux` sessions to run tests or drive `claude` / `codex` / `agy` / `t3`, pausing for approval on destructive or sending commands (`no sudo`, `never Funnel`). | **M** *(~1.5 sessions)* |
 | **4** *(Brief)* | **Background Jobs + Closed-App iOS Push** | Close Safari or lock your iPhone mid-task; Cloud Computer (A) and Mac Bridge (B) finish in the background and wake your lock screen via Web Push. | **S–M** *(~1 session)* |
 | **5** *(Brief)* | **Quota-Aware Multi-Subscription Routing** | Automatic limit/reset tracking and failover across all 9 subscriptions (`agy` 5x, Claude Code, Codex, T3, Gemini Pro `csahingoz`, Flow/Veo, Colab, Lovable, Suno, `kie.ai`; Copilot & Cursor opt-in only). | **M** *(~1.5 sessions)* |
 | **6** *(Brief)* | **Visual Browser & Desktop Computer Use (C)** | Watch live screenshots in chat as the agent drives a visual Chromium/desktop session on Cloud Computer (A) (and later optional macOS Accessibility), pausing on logins/payments/CAPTCHAs. | **M–L** *(~2 sessions)* |
@@ -107,45 +107,135 @@ GCE `e2-medium` Linux VM (`assistant-computer-01`, Ubuntu 24.04, 30 GB ext4 `/wo
 
 ---
 
-## Step 3 (Detailed): Mac mini Bridge (B) — Logged Terminal + Local Subscription CLIs
+## Step 3 (Detailed): Mac mini Bridge (B) — Tailscale (`tag:bot` → Mac) + `tmux` + Local CLIs
 
-- **What you can do after Step 3:** Text from anywhere: *"Check `git status` across my projects on the Mac mini"*, *"Run the EOSB reconciliation script locally"*, or *"Have Claude Code (or Codex / Antigravity `agy` / T3) fix the mobile navbar in `general-purpose-agent-quickstart` and prepare a draft PR"* — your Mac mini executes locally through the existing `launchd` worker, streams every command and diff into the chat `TaskCard`, and pauses on an `ApprovalCard` before any destructive command or `git push`.
+- **What you can do after Step 3:** Text from anywhere: *"Check `git status` on my Mac"*, *"Run tests in my repo"*, or *"Have Claude Code (or Codex / Antigravity `agy` / T3) fix the mobile navbar and open a draft PR"* — Cloud Computer (A) (`tag:bot`) connects over private Tailscale SSH to a dedicated non-admin `botrunner` account on your Mac mini, runs inside a named **`tmux`** session, logs every byte of session I/O, streams live steps into the chat `TaskCard`, and pauses on an `ApprovalCard` before any destructive or sending command.
 - **Effort:** **M (~1.5 sessions).**
 
 ### Architecture
 ```
-Chat (`macExec`, `macEditFile`, `macRunAgentCli`)
-   │  inserts signed `CommandLease` into Neon Postgres `BackgroundTask`
-   ▼  (Mac mini polls outbound HTTPS only — ZERO open router/SSH ports)
-Mac mini `launchd` Worker (`scripts/mac-worker.ts`, ~40 MB `--jitless` poller)
-   ├── `ProcessGovernor` (`≤3` CLI agents, `≤1` `/tmp/assistant-build.lock`, `vm_stat ≥ 1.2 GB`)
-   ├── `CommandClassifier` (Allowlisted Read/Test vs. Approval-Required Write/Push/Delete)
-   ├── `AppendOnlyAuditLog` (`~/Library/Logs/assistant-worker/commands.jsonl`, token-redacted)
-   └── Isolated Worktree + CLI Drivers:
-         • `/Users/caglar/.local/bin/claude` (`-p --output-format stream-json`)
-         • `/opt/homebrew/bin/codex` (`exec --json --sandbox workspace-write`)
-         • `/Users/caglar/.local/bin/agy` (Ultra 5x headless workflow)
-         • `/Users/caglar/.local/bin/t3` (repo thread orchestration)
+Cloud Computer (A) GCE VM (`assistant-computer-01`, `tag:bot`)
+   │  Private WireGuard tunnel — Tailscale ACL allows ONLY `tag:bot` → `tag:mac:22`
+   │  (ZERO public ports, ZERO router port-forwarding, Funnel strictly forbidden)
+   ▼
+Mac mini (`tag:mac`, Standalone Tailscale + Tailscale SSH or `sshd` on `100.x.y.z:22`)
+   └── Dedicated Standard (non-admin) macOS user: `botrunner` (NO `sudo`, NO `admin`/`wheel`)
+         ├── `mac-bridge-exec` wrapper → enforces 8 GB Governor (`≤3` agents, `≤1` `/tmp/assistant-build.lock`, `vm_stat ≥ 1.2 GB`)
+         ├── Named `tmux` session (`/opt/homebrew/bin/tmux` 3.8, `task-<id>`) + `tmux pipe-pane` full session transcript log
+         └── Isolated `/Users/botrunner/workspaces/<repo>` git worktrees + local CLIs:
+               • `claude` (`-p --output-format stream-json`)   • `codex` (`exec --json --sandbox workspace-write`)
+               • `agy` (Ultra 5x headless workflow)            • `t3` (repo thread orchestration)
 ```
-- **Routing rule between Cloud Computer (A) and Mac Bridge (B):**
-  - **Cloud Computer (A)** is the default for untrusted code, web scraping, heavy builds/Playwright, and clean-room scripts (keeps 8 GB Mac RAM untouched!).
-  - **Mac Bridge (B)** is selected when the task needs your **local `~/App_Projects` repos**, **local macOS files**, **residential UK IP**, **deterministic local finance scripts** (where personal GCP is disallowed), or your **logged-in Mac subscription CLIs (`claude`, `codex`, `agy`, `t3`)**.
+- **Routing rule (A vs. B) & `launchd` role:** Cloud Computer (A) handles untrusted code, heavy Playwright/builds, and clean-room scripts; Mac Bridge (B) handles local repos, residential UK IP tasks, and your Mac subscription CLIs (`claude`, `codex`, `agy`, `t3`). Note: because commands reach the Mac via Cloud Computer (A), **Korn Ferry / employer data remains strictly blocked** from this cloud-initiated path (local deterministic scripts stay offline on your own Mac account). Your existing ~40 MB `launchd` worker (`scripts/mac-worker.ts`) stays local-only for health checks and log rotation.
+
+### Setup Steps (Mac mini, Tailscale Admin & Cloud VM)
+
+1. **Mac mini — Replace App Store Tailscale with Standalone Tailscale:**
+   - **Baseline check (verified on disk):** `/Applications/Tailscale.app` is currently `io.tailscale.ipn.macos` (the sandboxed **Mac App Store** build), and `/opt/homebrew/bin/tmux` (`3.8`) is already installed. Quit Tailscale, delete `/Applications/Tailscale.app`, and remove its old VPN/Network Extension profile in **System Settings → Network → VPN & Filters** so extensions never conflict.
+   - **Option 1A (Recommended — Unsandboxed Open-Source `tailscaled` + Tailscale SSH, zero SSH keys to manage):**
+     ```bash
+     brew install tailscale
+     sudo brew services start tailscale
+     sudo tailscale up --ssh --advertise-tags=tag:mac --accept-routes=false
+     ```
+     *(Runs before GUI login as a `LaunchDaemon` and hosts native Tailscale SSH directly — sandboxed GUI builds cannot run the Tailscale SSH server on macOS.)*
+   - **Option 1B (Alternative — Standalone GUI `.pkg` `io.tailscale.ipn.macsys` + macOS Remote Login):** Install the standalone `.pkg` from `pkgs.tailscale.com/stable/` (`brew install --cask tailscale-app`), enable **System Settings → General → Sharing → Remote Login** for **Only these users: `botrunner`**, place a dedicated `tag:bot` Ed25519 public key in `~botrunner/.ssh/authorized_keys`, and lock `/etc/ssh/sshd_config.d/10-tailscale-only.conf` to:
+     ```sshconfig
+     ListenAddress <100.x.y.z-mac-tailscale-ip>
+     AllowUsers botrunner
+     PasswordAuthentication no
+     KbdInteractiveAuthentication no
+     PermitRootLogin no
+     ```
+     *(Binds `sshd` exclusively to the Tailscale interface — LAN and internet port 22 stay closed.)*
+
+2. **Mac mini — Create Dedicated Non-Admin `botrunner` User & Workspaces:**
+   ```bash
+   sudo sysadminctl -addUser botrunner -fullName "Assistant Bot Runner" -shell /bin/zsh -password -
+   # Verify Standard (non-admin) status — must NOT contain 'admin' or 'wheel', and NO /etc/sudoers entry:
+   id -Gn botrunner
+   sudo -u botrunner mkdir -p /Users/botrunner/{workspaces,logs,bin}
+   sudo chmod 700 /Users/botrunner /Users/botrunner/logs /Users/botrunner/workspaces
+   ```
+   - Authenticate `claude`, `codex`, `agy`, and `t3` once inside `botrunner`'s own home (`sudo su - botrunner` → `claude auth login`, `codex login`, `agy auth login`) so `botrunner` never touches `/Users/caglar` or your personal macOS Keychain.
+
+3. **Tailscale Admin Console — Locked-Down ACL Policy, `check` Mode & Tagged Auth Key:**
+   - In **Tailscale Admin → Access Controls**, apply this policy (replacing `<owner-email>` with your tailnet admin login):
+     ```jsonc
+     {
+       "tagOwners": {
+         "tag:bot": ["autogroup:admin"],
+         "tag:mac": ["autogroup:admin"]
+       },
+       "acls": [
+         // Strict inbound rule for Mac (`tag:mac`): ONLY `tag:bot` (plus optional owner `check`-mode SSH) on port 22 — zero other ports or devices
+         { "action": "accept", "src": ["tag:bot"], "dst": ["tag:mac:22"] },
+         { "action": "accept", "src": ["autogroup:admin"], "dst": ["autogroup:self:*", "tag:bot:22", "tag:mac:22"] }
+       ],
+       "ssh": [
+         // Machine-to-machine bridge: ONLY tag:bot -> tag:mac, ONLY as non-admin 'botrunner'
+         {
+           "action": "accept",
+           "src": ["tag:bot"],
+           "dst": ["tag:mac"],
+           "users": ["botrunner"]
+         },
+         // Human SSH step-up re-auth: check mode forces periodic IdP re-authentication (every 12h)
+         {
+           "action": "check",
+           "src": ["autogroup:admin"],
+           "dst": ["tag:mac", "tag:bot"],
+           "users": ["autogroup:nonroot"],
+           "checkPeriod": "12h"
+         }
+       ]
+       // Note: `nodeAttrs` intentionally omits `funnel` everywhere — Tailscale Funnel is NEVER enabled.
+     }
+     ```
+   - **Important Tailscale `check` mode nuance:** Tailscale's policy compiler enforces *"An SSH access rule from a tagged device cannot be in check mode"* because `tag:bot` is a headless server identity with no browser OIDC session to answer an interactive re-auth prompt. Setting **`action: "check"` (`checkPeriod: "12h"`)** on `autogroup:admin` enforces re-auth on all human SSH sessions (and re-auth when rotating keys in Admin), while `src: ["tag:bot"]` uses `action: "accept"` pinned strictly to `users: ["botrunner"]` + our app-level cryptographic `ApprovalCard` check before any destructive/sending command.
+   - In **Settings → Keys → Generate auth key**: create a **Pre-authorized**, **Tagged (`tag:bot`)** auth key (90-day expiry) and store it only in GCP Secret Manager (`TS_BOT_AUTHKEY`) on `hawkeyedlion`.
+
+4. **Cloud VM (`assistant-computer-01`) — Join Tailnet as `tag:bot`:**
+   ```bash
+   curl -fsSL https://tailscale.com/install.sh | sh
+   sudo tailscale up --auth-key="$TS_BOT_AUTHKEY" --advertise-tags=tag:bot --ssh=false --accept-routes=false --hostname=assistant-computer-01
+   ```
+   - `--ssh=false` ensures the Mac cannot SSH backward into the VM unless explicitly opened for owner `check`-mode admin debugging.
+
+5. **`tmux` Execution & Dual-Layer Session Logging (`mac-bridge-exec`):**
+   - Every command dispatched from `tag:bot` invokes `/Users/botrunner/bin/mac-bridge-exec <taskId> <cwd> <cmd>`, which:
+     1. Checks the 8 GB Governor (`≤3` active `claude`/`codex`/`agy`/`t3` processes, `/tmp/assistant-build.lock`, `vm_stat ≥ 1.2 GB`).
+     2. Starts or attaches to a detached `tmux` session (`tmux new-session -d -s "task-$ID" -c "$CWD"`) and immediately binds **`tmux pipe-pane -o -t "task-$ID"`** to `/Users/botrunner/logs/YYYY-MM-DD-task-$ID.pty.log` (capturing every character of stdin/stdout/stderr, token-redacted) plus an append-only JSONL record in `/Users/botrunner/logs/commands.jsonl` (`timestamp`, `taskId`, `tmuxSession`, `command`, `cwd`, `exitCode`, `durationMs`, `approvalDigest`).
+     3. Streams live tail chunks back to Cloud Computer (A) → chat `TaskCard`, while letting you inspect live locally anytime via `sudo -u botrunner tmux attach -r -t task-<id>`.
 
 ### Security Model
-- **Outbound-only pull bridge:** Your Mac mini never exposes an inbound port or tunnel; `scripts/mac-worker.ts` pulls `CommandLease` rows over TLS from Neon Postgres and verifies an **HMAC-SHA256 lease signature** (`AUTH_SECRET`-derived subkey) binding `(taskId, kind, command, cwd, expiresAt)` so even a compromised text stream cannot forge arbitrary shell execution.
-- **3-Tier Command Policy (`lib/worker/command-policy.ts`):**
-  1. **Tier 0 — Auto-Allowed Read/Inspect:** `git status/diff/log`, `ls`, `rg`, `cat` inside allowlisted roots (`~/App_Projects`), `pnpm check`, unit tests (under `/tmp/assistant-build.lock`).
-  2. **Tier 1 — Isolated Worktree Edit (`agent/<slug>` / `draft/<slug>`):** File edits and CLI runs (`claude`, `codex`, `agy`, `t3`) restricted to a disposable git worktree; `main`, `master`, `release/*`, and `feature/openai-premium-model-routing` stay hard-blocked (`lib/subagents/worktree-coder.ts`).
-  3. **Tier 2 — Mandatory `ApprovalCard` (SHA-256 digest):** Any `git push`, `gh pr create/merge`, `rm`/`mv` outside the disposable worktree, `brew`/`npm install -g`, `launchctl`, outbound curl/upload, or send action **hard-pauses in `awaiting_approval`** until you tap Approve.
-  4. **Tier 3 — Hard-Blocked Always:** `sudo`, `security dump-keychain`, reading `~/.ssh` private keys or `.env*` secrets, `rm -rf ~`, disk/system modification, and CAPTCHA/auth-bypass tools.
-- **Full append-only audit trail:** Every executed Mac command logs `{ timestamp, taskId, driver, command, cwd, exitCode, durationMs, redactedOutputHead }` to both `BackgroundTask.steps` (visible in chat) and rotated local `commands.jsonl`. Child processes receive a minimal scrubbed `env` (`PATH`, `HOME`, `USER`, `LANG`).
+- **Zero lateral movement & zero public ingress:** `tag:bot` can reach **only `tag:mac:22`** — it cannot ping or connect to your iPhone, router, other tailnet devices, or any non-22 port on the Mac. **Tailscale Funnel and `tailscale serve` are never enabled** in `nodeAttrs` and are hard-blocked in the command policy.
+- **OS-enforced non-admin boundary (`botrunner`, no `sudo`):** `botrunner` is a Standard macOS user outside `admin`/`wheel` and absent from `/etc/sudoers`, so macOS PAM/kernel rejects `sudo`, `launchctl system`, and `security` keychain dumps even before our wrapper runs; `/Users/caglar` (`700` permissions) keeps your personal Desktop, Documents, Mail, iCloud, `.ssh`, and `.env*` unreadable to `botrunner`.
+- **Mandatory `ApprovalCard` for destructive & sending commands (`lib/worker/command-policy.ts`):**
+  - **Auto-allowed (logged inside `tmux`):** Read/test commands (`git status/diff/log`, `rg`, `pnpm check`, unit tests) and isolated edits inside disposable `/Users/botrunner/workspaces/<repo>` `agent/<slug>` worktrees (`main`, `master`, `release/*`, and `feature/openai-premium-model-routing` stay branch-guarded).
+  - **Approval-gated (`awaiting_approval` + SHA-256 `ApprovalCard`):** **Every destructive or sending command** pauses before execution until you tap **Approve** in chat — including `git push`, `gh pr create/merge/comment`, `rm` / `mv` / `git clean` / `git reset --hard` outside `/tmp`, emails/messages/webhooks/curl uploads, `brew`/`npm install -g`, and paid credit triggers.
+  - **Hard-blocked always:** `sudo`, `su`, `tailscale funnel`, `tailscale serve`, `tailscale up/logout`, `ssh-keygen`/`~/.ssh` reads, `.env*` secret dumps, `osascript` UI clicks (reserved for Step 6b), and CAPTCHA/auth bypasses.
+
+### Revocation & Emergency Kill-Switch Steps
+1. **Instant remote cutoff from your iPhone (`<2 seconds`, from anywhere):**
+   - Open **Tailscale Admin Console (`login.tailscale.com/admin/machines`)** → tap `assistant-computer-01` (`tag:bot`) → **Remove** (or toggle temporary quarantine ACL removing `{ "src": ["tag:bot"], "dst": ["tag:mac:22"] }`). Tailscale's control plane revokes the node key and drops active WireGuard + Tailscale SSH sessions immediately.
+   - Open **Settings → Keys** → **Revoke** the `tag:bot` auth key (and delete/rotate `TS_BOT_AUTHKEY` in GCP Secret Manager) so the VM cannot re-register.
+2. **Local Mac mini one-liner cutoff (`<1 second` at home):**
+   ```bash
+   # Kill every running tmux session & CLI child under botrunner immediately, then shut off SSH:
+   sudo pkill -9 -u botrunner && sudo tailscale set --ssh=false
+   # Optional if using Option 1B (macOS Remote Login):
+   sudo systemsetup -setremotelogin off
+   # Optional full wipe of the bridge user:
+   sudo sysadminctl -deleteUser botrunner
+   ```
 
 ### Cost on Ultra 5x
-- **£0.00 cloud spend** — uses your owned Mac mini (~£3.50/mo existing idle UK electricity) and your already-paid `Claude Pro`, `ChatGPT Plus`, and `Google AI Ultra 5x (agy)` subscriptions instead of burning per-token API credits.
+- **£0.00 incremental cost:** Tailscale's Personal **Free** plan includes up to 3 users and 100 devices (with tagged nodes, ACLs, and Tailscale SSH included at $0), paired with your owned Mac mini and existing `Claude Pro`, `ChatGPT Plus`, and `Google AI Ultra 5x (agy)` seats.
 
 ### Test Plan
-1. **Unit & Policy Suite (`tests/security/mac-bridge-policy.test.ts`):** Tests HMAC `CommandLease` tamper rejection, Tier 0/1/2/3 command classification (blocking `sudo`, `~/.ssh`, `.env`, `rm -rf`), `ProcessGovernor` (`≤3` agents, `≤1` `/tmp/assistant-build.lock`, `<1.2 GB` free-RAM throttle), scrubbed child `env`, and Korn Ferry block on personal `agy` CLI.
-2. **Mock + Live CLI Smoke Test (`scripts/test-mac-bridge-smoke.ts`):** Runs a safe Tier 0 `git status` + a disposable Tier 1 `claude` / `codex` edit on `agent/bridge-smoke`, verifies audit log entry + live `TaskCard` diff summary in chat, and confirms `git push` halts in `awaiting_approval`.
+1. **Unit & Policy Suite (`tests/security/mac-bridge-policy.test.ts`):** Verifies command classification — auto-allowing safe reads/worktree tests, forcing `awaiting_approval` on every destructive (`rm`, `git reset --hard`, `git branch -D`) and sending (`git push`, `gh pr`, outbound `curl -X POST`) command, and hard-blocking `sudo`, `tailscale funnel`, `tailscale serve`, `~/.ssh`, and `.env*` — plus 8 GB `ProcessGovernor` limits and Korn Ferry data refusal.
+2. **Tailscale ACL & `tmux` Live Smoke Test (`scripts/test-mac-bridge-smoke.ts`):** Verifies from `tag:bot`: (a) `ssh caglar@<mac>` and `ssh root@<mac>` are **rejected** by Tailscale ACLs; (b) non-22 ports (`curl <mac>:3000`) time out; (c) `sudo id` as `botrunner` fails; (d) a disposable `agent/bridge-smoke` `tmux` run (`git status` + `claude`/`codex` dry edit) writes both `.pty.log` and `commands.jsonl` and streams into `TaskCard`; and (e) `git push` halts cleanly on `ApprovalCard`.
 
 ---
 
@@ -174,7 +264,7 @@ Mac mini `launchd` Worker (`scripts/mac-worker.ts`, ~40 MB `--jitless` poller)
 | Capability | T3 Code | Hermes Agent | Grok Bot | **Our Assistant (Steps 1 → 7)** |
 | :--- | :---: | :---: | :---: | :---: |
 | **Own persistent Cloud Linux Computer (shell, files, git, browser)** | No (local worktrees only) | Self-hosted server required | **Yes** | **Yes — GCE `e2-medium` on `hawkeyedlion` (£0 net on $40 Ultra credit)** |
-| **Secure bridge to your personal Mac + local repos** | Desktop app only (not from phone) | SSH / manual setup | No | **Yes — outbound-only `launchd` bridge (`≤3` agents, `≤1` build lock)** |
+| **Secure bridge to your personal Mac + local repos** | Desktop app only (not from phone) | Manual SSH | No | **Yes — Tailscale SSH (`tag:bot` → non-admin `botrunner`, `tmux` logs, zero Funnel)** |
 | **Drives Claude Code + Codex + Antigravity (`agy`) + T3 together** | Multi-model inside T3 only | Generic scripts, no seat routing | xAI models only | **Yes — unified CLI drivers + automatic quota/reset failover** |
 | **Visual browser/desktop computer use with chat screenshots** | Preview tab only | Add-on browser | Cloud browser only | **Yes — Cloud VM VNC first, optional macOS Accessibility second** |
 | **Hands-free mobile Live Voice + `<100 ms` echo-free barge-in** | No | Basic TTS/STT | **Yes** | **Yes — Gemini 3.8→4 Live + iOS hardware AEC + `EchoGate`** |
