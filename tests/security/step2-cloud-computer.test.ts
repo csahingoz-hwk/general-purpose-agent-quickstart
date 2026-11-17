@@ -237,4 +237,17 @@ test("Step 2: Cloud Computer tools write, execute, and export encrypted CSV file
     secret: SECRET,
   });
   assert.equal(verified.valid, true);
+
+  const readBack = await (tools.cloudReadFile as any).execute(
+    { path: "/workspace/out.csv" },
+    { toolCallId: "cr1", messages: [] }
+  );
+  assert.equal(readBack.status, "ok");
+  assert.match(String(readBack.content), /London,15/);
+
+  const blockedRead = await (tools.cloudReadFile as any).execute(
+    { path: "/workspace/korn-ferry-sa90.csv" },
+    { toolCallId: "cr2", messages: [] }
+  );
+  assert.equal(blockedRead.status, "blocked");
 });

@@ -609,6 +609,7 @@ const PurePreviewMessage = ({
         typeof output === "object" &&
         (toolName === "cloudExec" ||
           toolName === "cloudWriteFile" ||
+          toolName === "cloudReadFile" ||
           toolName === "cloudExportFileToChat" ||
           toolName === "cloudBrowseUrl")
       ) {

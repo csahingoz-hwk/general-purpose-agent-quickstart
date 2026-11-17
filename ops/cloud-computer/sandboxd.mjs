@@ -19,6 +19,7 @@ import path from "node:path";
 const PORT = Number.parseInt(process.env.SANDBOX_PORT ?? "8787", 10);
 const WORKSPACE = path.resolve(process.env.SANDBOX_WORKSPACE ?? "/workspace");
 const SECRET = (process.env.CLOUD_COMPUTER_HMAC_SECRET ?? "").trim();
+process.env.PLAYWRIGHT_BROWSERS_PATH ??= "/opt/playwright-browsers";
 const IDLE_SUSPEND_MS = Number.parseInt(
   process.env.SANDBOX_IDLE_MS ?? String(20 * 60 * 1000),
   10
@@ -127,48 +128,66 @@ function stripHtmlToText(html) {
 }
 
 async function browseUrl(url, captureScreenshot) {
-  // Prefer Chromium headless if installed; fall back to clean HTTP fetch.
-  const shotPath = path.join(os.tmpdir(), `shot-${Date.now()}.png`);
-  if (captureScreenshot) {
-    await new Promise((resolve) => {
-      execFile(
-        "chromium-browser",
-        [
-          "--headless",
-          "--disable-gpu",
-          "--no-sandbox",
-          "--window-size=1280,800",
-          `--screenshot=${shotPath}`,
-          url,
-        ],
-        { timeout: 20_000 },
-        () => resolve(null)
-      );
+  // Prefer headless Playwright Chromium installed at /opt/sandboxd for real JS rendering + PNG screenshots
+  try {
+    const pw = await import(
+      "/opt/sandboxd/node_modules/playwright-core/index.mjs"
+    );
+    const browser = await pw.chromium.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
     });
-  }
-  const res = await fetch(url, {
-    redirect: "follow",
-    headers: { "User-Agent": "AssistantCloudComputer/1.0" },
-    signal: AbortSignal.timeout(15_000),
-  });
-  const html = await res.text();
-  const { title, text } = stripHtmlToText(html);
-  let screenshotBase64;
-  if (captureScreenshot) {
     try {
-      const buf = await readFile(shotPath);
-      screenshotBase64 = buf.toString("base64");
-    } catch {
-      /* optional */
+      const context = await browser.newContext({
+        viewport: { width: 1280, height: 800 },
+        userAgent: "AssistantCloudComputer/1.0",
+      });
+      const page = await context.newPage();
+      const resp = await page.goto(url, {
+        waitUntil: "domcontentloaded",
+        timeout: 20_000,
+      });
+      const finalUrl = page.url() || resp?.url() || url;
+      const title = ((await page.title()) || finalUrl).trim().slice(0, 160);
+      const rawBodyText = await page.evaluate(
+        () =>
+          document.body?.innerText || document.documentElement?.innerText || ""
+      );
+      const text = String(rawBodyText)
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 8000);
+      let screenshotBase64;
+      if (captureScreenshot) {
+        const pngBuf = await page.screenshot({ type: "png", fullPage: false });
+        screenshotBase64 = Buffer.from(pngBuf).toString("base64");
+      }
+      return {
+        status: "ok",
+        url: finalUrl,
+        title,
+        text,
+        ...(screenshotBase64 ? { screenshotBase64 } : {}),
+      };
+    } finally {
+      await browser.close().catch(() => null);
     }
+  } catch {
+    // Fallback to clean HTTP fetch if Playwright browser binary is still installing
+    const res = await fetch(url, {
+      redirect: "follow",
+      headers: { "User-Agent": "AssistantCloudComputer/1.0" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    const html = await res.text();
+    const { title, text } = stripHtmlToText(html);
+    return {
+      status: "ok",
+      url: res.url || url,
+      title: title || url,
+      text,
+    };
   }
-  return {
-    status: "ok",
-    url: res.url || url,
-    title: title || url,
-    text,
-    ...(screenshotBase64 ? { screenshotBase64 } : {}),
-  };
 }
 
 function runMacSsh({ macHost, macUser, taskId, cwd, command, timeoutSec }) {

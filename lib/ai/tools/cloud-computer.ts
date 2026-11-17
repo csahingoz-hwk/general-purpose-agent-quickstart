@@ -313,9 +313,57 @@ export function createCloudComputerTools(opts: {
     },
   });
 
+  const cloudReadFile = tool({
+    description:
+      "Read a text, log, JSON, or code file inside /workspace on the Cloud Computer.",
+    inputSchema: z.object({
+      path: z
+        .string()
+        .trim()
+        .min(1)
+        .max(240)
+        .describe("Path inside /workspace, e.g. '/workspace/app/output.json'."),
+    }),
+    execute: async ({ path: rawPath }) => {
+      if (containsRestrictedWorkData(rawPath)) {
+        return {
+          status: "blocked" as const,
+          path: rawPath,
+          message:
+            "Blocked: employer/Korn Ferry paths cannot be read from the personal Cloud Computer.",
+        };
+      }
+      try {
+        const safePath = resolveSafeWorkspacePath(rawPath);
+        const read = await cloudReadWorkspaceFile({
+          path: safePath,
+          relayUrl,
+          hmacSecret,
+          fetchImpl,
+        });
+        const text = Buffer.from(read.base64, "base64")
+          .toString("utf8")
+          .slice(0, 16_000);
+        return {
+          status: "ok" as const,
+          path: read.path,
+          sizeBytes: read.sizeBytes,
+          content: text,
+        };
+      } catch (err) {
+        return {
+          status: "error" as const,
+          path: rawPath,
+          message: err instanceof Error ? err.message : "Could not read file.",
+        };
+      }
+    },
+  });
+
   return {
     cloudExec,
     cloudWriteFile,
+    cloudReadFile,
     cloudExportFileToChat,
     cloudBrowseUrl,
   };

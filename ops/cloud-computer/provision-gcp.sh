@@ -59,6 +59,15 @@ if ! command -v node >/dev/null 2>&1; then
   apt-get install -y -qq nodejs
 fi
 
+mkdir -p /opt/playwright-browsers
+if [ ! -f /opt/sandboxd/node_modules/playwright-core/index.mjs ]; then
+  cd /opt/sandboxd
+  [ -f package.json ] || npm init -y >/dev/null
+  PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers npm install --silent playwright-core@1.52.0
+  PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers /opt/sandboxd/node_modules/.bin/playwright-core install --with-deps chromium
+  chmod -R a+rX /opt/playwright-browsers /opt/sandboxd/node_modules
+fi
+
 cat > /opt/sandboxd/sandboxd.mjs <<'SANDBOX_EOF'
 $(cat "$SCRIPT_DIR/sandboxd.mjs")
 SANDBOX_EOF
@@ -75,6 +84,7 @@ cat > /etc/opt-sandboxd.env <<ENV_EOF
 CLOUD_COMPUTER_HMAC_SECRET=${HMAC_SECRET}
 SANDBOX_PORT=8787
 SANDBOX_WORKSPACE=/workspace
+PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
 ENV_EOF
 chmod 600 /etc/opt-sandboxd.env
 
@@ -103,7 +113,8 @@ WantedBy=multi-user.target
 UNIT_EOF
 
 systemctl daemon-reload
-systemctl enable --now sandboxd.service
+systemctl enable sandboxd.service
+systemctl restart sandboxd.service
 EOF
 
 if ! gcloud compute instances describe "$VM_NAME" --zone="$ZONE" --project="$PROJECT" >/dev/null 2>&1; then

@@ -95,7 +95,10 @@ async function ensureVmRunningAndGetInternalIp() {
 
 const server = createServer(async (req, res) => {
   const urlObj = new URL(req.url || "/", "http://localhost");
-  if (req.method === "GET" && urlObj.pathname === "/healthz") {
+  if (
+    req.method === "GET" &&
+    (urlObj.pathname === "/healthz" || urlObj.pathname === "/status")
+  ) {
     res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ ok: true, relay: "assistant-computer-relay" }));
     return;

@@ -38,6 +38,7 @@ export const AVAILABLE_CHAT_TOOLS = [
   "delegateTask",
   "cloudExec",
   "cloudWriteFile",
+  "cloudReadFile",
   "cloudExportFileToChat",
   "cloudBrowseUrl",
   "macExec",
@@ -345,7 +346,12 @@ export function selectActiveTools(
   if (canPersonalize && CLOUD_BROWSE_PATTERN.test(phrase)) {
     enabled.push("cloudBrowseUrl");
   } else if (canPersonalize && CLOUD_COMPUTER_PATTERN.test(phrase)) {
-    enabled.push("cloudExec", "cloudWriteFile", "cloudExportFileToChat");
+    enabled.push(
+      "cloudExec",
+      "cloudWriteFile",
+      "cloudReadFile",
+      "cloudExportFileToChat"
+    );
   }
 
   if (
