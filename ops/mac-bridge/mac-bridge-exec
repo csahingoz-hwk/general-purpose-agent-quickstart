@@ -1,0 +1,135 @@
+#!/usr/bin/env zsh
+set -euo pipefail
+
+# /Users/botrunner/bin/mac-bridge-exec <taskId> <cwd> <base64Command>
+# Invoked over private Tailscale SSH (`tag:bot` -> `botrunner@tag:mac:22`).
+# Enforces the 8 GB Mac mini governor, runs inside named tmux session `task-<id>`,
+# logs every byte via `tmux pipe-pane`, and writes append-only `commands.jsonl`.
+
+TASK_ID="${1:-task}"
+SAFE_TASK_ID="${TASK_ID//[^a-zA-Z0-9_-]/}"
+TARGET_CWD="${2:-/Users/botrunner/workspaces}"
+CMD_B64="${3:-}"
+
+if [[ "$(id -un)" != "botrunner" && "${ALLOW_LOCAL_TEST_USER:-0}" != "1" ]]; then
+  echo "Refused: mac-bridge-exec must run exclusively as dedicated non-admin user 'botrunner'." >&2
+  exit 126
+fi
+
+WORKSPACES_ROOT="${BOTRUNNER_WORKSPACES_ROOT:-/Users/botrunner/workspaces}"
+LOG_DIR="${BOTRUNNER_LOG_DIR:-/Users/botrunner/logs}"
+mkdir -p "$WORKSPACES_ROOT" "$LOG_DIR"
+chmod 700 "$LOG_DIR"
+
+REAL_CWD="$(python3 -c 'import os,sys; p=os.path.realpath(sys.argv[1]); r=os.path.realpath(sys.argv[2]); assert p==r or p.startswith(r+"/"), "escape"; print(p)' "$TARGET_CWD" "$WORKSPACES_ROOT" 2>/dev/null || true)"
+if [[ -z "$REAL_CWD" ]]; then
+  echo "Refused: working directory must stay inside $WORKSPACES_ROOT" >&2
+  exit 126
+fi
+
+DECODED_CMD="$(printf '%s' "$CMD_B64" | base64 -d)"
+if [[ "$DECODED_CMD" =~ '(^|[^a-zA-Z0-9_])(sudo|su|dscl|sysadminctl)([^a-zA-Z0-9_]|$)' || "$DECODED_CMD" =~ 'tailscale[[:space:]]+(funnel|serve|up|logout|set)' ]]; then
+  echo "Refused by mac-bridge-exec: sudo and Tailscale Funnel/serve are strictly forbidden." >&2
+  exit 126
+fi
+
+# 1. 8 GB Mac mini Governor: <= 3 concurrent CLI agents (under botrunner UID)
+MAX_AGENTS="${MAC_GOVERNOR_MAX_AGENTS:-3}"
+ACTIVE_AGENTS="$(pgrep -u "$(id -u)" -f '(claude|codex|agy|t3)[[:space:]]' 2>/dev/null | wc -l | tr -d ' ')"
+if (( ACTIVE_AGENTS >= MAX_AGENTS )); then
+  echo "8 GB Mac mini governor: $ACTIVE_AGENTS/$MAX_AGENTS CLI agents already active; deferring." >&2
+  exit 75
+fi
+
+# 2. Free/reclaimable RAM check (>= 1200 MB) via vm_stat
+FREE_MB="$(vm_stat | awk '
+  /page size of/ { ps = $8 }
+  /Pages free:/ { gsub(/\./,"",$3); f = $3 }
+  /Pages speculative:/ { gsub(/\./,"",$3); s = $3 }
+  /Pages inactive:/ { gsub(/\./,"",$3); i = $3 }
+  /Pages purgeable:/ { gsub(/\./,"",$3); p = $3 }
+  END { if (!ps) ps=16384; printf "%d", ((f+s+i+p)*ps)/(1024*1024) }
+')"
+if (( FREE_MB < 1200 )); then
+  echo "8 GB Mac mini governor: reclaimable RAM (${FREE_MB} MB) below 1200 MB floor." >&2
+  exit 75
+fi
+
+# 3. Global 1-build-at-a-time lock (/tmp/assistant-build.lock) for build/test commands
+LOCK_HELD=0
+if [[ "$DECODED_CMD" =~ '(pnpm[[:space:]]+(build|test)|next[[:space:]]+build|tsc|playwright|vitest)' ]]; then
+  if ! mkdir /tmp/assistant-build.lock 2>/dev/null; then
+    echo "8 GB Mac mini governor: /tmp/assistant-build.lock is held by another build." >&2
+    exit 75
+  fi
+  LOCK_HELD=1
+  trap 'rmdir /tmp/assistant-build.lock 2>/dev/null || true' EXIT
+fi
+
+TMUX_BIN="${TMUX_BIN:-/opt/homebrew/bin/tmux}"
+SESSION="task-${SAFE_TASK_ID}"
+DATE_TAG="$(date -u +%Y-%m-%d)"
+PTY_LOG="${LOG_DIR}/${DATE_TAG}-${SESSION}.pty.log"
+OUT_TMP="$(mktemp "${LOG_DIR}/.out-${SAFE_TASK_ID}-XXXXXX")"
+RC_TMP="${OUT_TMP}.rc"
+START_MS="$(python3 -c 'import time; print(int(time.time()*1000))')"
+
+# Run inside a named tmux session and log every byte with tmux pipe-pane
+"$TMUX_BIN" new-session -d -s "$SESSION" -c "$REAL_CWD" 2>/dev/null || true
+"$TMUX_BIN" pipe-pane -o -t "$SESSION" "sed -E 's/(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{16,}|tskey-[A-Za-z0-9_-]{12,}|AIza[0-9A-Za-z_-]{20,})/[REDACTED]/g' >> '$PTY_LOG'"
+
+RUNNER_SCRIPT="${OUT_TMP}.sh"
+cat > "$RUNNER_SCRIPT" <<EOF
+#!/usr/bin/env zsh
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$HOME/.local/bin"
+export HOME="$HOME"
+export USER="$(id -un)"
+export LANG="en_GB.UTF-8"
+cd "$REAL_CWD"
+(
+$DECODED_CMD
+) > "$OUT_TMP" 2>&1
+echo \$? > "$RC_TMP"
+EOF
+chmod 700 "$RUNNER_SCRIPT"
+
+"$TMUX_BIN" send-keys -t "$SESSION" "'$RUNNER_SCRIPT'" C-m
+
+for _ in $(seq 1 900); do
+  if [[ -f "$RC_TMP" ]]; then
+    break
+  fi
+  sleep 0.1
+done
+
+EXIT_CODE="$(cat "$RC_TMP" 2>/dev/null || echo 124)"
+END_MS="$(python3 -c 'import time; print(int(time.time()*1000))')"
+DURATION_MS=$(( END_MS - START_MS ))
+
+REDACTED_OUT="$(sed -E 's/(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{16,}|tskey-[A-Za-z0-9_-]{12,}|AIza[0-9A-Za-z_-]{20,})/[REDACTED]/g' "$OUT_TMP" | head -c 16384)"
+
+python3 - "$SAFE_TASK_ID" "$SESSION" "$REAL_CWD" "$DECODED_CMD" "$EXIT_CODE" "$DURATION_MS" "$REDACTED_OUT" "${LOG_DIR}/commands.jsonl" <<'PY'
+import datetime, json, re, sys
+task_id, session, cwd, cmd, rc, dur, out, jsonl_path = sys.argv[1:9]
+redact_re = re.compile(r"(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{16,}|tskey-[A-Za-z0-9_-]{12,}|AIza[0-9A-Za-z_-]{20,}|vcst_[A-Za-z0-9_-]{12,})")
+entry = {
+    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    "taskId": task_id,
+    "tmuxSession": session,
+    "cwd": cwd,
+    "command": redact_re.sub("[REDACTED]", cmd)[:500],
+    "exitCode": int(rc),
+    "durationMs": int(dur),
+    "outputPreview": redact_re.sub("[REDACTED]", out)[:600],
+}
+with open(jsonl_path, "a", encoding="utf-8") as f:
+    f.write(json.dumps(entry) + "\n")
+PY
+
+rm -f "$OUT_TMP" "$RC_TMP" "$RUNNER_SCRIPT"
+if (( LOCK_HELD == 1 )); then
+  rmdir /tmp/assistant-build.lock 2>/dev/null || true
+fi
+
+printf '%s\n' "$REDACTED_OUT"
+exit "$EXIT_CODE"

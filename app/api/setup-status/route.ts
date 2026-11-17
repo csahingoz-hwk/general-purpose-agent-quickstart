@@ -5,6 +5,7 @@ import { isCloudComputerConfigured } from "@/lib/cloud-computer/client";
 import { GITHUB_VAULT_SECRET_NAME } from "@/lib/connectors/calendar-and-github";
 import { GOOGLE_VAULT_SECRET_NAMES } from "@/lib/connectors/google-vault-auth";
 import { isGoogleSignInConfigured } from "@/lib/google-owner";
+import { isMacBridgeConfigured } from "@/lib/mac-bridge/client";
 import {
   createPostgresVaultStore,
   isVaultConfigured,
@@ -37,6 +38,7 @@ export async function GET() {
   );
   const redisReady = Boolean(process.env.REDIS_URL?.trim());
   const cloudComputerReady = isCloudComputerConfigured();
+  const macBridgeReady = isMacBridgeConfigured();
 
   const storedNames = new Set<string>();
   if (vaultReady && dbReady) {
@@ -165,6 +167,15 @@ export async function GET() {
         ? "Active on Google Cloud (auto-wakes on demand, £0 net on Ultra credit)."
         : "Optional — connect your Google Cloud sandbox relay for remote Linux & browser runs.",
       status: cloudComputerReady ? "ready" : "optional",
+      actionKind: "none",
+    },
+    {
+      id: "mac_bridge",
+      label: "Mac mini Tailscale bridge (tmux)",
+      summary: macBridgeReady
+        ? "Connected via private Tailscale SSH (non-admin botrunner, logged tmux sessions)."
+        : "Optional — replace App Store Tailscale with standalone tailscaled and run ops/mac-bridge/setup-mac-bridge.sh.",
+      status: macBridgeReady ? "ready" : "optional",
       actionKind: "none",
     },
     {

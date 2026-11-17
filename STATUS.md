@@ -2,19 +2,17 @@
 
 **Updated:** 17 November 2026  
 **Preview URL:** `https://general-purpose-agent-quickstart-git-feat-9b1f26-csahingoz-3779.vercel.app` (`● Ready`)  
-**State:** **READY FOR REVIEW** (Phases 0–3 + Full-Duplex Gemini 3.8 Live Voice + Zero-Key Setup UX complete; Phase 4 Multi-Subscription Operator Plan awaiting owner approval)
+**State:** **PHASE 4 STEPS 1–3 COMPLETE & READY FOR REVIEW** (Paused after Step 3 per owner instruction before Steps 4–7)
 
+- **Phase 4 Capability Ladder Plan:** [docs/parity/PHASE4-PLAN.md](./docs/parity/PHASE4-PLAN.md)
 - **Detailed Delivery & Verification Report:** [docs/parity/STATUS.md](./docs/parity/STATUS.md)
 - **Plain-English Owner Guide:** [docs/OWNER_GUIDE.md](./docs/OWNER_GUIDE.md)
-- **Phase 4 Multi-Subscription Voice Operator Plan (Awaiting Approval):** [docs/parity/PHASE4-PLAN.md](./docs/parity/PHASE4-PLAN.md)
 - **Infrastructure & Ultra 5x Budget (`£/month`):** [docs/parity/BUDGET.md](./docs/parity/BUDGET.md)
 
-## Quick Readiness Snapshot
+## Phase 4 (Steps 1–3) Snapshot
 
-| Check | Result |
-| :--- | :--- |
-| **No raw keys in UI** | **PASS** — zero password/token paste fields in `/setup`, `/routines`, `/memory`, `/skills`, `/teammates`, or `/usage` |
-| **Plain-English errors** | **PASS** — zero environment variable names or raw HTTP/socket codes shown to the owner |
-| **iPhone safe-area & touch targets** | **PASS** — `viewportFit: "cover"`, `env(safe-area-inset-*)` on headers, sheets, composer, and Live Voice overlay; `≥44px` controls; `16px` inputs (no Safari auto-zoom) |
-| **Hands-free Live Voice** | **PASS** — 1-tap full-duplex `google/gemini-3.8-live` over Vercel AI Gateway OIDC (`firstAudio ≈ 420–540 ms`), iOS hardware AEC + `EchoGate` zero-echo gating, `<100 ms` barge-in, single `DEFAULT_LIVE_MODEL` constant ready for `gemini-4-live` |
-| **Automated verification** | **PASS** — `159 / 159` unit/security tests, `3 / 3` real-browser Chrome audio E2E tests, mobile UI readiness suite, Biome + TypeScript + Turbopack build (`59 / 59` routes) |
+| Rung | Delivered | Status |
+| :--- | :--- | :--- |
+| **Step 1 — Agent Loop, Task/Connect Cards & Live Voice Tools** | Shared tool registry across Text Chat & Gemini 3.8 Live (`gmailReadMessages`, `calendarReadEvents`, `driveReadFiles`, `getWeather` via Open-Meteo, `webSearch`, `recallMemories`, `listMySchedules`, `delegateTask`, approval-gated drafts), spoken fillers (`"Checking your inbox…"`), mirrored chat cards (`TaskCard`, 1-tap `ConnectorConnectCard`, `ApprovalCard`), owner name (`Çağlar`), `Europe/London`, EN/TR matching, 8-step agent loop | **LIVE (`● Ready`)** |
+| **Step 2 — Cloud Computer (A): Sandboxed GCP Linux VM** | Provisioned `assistant-computer-01` (`e2-medium`, Ubuntu 24.04 LTS, 30 GB persistent `/workspace`, `europe-west1-b`) + scale-to-zero Cloud Run relay (`assistant-computer-relay`, internal VPC only, auto-wake + 20-min idle auto-stop, `169.254.169.254` metadata blocked, **£0 net** on $40/mo Ultra credit) + `cloudExec` / `cloudWriteFile` / `cloudExportFileToChat` / `cloudBrowseUrl` | **LIVE (`● Ready`)** |
+| **Step 3 — Mac mini Bridge (B): Tailscale SSH + `tmux` + CLIs** | `macExec` & `macRunAgentCli` (`claude`, `codex`, `agy`, `t3`; `copilot`/`cursor` opt-in only), 8 GB Mac governor (`≤3` agents, `≤1` `/tmp/assistant-build.lock`, `1.2 GB` free-RAM floor), `ops/mac-bridge/mac-bridge-exec` (`tmux` + `tmux pipe-pane` redacted `.pty.log` & `commands.jsonl`), `tailscale-acl.hujson` (`tag:bot` → `tag:mac:22` as `botrunner` only, `check` mode re-auth, zero Funnel, no `sudo`), setup & `<1s` revocation scripts | **LIVE (`● Ready`)** |

@@ -6,6 +6,16 @@
 
 ---
 
+## Phase 4 (Steps 1–3) — Operator Parity Complete & Paused for Review
+
+**Steps 1–3 of [PHASE4-PLAN.md](./PHASE4-PLAN.md)** are implemented, tested (`171 / 171` security/unit tests + real-Chrome audio & tool-calling E2E + live GCP VM E2E + live `tmux` smoke test), and deployed (`● Ready`) on `https://general-purpose-agent-quickstart-git-feat-9b1f26-csahingoz-3779.vercel.app`:
+
+1. **Step 1 — Shared Agent Loop, Task/Connect Cards & Gemini 3.8 Live Tool Calling:** Text Chat (8-step agent loop) and Live Voice (`google/gemini-3.8-live`) share the exact same 23-tool registry (`lib/ai/tools/shared-registry.ts`, `lib/voice/live-protocol.ts`, `app/api/voice/live-tool/route.ts`): Gmail/Calendar/Drive read, Open-Meteo weather (zero key), web search, memory, routines, `delegateTask` (`TaskCard`), Cloud Computer, Mac Bridge, and approval-gated drafts (`ApprovalCard` / `OutboundDraftCard`). Voice speaks a short filler (`"Checking your inbox…"`) while tools run, mirrors cards into chat, and shows a 1-tap `ConnectorConnectCard` whenever Google isn't linked yet (never `"I don't have access"`).
+2. **Step 2 — Cloud Computer (A): Sandboxed GCP Linux VM (`assistant-computer-01`):** Provisioned `e2-medium` Ubuntu 24.04 LTS VM (`europe-west1-b`, 30 GB persistent `/workspace`, unprivileged `operator` UID 1001, `169.254.169.254` metadata blocked via `iptables`, 20-min idle auto-stop, **£0 net** on $40/mo Google AI Ultra credit) fronted by scale-to-zero Cloud Run `assistant-computer-relay` (`min-instances=0`, internal VPC only). Chat & Live Voice drive `cloudExec`, `cloudWriteFile`, `cloudExportFileToChat` (signed `/api/files/[token]`), and `cloudBrowseUrl`.
+3. **Step 3 — Mac mini Bridge (B): Tailscale SSH + `tmux` + CLI Drivers:** `macExec` & `macRunAgentCli` (`claude`, `codex`, `agy`, `t3`; `copilot`/`cursor` explicit opt-in only), 4-tier command policy (`lib/mac-bridge/policy.ts`, no `sudo`, zero Funnel, `/Users/caglar` & Korn Ferry boundaries enforced), 8 GB Mac governor (`≤3` agents, `≤1` `/tmp/assistant-build.lock`, `1.2 GB` free-RAM guard), `ops/mac-bridge/mac-bridge-exec` (`tmux` + `tmux pipe-pane` redacted `.pty.log` & `commands.jsonl`), `ops/mac-bridge/tailscale-acl.hujson`, `ops/mac-bridge/setup-mac-bridge.sh`, and `ops/mac-bridge/revoke-mac-bridge.sh`.
+
+---
+
 ## Final Review Summary (All Phases 0 → 3 + Live Voice & Zero-Key UX Complete — READY FOR REVIEW)
 
 Every slice in **[PLAN.md](./PLAN.md)** — **Phase 0**, **Phase 1 (`P1.1–P1.4b`)**, **Phase 2 (`P2.1–P2.3`)**, **Phase 3 (`P3.1–P3.3`)**, plus **Slice 12 (iOS Safe-Area & Settings)** and **Slice 13 (Zero-Key Setup Checklist, One-Tap OAuth & Full-Duplex Gemini 3.8 Live Voice)** — is implemented, verified in real Chromium + unit/security suites, deployed, and `● Ready` on `https://general-purpose-agent-quickstart-git-feat-9b1f26-csahingoz-3779.vercel.app`.

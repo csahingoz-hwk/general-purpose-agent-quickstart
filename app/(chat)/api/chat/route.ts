@@ -56,6 +56,7 @@ import { getFixtures } from "@/lib/ai/tools/get-fixtures";
 import { getWeather } from "@/lib/ai/tools/get-weather";
 import { createGoogleConnectorTools } from "@/lib/ai/tools/google-connectors";
 import { listMySchedules } from "@/lib/ai/tools/list-my-schedules";
+import { createMacBridgeTools } from "@/lib/ai/tools/mac-bridge";
 import { createMemoryTools } from "@/lib/ai/tools/memory-tools";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
 import { scheduleTask } from "@/lib/ai/tools/schedule-task";
@@ -386,6 +387,8 @@ export async function POST(request: Request) {
         "cloudWriteFile",
         "cloudExportFileToChat",
         "cloudBrowseUrl",
+        "macExec",
+        "macRunAgentCli",
       ].includes(name)
     );
     const replySystemPrompt = systemPrompt({
@@ -500,6 +503,10 @@ export async function POST(request: Request) {
                       hasUntrustedContext: hasUntrusted,
                     }),
                     ...createCloudComputerTools({
+                      userId: session.user.id,
+                      hasUntrustedContext: hasUntrusted,
+                    }),
+                    ...createMacBridgeTools({
                       userId: session.user.id,
                       hasUntrustedContext: hasUntrusted,
                     }),

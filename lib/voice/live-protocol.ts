@@ -376,6 +376,40 @@ export const LIVE_VOICE_TOOL_DECLARATIONS: readonly LiveToolDeclaration[] = [
       required: ["url"],
     },
   },
+  {
+    type: "function",
+    name: "macExec",
+    description:
+      "Run a terminal command on the owner's Mac mini over Tailscale SSH inside a logged tmux session as dedicated non-admin user 'botrunner'.",
+    parameters: {
+      type: "object",
+      properties: {
+        command: { type: "string" },
+        repoName: { type: "string" },
+      },
+      required: ["command"],
+    },
+  },
+  {
+    type: "function",
+    name: "macRunAgentCli",
+    description:
+      "Drive Claude Code, Codex, Antigravity (agy), or T3 CLI inside an isolated 'agent/<slug>' git worktree and logged tmux session on the Mac mini.",
+    parameters: {
+      type: "object",
+      properties: {
+        cli: {
+          type: "string",
+          enum: ["claude", "codex", "agy", "t3", "copilot", "cursor"],
+        },
+        repoName: { type: "string" },
+        branch: { type: "string" },
+        prompt: { type: "string" },
+        explicitOptIn: { type: "boolean" },
+      },
+      required: ["cli", "repoName", "branch", "prompt"],
+    },
+  },
 ];
 
 const FILLER_EN: Record<string, string> = {
@@ -401,6 +435,8 @@ const FILLER_EN: Record<string, string> = {
   cloudWriteFile: "Writing file on Cloud Computer…",
   cloudExportFileToChat: "Attaching file to chat…",
   cloudBrowseUrl: "Opening page in Cloud Browser…",
+  macExec: "Running on your Mac mini…",
+  macRunAgentCli: "Starting CLI on your Mac mini…",
 };
 
 const FILLER_TR: Record<string, string> = {
@@ -426,6 +462,8 @@ const FILLER_TR: Record<string, string> = {
   cloudWriteFile: "Bulut bilgisayara dosya yazıyorum…",
   cloudExportFileToChat: "Dosyayı sohbete ekliyorum…",
   cloudBrowseUrl: "Bulut tarayıcıda açıyorum…",
+  macExec: "Mac mini'de çalıştırıyorum…",
+  macRunAgentCli: "Mac mini'de CLI başlatıyorum…",
 };
 
 export function fillerPhraseForTool(

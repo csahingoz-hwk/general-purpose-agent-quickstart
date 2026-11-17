@@ -13,6 +13,7 @@ import { getCurrentTime } from "@/lib/ai/tools/get-current-time";
 import { getFixtures } from "@/lib/ai/tools/get-fixtures";
 import { getWeather } from "@/lib/ai/tools/get-weather";
 import { createGoogleConnectorTools } from "@/lib/ai/tools/google-connectors";
+import { createMacBridgeTools } from "@/lib/ai/tools/mac-bridge";
 import { createMemoryTools } from "@/lib/ai/tools/memory-tools";
 import { webSearch } from "@/lib/ai/tools/web-search";
 import { isGithubConnectorEnabled } from "@/lib/connectors/calendar-and-github";
@@ -106,6 +107,11 @@ export function buildCoreSharedTools(opts: {
       hasUntrustedContext,
     }),
     ...createCloudComputerTools({
+      userId,
+      hasUntrustedContext,
+      fetchImpl,
+    }),
+    ...createMacBridgeTools({
       userId,
       hasUntrustedContext,
       fetchImpl,

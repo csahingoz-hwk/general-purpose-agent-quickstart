@@ -40,6 +40,8 @@ export const AVAILABLE_CHAT_TOOLS = [
   "cloudWriteFile",
   "cloudExportFileToChat",
   "cloudBrowseUrl",
+  "macExec",
+  "macRunAgentCli",
 ] as const;
 
 export type ChatToolName = (typeof AVAILABLE_CHAT_TOOLS)[number];
@@ -67,7 +69,7 @@ const SEARCH_PATTERN_TR =
 const FACT_PATTERN_EN =
   /\b(next (?:match|game|fixture)|fixtures?|kick-?off|line-?ups?|standings|when (?:is|are|does|do|'s)|who(?:'s| is| are)|how much|(?:ticket |stock |share )?prices?|scores?|202[4-9]|2030|galatasaray|fenerbah[cç]e|be[sş]ikta[sş]|trabzonspor|real madrid|barcelona|manchester (?:united|city)|liverpool|arsenal|chelsea|bayern|juventus|psg|premier league|champions league|s[uü]per lig|nba|nfl)\b/;
 const FACT_PATTERN_TR =
-  /(?<![\p{L}])(?:ma[cç]\p{L}*|fikst[uü]r\p{L}*|ne zaman|bi(?:r)? dahaki|sonraki ma\p{L}*|gelecek ma\p{L}*|kimdir|kim kazan\p{L}*|fiyat\p{L}*|ne kadar|ka[cç] para|puan durumu|skor\p{L}*|202[4-9]|2030|galatasaray|fenerbah[cç]e|be[sş]ikta[sş]|trabzonspor)(?![\p{L}])/u;
+  /(?<![\p{L}])(?:ma[cç](?!\s*mini)\p{L}*|fikst[uü]r\p{L}*|ne zaman|bi(?:r)? dahaki|sonraki ma\p{L}*|gelecek ma\p{L}*|kimdir|kim kazan\p{L}*|fiyat\p{L}*|ne kadar|ka[cç] para|puan durumu|skor\p{L}*|202[4-9]|2030|galatasaray|fenerbah[cç]e|be[sş]ikta[sş]|trabzonspor)(?![\p{L}])/u;
 
 const CHITCHAT_PATTERN =
   /^(?:merhaba|selam|selamlar|hey|hi|hello|thanks|thank you|teşekkür(?:ler)?|tesekkur(?:ler)?|günaydın|gunaydin|iyi geceler|nasılsın|nasilsin|how are you|ok|okay|tamam)[!.?\s]*$|\b(?:tell me a joke|explain this clearly|help me plan my day|para biriktirmek|ne yapmal[ıi]y[ıi]m|what should i (?:do|say))\b|şaka yap|fıkra anlat|fikra anlat/;
@@ -82,6 +84,9 @@ const FIXTURE_PATTERN_TR =
 
 const LOCAL_COMMAND_PATTERN =
   /\b(demo|mock|fictional|sample|test inbox|my home city|set my city|my city is|i live in|i'?m based in|home is in|my schedules|scheduled tasks|recurring tasks|cancel schedule|schedule a task|schedule a routine|create a routine|customize your personality|change your personality|remember my preferred style|set your personality|draft an? email|draft a message|draft a slack|draft a telegram|prepare an? outbound draft|ask me a clarifying question|give me clickable options|save to my profile|log in my journal|search my memory|recall from memory|check (?:my )?gmail|read (?:my )?gmail|search (?:my )?gmail|create (?:a )?gmail draft|save (?:a )?draft in gmail|search (?:my )?(?:google )?drive|read (?:from )?(?:my )?(?:google )?drive|list (?:my )?(?:google )?drive files|create (?:a )?(?:google )?drive draft|save (?:a )?draft (?:doc|document) in (?:google )?drive|check (?:my )?(?:google )?calendar|upcoming calendar events|read (?:my )?calendar|create (?:a )?(?:google )?calendar draft|draft (?:a )?calendar event|list (?:open )?(?:github )?(?:prs|pull requests)|read (?:github )?(?:prs|pull requests)|check github prs|draft (?:a )?(?:github )?(?:pr|pull request) review|create (?:a )?github draft review|generate (?:an? )?(?:image|illustration|picture|poster|video|video clip)|create (?:an? )?(?:image|video clip))\b|hayal[iî]|örnek gelen kutusu|sahte e.?posta|ev şehrim|şehrim|yaşıyorum|zamanlanmış görev|planlanmış görev|görevlerimi listele|görevi iptal|rutin oluştur|kişiliğini değiştir|tarzını kaydet|kişiselleştir|taslak e-?posta hazırla|gönderim taslağı|bana seçenek kartı göster|belleğime kaydet|günlüğüme ekle|gmail(?:imi|'imi)? (?:kontrol et|oku|ara)|gmail taslağı oluştur|gmail'e taslak kaydet|(?:google )?drive(?:'da|da| dosyalarımı) (?:ara|listele|oku)|(?:google )?drive taslağı oluştur|drive'a taslak kaydet|takvimimi (?:kontrol et|oku)|yaklaşan etkinliklerim|takvim taslağı oluştur|github açık pr|github pr taslak inceleme|görsel üret|resim oluştur|video klibi oluştur/;
+
+const MAC_BRIDGE_PATTERN =
+  /\b(mac\s*mini|on\s+my\s+mac|mac\s+bridge|tailscale\s+ssh|claude\s+code|have\s+claude\b|have\s+codex\b|run\s+codex\b|run\s+agy\b|antigravity\s+cli|t3\s+cli|local\s+repo\b|git\s+status\s+on\s+(?:my\s+)?mac)\b|(?<![\p{L}])(?:mac'?imde|mac\s+mini'?de|yerel\s+repoda)(?![\p{L}])/iu;
 
 const CLOUD_COMPUTER_PATTERN =
   /\b(cloud\s+(?:computer|vm|shell|sandbox)|linux\s+vm|in\s+\/workspace|\/workspace\/|clone\s+(?:the\s+|this\s+)?repo\b|run\s+(?:a\s+|the\s+)?(?:python|bash|shell|node)\b|headless\s+(?:browser|chromium)|scrape\s+https?:\/\/|export\s+.{1,40}\s+from\s+\/workspace)\b|(?<![\p{L}])(?:bulut\s+bilgisayar\p{L}*|linux\s+sunucu\p{L}*|python\s+script\p{L}*)(?![\p{L}])/iu;
@@ -114,6 +119,8 @@ const STATE_CHANGING_TOOLS: readonly ChatToolName[] = [
   "delegateTask",
   "cloudExec",
   "cloudWriteFile",
+  "macExec",
+  "macRunAgentCli",
 ];
 
 function userText(message: ChatMessage): string {
@@ -185,7 +192,8 @@ export function shouldOfferWebSearch(
       LOCAL_COMMAND_PATTERN.test(phrase) ||
       PRIVATE_PERSONAL_INTENT.test(phrase) ||
       CLOUD_COMPUTER_PATTERN.test(phrase) ||
-      CLOUD_BROWSE_PATTERN.test(phrase)) &&
+      CLOUD_BROWSE_PATTERN.test(phrase) ||
+      MAC_BRIDGE_PATTERN.test(phrase)) &&
     !factual;
   if (localOnly) {
     return false;
@@ -321,6 +329,10 @@ export function selectActiveTools(
     )
   ) {
     enabled.push("scheduleTask");
+  }
+
+  if (canPersonalize && MAC_BRIDGE_PATTERN.test(phrase)) {
+    enabled.push("macExec", "macRunAgentCli");
   }
 
   if (canPersonalize && CLOUD_BROWSE_PATTERN.test(phrase)) {

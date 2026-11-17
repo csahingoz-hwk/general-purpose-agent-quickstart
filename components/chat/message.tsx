@@ -29,6 +29,7 @@ import { DocumentToolResult } from "./document";
 import { DocumentPreview } from "./document-preview";
 import { FictionalInboxCard } from "./fictional-inbox-card";
 import { FixtureCard } from "./fixture-card";
+import { MacBridgeCard } from "./mac-bridge-card";
 import { useMascotPreference } from "./mascot-preference";
 import { isMediaPreviewPayload, MediaPreviewCard } from "./media-preview-card";
 import { MessageActions } from "./message-actions";
@@ -562,6 +563,21 @@ const PurePreviewMessage = ({
             locale={locale}
             output={output as Record<string, unknown>}
             toolName={toolName}
+          />
+        );
+      }
+
+      if (
+        state === "output-available" &&
+        output &&
+        typeof output === "object" &&
+        (toolName === "macExec" || toolName === "macRunAgentCli")
+      ) {
+        return (
+          <MacBridgeCard
+            key={toolCallId}
+            locale={locale}
+            output={output as Record<string, unknown>}
           />
         );
       }
