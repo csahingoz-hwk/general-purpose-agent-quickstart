@@ -40,6 +40,15 @@ export function setRedisClientForTests(mock: MinimalRedisClient | null) {
   injectedClientForTests = mock;
 }
 
+export async function closeRedisClient(): Promise<void> {
+  const active = client;
+  client = null;
+  connectPromise = null;
+  if (active) {
+    await active.quit().catch(() => active.disconnect().catch(() => undefined));
+  }
+}
+
 export function assertEphemeralRedisKey(key: string, ttlSeconds: number) {
   const allowed = EPHEMERAL_REDIS_KEY_PREFIXES.some((prefix) =>
     key.startsWith(prefix)

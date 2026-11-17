@@ -3,6 +3,7 @@ import { createResumableStreamContext } from "resumable-stream";
 import {
   buildRateLimitKey,
   checkIpRateLimit,
+  closeRedisClient,
   EPHEMERAL_REDIS_KEY_PREFIXES,
   pingRedis,
 } from "../lib/ratelimit";
@@ -129,11 +130,15 @@ async function main() {
     );
   } finally {
     await admin.del([rateKey, sentinelKey]).catch(() => undefined);
-    await admin.quit().catch(() => undefined);
+    await Promise.allSettled([admin.quit(), closeRedisClient()]);
   }
 }
 
-main().catch((err) => {
-  console.error("Redis self-check: FAIL", err);
-  process.exit(1);
-});
+main()
+  .then(() => {
+    process.exit(0);
+  })
+  .catch((err) => {
+    console.error("Redis self-check: FAIL", err);
+    process.exit(1);
+  });
