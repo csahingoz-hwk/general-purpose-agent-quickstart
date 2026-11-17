@@ -474,12 +474,40 @@ export function LiveVoiceButton({
           });
           const data = (await res.json().catch(() => ({}))) as {
             blocked?: boolean;
+            savedMemoryPart?: Record<string, unknown> | null;
           };
           if (data.blocked) {
             engineRef.current?.stop();
             toast.error(
               "Voice mode stopped: employer work material can't go to the personal voice service."
             );
+            return;
+          }
+          if (data.savedMemoryPart) {
+            setMessages((prev) => {
+              // Skip if Gemini Live already emitted a saveProfileFact card in the last 2 messages
+              const recentHasSaveCard = prev
+                .slice(-3)
+                .some((m) =>
+                  m.parts?.some(
+                    (p) => (p.type as string) === "tool-saveProfileFact"
+                  )
+                );
+              if (recentHasSaveCard) {
+                return prev;
+              }
+              return prev.map((m) =>
+                m.id === assistantMessageId
+                  ? ({
+                      ...m,
+                      parts: [
+                        data.savedMemoryPart as unknown as ChatMessage["parts"][number],
+                        ...m.parts,
+                      ],
+                    } as ChatMessage)
+                  : m
+              );
+            });
           }
         })
         .catch(() => undefined);

@@ -77,6 +77,7 @@ export function buildVoiceSystemInstruction(opts: {
     "You have real live tools connected right now: Gmail (gmailReadMessages), Google Calendar (calendarReadEvents), Google Drive (driveReadFiles), Weather via Open-Meteo (getWeather, defaulting to London if no city is named), Web Search (webSearch), Football Fixtures (getFixtures), Memory (recallMemories, saveProfileFact, addJournalEntry), Routines (listMySchedules, scheduleTask), Approval-gated Drafts (gmailCreateDraft, calendarCreateDraftEvent, driveCreateDraftDoc, draftOutboundMessage), and Delegated Tasks (delegateTask).",
     "NEVER say 'I don't have access', 'I can't access your personal email', or 'I can't check the weather'. Always call the matching tool.",
     "Right as you call any tool, speak a short natural filler in the owner's current language (for example: 'Checking your inbox…', 'Checking the weather…', 'Gelen kutuna bakıyorum…', 'Hava durumuna bakıyorum…'), then speak the answer naturally as soon as the tool result arrives.",
+    "Whenever the owner says 'remember this: …', 'remember that …', 'bunu hatırla: …', or 'unutma: …', immediately call saveProfileFact so a 'Saved to memory' card appears in the chat.",
     "If a connector tool returns status 'setup_required', tell the owner in ONE short sentence that their Google (or GitHub) account isn't connected yet and they can tap the Connect button you just placed in the chat. Never say 'I don't have access'.",
     "If a write, send, draft, or destructive tool returns status 'awaiting_approval', tell the owner in ONE short sentence that an approval card is ready in the chat so they can tap Allow before anything runs.",
     "Never read out markdown, JSON, raw symbols, or URLs. Say numbers and dates the way people speak them.",
@@ -91,8 +92,8 @@ export function buildVoiceSystemInstruction(opts: {
   }
   if (opts.facts && opts.facts.length > 0) {
     lines.push(
-      "Things the owner asked you to remember:",
-      ...opts.facts.slice(0, 12).map((f) => `- ${f.slice(0, 200)}`)
+      "Owner long-term memory facts (apply naturally in this voice session):",
+      ...opts.facts.slice(0, 80).map((f) => `- ${f.slice(0, 260)}`)
     );
   }
   if (opts.recentTurns && opts.recentTurns.length > 0) {

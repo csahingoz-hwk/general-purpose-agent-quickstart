@@ -1,6 +1,11 @@
 "use client";
 
-import { PanelLeftIcon, PenSquareIcon, XIcon } from "lucide-react";
+import {
+  BookOpenIcon,
+  PanelLeftIcon,
+  PenSquareIcon,
+  XIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { User } from "next-auth";
@@ -95,10 +100,10 @@ export function AppSidebar({ user }: { user: User | undefined }) {
           <SidebarGroup className="px-4 pt-2 group-data-[collapsible=icon]:px-2">
             <SidebarGroupContent>
               <div className="overflow-hidden rounded-[20px] bg-card group-data-[collapsible=icon]:overflow-visible group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:bg-transparent">
-                <SidebarMenu>
+                <SidebarMenu className="divide-y divide-[color:var(--hairline)] group-data-[collapsible=icon]:divide-y-0">
                   <SidebarMenuItem>
                     <SidebarMenuButton
-                      className="h-auto min-h-[60px] rounded-none px-5 text-[17px] text-foreground hover:bg-foreground/5 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:min-h-8! group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-2!"
+                      className="h-auto min-h-[54px] rounded-none px-5 text-[16px] text-foreground hover:bg-foreground/5 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:min-h-8! group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-2!"
                       onClick={() => {
                         setOpenMobile(false);
                         router.push("/");
@@ -109,6 +114,22 @@ export function AppSidebar({ user }: { user: User | undefined }) {
                       <span>{copy.newChat}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
+                  {user && (
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        className="h-auto min-h-[52px] rounded-none px-5 text-[16px] text-foreground hover:bg-foreground/5 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:min-h-8! group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-2!"
+                        data-testid="sidebar-memory-link"
+                        onClick={() => {
+                          setOpenMobile(false);
+                          router.push("/memory");
+                        }}
+                        tooltip={copy.memory}
+                      >
+                        <BookOpenIcon className="size-4" />
+                        <span>{copy.memory}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  )}
                 </SidebarMenu>
               </div>
             </SidebarGroupContent>

@@ -700,8 +700,324 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
       "Expected Retry button to trigger 2nd attempt"
     );
 
+    // ---- CASE 6: 390x844 iPhone Memory Screen (Settings + Sidebar + 50-line paste, de-dupe preview, search, edit, delete, export, and "Saved to memory" chat card) ----
+    // Verify Sidebar Memory link opens from mobile sidebar toggle
+    const sidebarToggle = page.getByTestId("sidebar-toggle-button");
+    if (await sidebarToggle.isVisible()) {
+      await sidebarToggle.click();
+      await expect(page.getByTestId("sidebar-memory-link")).toBeVisible({
+        timeout: 8000,
+      });
+      await page.keyboard.press("Escape");
+    }
+
+    // Stateful in-memory mock backing /api/memory for deterministic 50-line E2E test
+    const memoryState: Array<{
+      id: string;
+      userId: string;
+      category: string;
+      key: string;
+      value: string;
+      sharedAcrossBots: boolean;
+      updatedAt: string;
+    }> = [
+      {
+        id: "50000000-0000-4000-8000-000000000001",
+        userId,
+        category: "identity",
+        key: "i_live_in_london",
+        value: "I live in London (Europe/London)",
+        sharedAcrossBots: true,
+        updatedAt: "2026-11-17T20:00:00.000Z",
+      },
+      {
+        id: "50000000-0000-4000-8000-000000000002",
+        userId,
+        category: "identity",
+        key: "daughter_ece",
+        value: "Daughter's name is Ece",
+        sharedAcrossBots: true,
+        updatedAt: "2026-11-17T20:01:00.000Z",
+      },
+      {
+        id: "50000000-0000-4000-8000-000000000003",
+        userId,
+        category: "preference",
+        key: "coffee_black",
+        value: "Kahvemi sade ve şekersiz içerim",
+        sharedAcrossBots: true,
+        updatedAt: "2026-11-17T20:02:00.000Z",
+      },
+    ];
+    let nextMemSeq = 10;
+
+    await page.route("**/api/usage*", (route) =>
+      route.fulfill({
+        json: {
+          dailyEstimatedUsd: 0,
+          monthlyEstimatedUsd: 0,
+          allowanceUsd: 10,
+          requests: 4,
+          invocations: 4,
+          fallbackInvocations: 0,
+          fallbackEstimatedUsd: 0,
+          unreportedInvocations: 0,
+          calls: [],
+        },
+      })
+    );
+    await page.route("**/api/connectors*", (route) =>
+      route.fulfill({
+        json: {
+          mediaReady: true,
+          gmailReady: true,
+          googleSignInReady: true,
+          vaultConfigured: true,
+        },
+      })
+    );
+    await page.route("**/api/location*", (route) =>
+      route.fulfill({
+        json: {
+          homeLocation: {
+            label: "London",
+            latitude: 51.5074,
+            longitude: -0.1278,
+            timeZone: "Europe/London",
+            source: "city",
+          },
+        },
+      })
+    );
+
+    await page.route("**/api/memory*", (route) => {
+      const req = route.request();
+      const method = req.method();
+      if (method === "GET") {
+        return route.fulfill({
+          json: {
+            status: "ready",
+            toolsEnabled: true,
+            profileFacts: [...memoryState],
+            journalEntries: [],
+          },
+        });
+      }
+      if (method === "POST") {
+        const body = JSON.parse(req.postData() ?? "{}") as {
+          type?: string;
+          items?: Array<{ category?: string; key?: string; value?: string }>;
+        };
+        if (body.type === "profile_batch" && Array.isArray(body.items)) {
+          const created = body.items.map((item) => {
+            nextMemSeq += 1;
+            const row = {
+              id: `50000000-0000-4000-8000-${String(nextMemSeq).padStart(12, "0")}`,
+              userId,
+              category: item.category ?? "general",
+              key: item.key ?? `fact_${nextMemSeq}`,
+              value: item.value ?? "",
+              sharedAcrossBots: true,
+              updatedAt: new Date().toISOString(),
+            };
+            memoryState.unshift(row);
+            return row;
+          });
+          return route.fulfill({
+            status: 201,
+            json: {
+              savedCount: created.length,
+              skippedDuplicates: 0,
+              facts: created,
+            },
+          });
+        }
+      }
+      if (method === "PATCH") {
+        const body = JSON.parse(req.postData() ?? "{}") as {
+          id?: string;
+          value?: string;
+          category?: string;
+        };
+        const target = memoryState.find((m) => m.id === body.id);
+        if (target && body.value) {
+          target.value = body.value;
+          if (body.category) {
+            target.category = body.category;
+          }
+          return route.fulfill({ status: 200, json: { fact: target } });
+        }
+        return route.fulfill({ status: 404, json: { error: "Not found" } });
+      }
+      if (method === "DELETE") {
+        const url = new URL(req.url());
+        const id = url.searchParams.get("id");
+        const idx = memoryState.findIndex((m) => m.id === id);
+        if (idx !== -1) {
+          memoryState.splice(idx, 1);
+        }
+        return route.fulfill({ status: 200, json: { deleted: true, id } });
+      }
+      return route.fulfill({ status: 400, json: { error: "Unsupported" } });
+    });
+
+    // Navigate to Settings (/usage) first and tap "Open" on Memory card
+    await page.goto(`${origin}/usage`, { waitUntil: "domcontentloaded" });
+    const settingsMemoryLink = page.getByTestId("settings-open-memory");
+    await expect(settingsMemoryLink).toBeVisible({ timeout: 15_000 });
+    await expect(settingsMemoryLink).toContainText("3 saved memories");
+    const settingsShot = join(scratchDir, "verify-settings-memory-390.png");
+    await settingsMemoryLink.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+    await page.screenshot({ path: settingsShot, fullPage: false });
+
+    await settingsMemoryLink.click();
+    await expect(page.getByTestId("memory-bulk-textarea")).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // Paste a 50-line list (3 existing duplicates + 47 brand-new facts)
+    const fiftyLines: string[] = [
+      "- I live in London (Europe/London)",
+      "• Daughter's name is Ece",
+      "1. Kahvemi sade ve şekersiz içerim",
+    ];
+    for (let i = 1; i <= 47; i++) {
+      fiftyLines.push(
+        `${i + 1}. Memory fact #${i}: concise bilingual EN/TR note (${i})`
+      );
+    }
+    await page.getByTestId("memory-bulk-textarea").fill(fiftyLines.join("\n"));
+    await page.getByTestId("memory-preview-button").click();
+
+    const previewBox = page.getByTestId("memory-import-preview");
+    await expect(previewBox).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByTestId("memory-preview-summary")).toContainText(
+      "47 new selected · 3 already saved"
+    );
+    await expect(page.getByTestId("memory-duplicate-badge")).toHaveCount(3);
+
+    const previewOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth
+    );
+    assert.ok(
+      previewOverflow <= 390,
+      `Memory preview horizontal overflow at 390px: ${previewOverflow}`
+    );
+
+    await previewBox.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(200);
+    const memoryPreviewShot = join(scratchDir, "verify-memory-preview-390.png");
+    await page.screenshot({ path: memoryPreviewShot, fullPage: false });
+
+    // Confirm saving the 47 new facts -> total saved memories becomes 50!
+    await page.getByTestId("memory-confirm-save").click();
+    await expect(page.getByTestId("memory-fact-row")).toHaveCount(50, {
+      timeout: 10_000,
+    });
+
+    // Test Search, Inline Edit, Delete, and Export buttons
+    await page.getByTestId("memory-search-input").fill("Memory fact #47:");
+    await expect(page.getByTestId("memory-fact-row")).toHaveCount(1);
+    await page.getByTestId("memory-edit-button").first().click();
+    await page
+      .getByTestId("memory-edit-textarea")
+      .fill("Memory fact #47: edited cleanly on iPhone 390px");
+    await page.getByTestId("memory-edit-save").click();
+    await expect(
+      page.getByText("Memory fact #47: edited cleanly on iPhone 390px")
+    ).toBeVisible();
+
+    // Clear search -> all 50 rows visible, delete 1 row -> 49 rows, verify Download trigger
+    await page.getByTestId("memory-search-input").fill("");
+    await expect(page.getByTestId("memory-fact-row")).toHaveCount(50);
+    await page.getByTestId("memory-delete-button").first().click();
+    await expect(page.getByTestId("memory-fact-row")).toHaveCount(49);
+
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByTestId("memory-export-download").click();
+    const download = await downloadPromise;
+    assert.match(download.suggestedFilename(), /^assistant-memories-.*\.md$/);
+
+    const savedOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth
+    );
+    assert.ok(
+      savedOverflow <= 390,
+      `Memory saved list horizontal overflow at 390px: ${savedOverflow}`
+    );
+    const memorySavedShot = join(scratchDir, "verify-memory-saved-390.png");
+    await page.screenshot({ path: memorySavedShot, fullPage: false });
+
+    // Also verify "Remember this: …" renders the compact "Saved to memory" card in chat at 390x844
+    await page.unroute("**/api/chat");
+    await page.route("**/api/chat", (route) => {
+      const sseRemember = [
+        `data: ${JSON.stringify({ type: "start", messageId: "a-mem-1" })}\n\n`,
+        `data: ${JSON.stringify({
+          type: "tool-input-available",
+          toolCallId: "mem-card-1",
+          toolName: "saveProfileFact",
+          input: {
+            category: "preference",
+            key: "aisle_seat",
+            value: "I prefer aisle seats on flights over 3 hours.",
+          },
+          providerExecuted: true,
+        })}\n\n`,
+        `data: ${JSON.stringify({
+          type: "tool-output-available",
+          toolCallId: "mem-card-1",
+          output: {
+            saved: true,
+            fact: {
+              id: "50000000-0000-4000-8000-000000000999",
+              category: "preference",
+              key: "aisle_seat",
+              value: "I prefer aisle seats on flights over 3 hours.",
+            },
+          },
+          providerExecuted: true,
+        })}\n\n`,
+        `data: ${JSON.stringify({ type: "text-start", id: "txt-m1" })}\n\n`,
+        `data: ${JSON.stringify({
+          type: "text-delta",
+          id: "txt-m1",
+          delta:
+            "Got it — saved to your durable memory for future flight bookings.",
+        })}\n\n`,
+        `data: ${JSON.stringify({ type: "text-end", id: "txt-m1" })}\n\n`,
+        `data: ${JSON.stringify({ type: "finish" })}\n\n`,
+        "data: [DONE]\n\n",
+      ].join("");
+      return route.fulfill({
+        status: 200,
+        headers: {
+          "content-type": "text/event-stream; charset=utf-8",
+          "x-vercel-ai-ui-message-stream": "v1",
+        },
+        body: sseRemember,
+      });
+    });
+
+    await page.goto(
+      `${origin}/?query=${encodeURIComponent("Remember this: I prefer aisle seats on flights over 3 hours.")}`,
+      { waitUntil: "domcontentloaded" }
+    );
+    const savedMemoryCard = page.getByTestId("saved-memory-card");
+    await expect(savedMemoryCard).toBeVisible({ timeout: 15_000 });
+    await expect(savedMemoryCard).toContainText("Saved to memory");
+    await expect(savedMemoryCard).toContainText(
+      "I prefer aisle seats on flights over 3 hours."
+    );
+    const rememberCardShot = join(
+      scratchDir,
+      "verify-saved-memory-card-390.png"
+    );
+    await page.screenshot({ path: rememberCardShot, fullPage: false });
+
     console.log(
-      `PASS: 390x844 iPhone verification succeeded (weather=${weatherShot}, ceoChart=${multiSearchShot}, comparison=${compShot}, timeline=${tlShot}, retry=${errorShot}, mapVisible=${mapVisible})`
+      `PASS: 390x844 iPhone verification succeeded (weather=${weatherShot}, ceoChart=${multiSearchShot}, comparison=${compShot}, timeline=${tlShot}, retry=${errorShot}, memoryPreview=${memoryPreviewShot}, memorySaved=${memorySavedShot}, rememberCard=${rememberCardShot}, mapVisible=${mapVisible})`
     );
   } finally {
     await browser.close().catch(() => undefined);

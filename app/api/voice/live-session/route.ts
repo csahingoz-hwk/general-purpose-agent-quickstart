@@ -6,7 +6,9 @@ import {
   createPostgresBotRosterStore,
   filterFactsForBot,
 } from "@/lib/bots/roster";
+import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import { getChatById, getMessagesByChatId } from "@/lib/db/queries";
+import { selectRelevantFactsForPrompt } from "@/lib/memory/bulk-import";
 import { createPostgresMemoryStore } from "@/lib/memory/store";
 import {
   buildVoiceSystemInstruction,
@@ -122,10 +124,17 @@ export async function POST(request: Request) {
       : Promise.resolve([]),
   ]);
 
-  const scopedFacts = filterFactsForBot(
+  const latestRecentText = recentTurns.at(-1)?.text ?? "";
+  const safeVoiceFacts = filterFactsForBot(
     facts,
     teammate?.slug ?? "chief-of-staff"
-  ).map((f) => f.value);
+  ).filter((f) => !containsRestrictedWorkData(`${f.key} ${f.value}`));
+  const scopedFacts = selectRelevantFactsForPrompt(
+    safeVoiceFacts,
+    latestRecentText,
+    80,
+    6000
+  ).map((f) => `[${f.category}] ${f.value}`);
 
   const systemInstruction = buildVoiceSystemInstruction({
     ownerName:

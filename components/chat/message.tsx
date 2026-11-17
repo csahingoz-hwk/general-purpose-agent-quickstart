@@ -38,6 +38,7 @@ import { OpenUiCard } from "./openui-card";
 import { OutboundDraftCard } from "./outbound-draft-card";
 import { PreviewAttachment } from "./preview-attachment";
 import { QuestionCard } from "./question-card";
+import { SavedMemoryCard } from "./saved-memory-card";
 import { isTaskCardPayload, TaskCard } from "./task-card";
 import { Weather } from "./weather";
 import { WebSearchCard } from "./web-search-card";
@@ -607,6 +608,18 @@ const PurePreviewMessage = ({
             locale={locale}
             output={output as Record<string, unknown>}
             toolName={toolName}
+          />
+        );
+      }
+
+      if (toolName === "saveProfileFact" || toolName === "addJournalEntry") {
+        return (
+          <SavedMemoryCard
+            input={input}
+            key={toolCallId}
+            locale={locale}
+            output={output}
+            state={state}
           />
         );
       }

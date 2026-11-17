@@ -1,6 +1,13 @@
 "use client";
 
-import { CheckCircle2Icon, MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
+import {
+  BookOpenIcon,
+  CheckCircle2Icon,
+  ChevronRightIcon,
+  MonitorIcon,
+  MoonIcon,
+  SunIcon,
+} from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
@@ -103,6 +110,14 @@ function UsagePageContent() {
     fetcher,
     { revalidateOnFocus: false, shouldRetryOnError: false }
   );
+  const { data: memorySummary } = useSWR<{
+    profileFacts?: unknown[];
+    journalEntries?: unknown[];
+  }>(`${basePath}/api/memory`, fetcher, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  });
+  const savedMemoriesCount = memorySummary?.profileFacts?.length ?? 0;
 
   async function handleDisconnect(provider: "google" | "github") {
     setBusyProvider(provider);
@@ -192,6 +207,45 @@ function UsagePageContent() {
               <HomeLocationPanel />
             </div>
           </div>
+        </section>
+
+        <section className="space-y-3" data-testid="settings-memory-section">
+          <div>
+            <h2 className="font-semibold text-xl tracking-tight">
+              Memory · Bellek
+            </h2>
+            <p className="mt-1 text-muted-foreground text-sm">
+              Paste a long list of personal facts, edit or search saved
+              memories, or export everything. Stored in private Postgres and
+              used automatically in chat and voice.
+            </p>
+          </div>
+
+          <Link
+            className="flex items-center justify-between gap-3 rounded-2xl border border-[color:var(--hairline)] bg-card p-4 transition-colors hover:bg-muted/40"
+            data-testid="settings-open-memory"
+            href="/memory"
+          >
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <BookOpenIcon className="size-5" />
+              </span>
+              <div className="min-w-0">
+                <p className="font-semibold text-[15px] text-foreground">
+                  Manage memories &amp; paste list
+                </p>
+                <p className="text-muted-foreground text-xs tabular-nums">
+                  {savedMemoriesCount} saved{" "}
+                  {savedMemoriesCount === 1 ? "memory" : "memories"} · Search,
+                  edit, delete &amp; export
+                </p>
+              </div>
+            </div>
+            <span className="inline-flex min-h-10 shrink-0 items-center gap-1 rounded-full bg-primary px-3.5 font-medium text-primary-foreground text-xs">
+              Open
+              <ChevronRightIcon className="size-3.5" />
+            </span>
+          </Link>
         </section>
 
         <section className="space-y-3">

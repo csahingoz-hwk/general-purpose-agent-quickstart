@@ -3,6 +3,11 @@ import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import { getChatById, saveChat, saveMessages } from "@/lib/db/queries";
+import { extractExplicitRememberFact } from "@/lib/memory/bulk-import";
+import {
+  createPostgresMemoryStore,
+  isMemoryToolsEnabled,
+} from "@/lib/memory/store";
 
 const turnSchema = z.object({
   chatId: z.string().uuid(),
@@ -59,7 +64,49 @@ export async function POST(request: Request) {
     if (existing && existing.userId !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    const explicitRemember =
+      isMemoryToolsEnabled() && userText
+        ? extractExplicitRememberFact(userText)
+        : null;
+    const savedFact = explicitRemember
+      ? await createPostgresMemoryStore()
+          .upsertProfileFact({
+            userId: session.user.id,
+            category: explicitRemember.category,
+            key: explicitRemember.key,
+            value: explicitRemember.value,
+            sharedAcrossBots: true,
+          })
+          .catch(() => null)
+      : null;
+    const savedMemoryPart = savedFact
+      ? {
+          type: "tool-saveProfileFact" as const,
+          toolCallId: `voice-mem-${savedFact.id.slice(0, 12)}`,
+          state: "output-available" as const,
+          input: {
+            category: savedFact.category,
+            key: savedFact.key,
+            value: savedFact.value,
+          },
+          output: {
+            saved: true,
+            fact: savedFact,
+          },
+        }
+      : null;
+
     const now = Date.now();
+    const assistantParts: Record<string, unknown>[] = [];
+    if (savedMemoryPart) {
+      assistantParts.push(savedMemoryPart);
+    }
+    if (assistantText) {
+      assistantParts.push({
+        type: "text",
+        text: body.interrupted ? `${assistantText} …` : assistantText,
+      });
+    }
     const rows = [
       ...(userText
         ? [
@@ -73,18 +120,13 @@ export async function POST(request: Request) {
             },
           ]
         : []),
-      ...(assistantText
+      ...(assistantParts.length > 0
         ? [
             {
               id: body.assistantMessageId,
               chatId: body.chatId,
               role: "assistant",
-              parts: [
-                {
-                  type: "text",
-                  text: body.interrupted ? `${assistantText} …` : assistantText,
-                },
-              ],
+              parts: assistantParts,
               attachments: [],
               createdAt: new Date(now + 1),
             },
@@ -92,7 +134,7 @@ export async function POST(request: Request) {
         : []),
     ];
     await saveMessages({ messages: rows });
-    return NextResponse.json({ saved: true });
+    return NextResponse.json({ saved: true, savedMemoryPart });
   } catch {
     return NextResponse.json({ saved: false }, { status: 500 });
   }

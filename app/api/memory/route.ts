@@ -1,20 +1,43 @@
 import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
 import { isOwnerIdentity } from "@/lib/access-policy";
+import { deriveFactKey } from "@/lib/memory/bulk-import";
 import {
   createPostgresMemoryStore,
   isMemoryToolsEnabled,
   MemoryStoreUnavailableError,
 } from "@/lib/memory/store";
 
+const categoryEnum = z.enum([
+  "identity",
+  "preference",
+  "work",
+  "finance",
+  "project",
+  "general",
+]);
+
 const profileBodySchema = z.object({
   type: z.literal("profile"),
-  category: z
-    .enum(["identity", "preference", "work", "finance", "project", "general"])
-    .default("general"),
-  key: z.string().trim().min(1).max(120),
+  category: categoryEnum.default("general"),
+  key: z.string().trim().min(1).max(120).optional(),
   value: z.string().trim().min(1).max(2000),
   sharedAcrossBots: z.boolean().default(true),
+});
+
+const profileBatchBodySchema = z.object({
+  type: z.literal("profile_batch"),
+  items: z
+    .array(
+      z.object({
+        category: categoryEnum.default("general"),
+        key: z.string().trim().min(1).max(120).optional(),
+        value: z.string().trim().min(1).max(2000),
+        sharedAcrossBots: z.boolean().default(true),
+      })
+    )
+    .min(1)
+    .max(250),
 });
 
 const journalBodySchema = z.object({
@@ -26,7 +49,25 @@ const journalBodySchema = z.object({
 
 const createMemorySchema = z.discriminatedUnion("type", [
   profileBodySchema,
+  profileBatchBodySchema,
   journalBodySchema,
+]);
+
+const updateMemorySchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("profile"),
+    id: z.string().uuid(),
+    category: categoryEnum.optional(),
+    value: z.string().trim().min(1).max(2000),
+    sharedAcrossBots: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal("journal"),
+    id: z.string().uuid(),
+    title: z.string().trim().min(1).max(200),
+    body: z.string().trim().min(1).max(8000),
+    tags: z.array(z.string().trim().min(1).max(40)).max(8).optional(),
+  }),
 ]);
 
 export async function GET(request: Request) {
@@ -48,7 +89,7 @@ export async function GET(request: Request) {
         userId: session.user.id,
         query,
         tag,
-        limit: 50,
+        limit: 100,
       }),
     ]);
     const normalizedQuery = query?.toLowerCase();
@@ -102,11 +143,25 @@ export async function POST(request: Request) {
       const fact = await store.upsertProfileFact({
         userId: session.user.id,
         category: body.category,
-        key: body.key,
+        key: body.key || deriveFactKey(body.value),
         value: body.value,
         sharedAcrossBots: body.sharedAcrossBots,
       });
       return Response.json({ fact }, { status: 201 });
+    }
+    if (body.type === "profile_batch") {
+      const result = await store.upsertProfileFactsBatch({
+        userId: session.user.id,
+        items: body.items,
+      });
+      return Response.json(
+        {
+          savedCount: result.saved.length,
+          skippedDuplicates: result.skippedDuplicates,
+          facts: result.saved,
+        },
+        { status: 201 }
+      );
     }
     const entry = await store.addJournalEntry({
       userId: session.user.id,
@@ -124,6 +179,53 @@ export async function POST(request: Request) {
       );
     }
     return Response.json({ error: "Could not save memory" }, { status: 500 });
+  }
+}
+
+export async function PATCH(request: Request) {
+  const session = await auth();
+  if (!session?.user || !isOwnerIdentity(session.user)) {
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  let body: z.infer<typeof updateMemorySchema>;
+  try {
+    body = updateMemorySchema.parse(await request.json());
+  } catch {
+    return Response.json(
+      { error: "Invalid memory update payload" },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const store = createPostgresMemoryStore();
+    if (body.type === "profile") {
+      const updated = await store.updateProfileFact({
+        userId: session.user.id,
+        id: body.id,
+        category: body.category,
+        value: body.value,
+        sharedAcrossBots: body.sharedAcrossBots,
+      });
+      if (!updated) {
+        return Response.json({ error: "Not found" }, { status: 404 });
+      }
+      return Response.json({ fact: updated });
+    }
+    const updatedEntry = await store.updateJournalEntry({
+      userId: session.user.id,
+      id: body.id,
+      title: body.title,
+      body: body.body,
+      tags: body.tags,
+    });
+    if (!updatedEntry) {
+      return Response.json({ error: "Not found" }, { status: 404 });
+    }
+    return Response.json({ entry: updatedEntry });
+  } catch {
+    return Response.json({ error: "Could not update memory" }, { status: 503 });
   }
 }
 

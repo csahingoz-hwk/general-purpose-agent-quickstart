@@ -78,6 +78,7 @@ import {
 } from "@/lib/bots/roster";
 import { isGithubConnectorEnabled } from "@/lib/connectors/calendar-and-github";
 import { isGoogleConnectorsEnabled } from "@/lib/connectors/google-vault-auth";
+import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import { isProductionEnvironment } from "@/lib/constants";
 import { isRoutinesEnabled } from "@/lib/cron/routine-presets";
 import { acquireChatLock } from "@/lib/db/chat-lock";
@@ -98,8 +99,13 @@ import { ChatbotError } from "@/lib/errors";
 import { prepareMessagesWithAttachments } from "@/lib/files/parse-attachment";
 import { isMediaStudioEnabled } from "@/lib/media/media-studio";
 import {
+  extractExplicitRememberFact,
+  selectRelevantFactsForPrompt,
+} from "@/lib/memory/bulk-import";
+import {
   createPostgresMemoryStore,
   isMemoryToolsEnabled,
+  type ProfileFact,
 } from "@/lib/memory/store";
 import { attachOpenUiPart } from "@/lib/openui/attach";
 import { isVisualCandidateTurn } from "@/lib/openui/structured-answer";
@@ -342,7 +348,14 @@ export async function POST(request: Request) {
       extractRequestedBotSlug(finalUserText) ??
       (selectedBotSlug?.trim() || null);
 
-    const [, activeTeammate] = await Promise.all([
+    const explicitRemember =
+      session.user.type !== "guest" &&
+      isMemoryToolsEnabled() &&
+      !containsRestrictedWorkData(finalUserText)
+        ? extractExplicitRememberFact(finalUserText)
+        : null;
+
+    const [, activeTeammate, explicitSavedFact] = await Promise.all([
       message?.role === "user" && !retryAlreadyPersisted
         ? saveMessages({
             messages: [
@@ -362,7 +375,25 @@ export async function POST(request: Request) {
             .getBotBySlug(session.user.id, requestedBotSlug)
             .catch(() => null)
         : Promise.resolve(null),
+      explicitRemember
+        ? createPostgresMemoryStore()
+            .upsertProfileFact({
+              userId: session.user.id,
+              category: explicitRemember.category,
+              key: explicitRemember.key,
+              value: explicitRemember.value,
+              sharedAcrossBots: true,
+            })
+            .catch((): ProfileFact | null => null)
+        : Promise.resolve(null),
     ]);
+
+    const mergedFacts = explicitSavedFact
+      ? [
+          explicitSavedFact,
+          ...storedFacts.filter((f) => f.key !== explicitSavedFact.key),
+        ]
+      : storedFacts;
 
     const effectiveSoul = composeTeammateSoul(soul, activeTeammate);
     const requestedSkillSlug =
@@ -381,16 +412,21 @@ export async function POST(request: Request) {
       timeZone: requestTimeZone ?? homeLocation?.timeZone ?? null,
       home: homeLocation,
     });
-    const scopedFacts = filterFactsForBot(
-      storedFacts,
+    const safeBotFacts = filterFactsForBot(
+      mergedFacts,
       activeTeammate?.slug ?? "chief-of-staff"
-    ).slice(0, 15);
+    ).filter((f) => !containsRestrictedWorkData(`${f.key} ${f.value}`));
+    const scopedFacts = selectRelevantFactsForPrompt(
+      safeBotFacts,
+      finalUserText,
+      80,
+      6000
+    );
     const memoryContextBlock =
       scopedFacts.length > 0
-        ? `Owner profile facts (durable memory):\n${scopedFacts
-            .map((f) => `- [${f.category}] ${f.key}: ${f.value}`)
-            .join("\n")
-            .slice(0, 1200)}`
+        ? `Owner profile facts (durable memory — apply naturally in every session):\n${scopedFacts
+            .map((f) => `- [${f.category}] ${f.value}`)
+            .join("\n")}`
         : "";
     const ownerDisplayName =
       session.user.type !== "guest"
@@ -476,6 +512,30 @@ export async function POST(request: Request) {
             type: "data-turn-status",
             data: { phase: initialPhase, model: chatModel },
           });
+          if (explicitSavedFact) {
+            const memCallId = `mem-${explicitSavedFact.id.slice(0, 12)}`;
+            dataStream.write({
+              type: "tool-input-available",
+              toolCallId: memCallId,
+              toolName: "saveProfileFact",
+              input: {
+                category: explicitSavedFact.category,
+                key: explicitSavedFact.key,
+                value: explicitSavedFact.value,
+                sharedAcrossBots: true,
+              },
+              providerExecuted: true,
+            });
+            dataStream.write({
+              type: "tool-output-available",
+              toolCallId: memCallId,
+              output: {
+                saved: true,
+                fact: explicitSavedFact,
+              },
+              providerExecuted: true,
+            });
+          }
           const attachmentPrep = await prepareMessagesWithAttachments({
             messages: sanitizeToolCallIds(dropWebSearchHistory(uiMessages)),
             userId: session.user.id,
@@ -602,8 +662,12 @@ export async function POST(request: Request) {
 
           // Only reviewed local tools are available. External integrations stay disconnected.
           const tools = localTools;
+          // If explicit "remember this: ..." was already saved deterministically above,
+          // remove saveProfileFact from activeTools on this turn so we don't render two cards.
           const activeTools = requestedTools.filter(
-            (name) => name in tools
+            (name) =>
+              name in tools &&
+              !(explicitSavedFact && name === "saveProfileFact")
           ) as Array<keyof typeof tools>;
           const toolSchemaTokens = await estimateToolSchemaTokens(
             tools,

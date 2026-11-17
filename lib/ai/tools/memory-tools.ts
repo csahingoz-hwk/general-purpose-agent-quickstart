@@ -1,5 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
+import { deriveFactKey } from "@/lib/memory/bulk-import";
 import type { MemoryStore } from "@/lib/memory/store";
 
 export function createMemoryTools({
@@ -31,7 +32,7 @@ export function createMemoryTools({
       const saved = await store.upsertProfileFact({
         userId,
         category,
-        key,
+        key: key.trim().length >= 2 ? key : deriveFactKey(value),
         value,
         sharedAcrossBots,
       });
