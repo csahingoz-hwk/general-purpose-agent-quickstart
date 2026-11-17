@@ -1,14 +1,38 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { GOOGLE_WORKSPACE_CONNECT_SCOPE } from "@/lib/connectors/google-vault-auth";
 import { isGoogleSignInConfigured } from "@/lib/google-owner";
-import { signIn } from "./auth";
+import { auth, signIn } from "./auth";
 
 export async function loginWithGoogle() {
   if (!isGoogleSignInConfigured()) {
     redirect("/login?error=Configuration");
   }
   await signIn("google", { redirectTo: "/" });
+}
+
+export async function connectGoogleWorkspace(formData?: FormData) {
+  const session = await auth();
+  if (!session?.user || !isGoogleSignInConfigured()) {
+    redirect("/usage");
+  }
+  const rawReturn =
+    formData?.get("returnTo")?.toString() ?? "/usage?connected=google";
+  const safeReturn =
+    rawReturn.startsWith("/") && !rawReturn.startsWith("//")
+      ? rawReturn
+      : "/usage?connected=google";
+  await signIn(
+    "google",
+    { redirectTo: safeReturn },
+    {
+      scope: GOOGLE_WORKSPACE_CONNECT_SCOPE,
+      access_type: "offline",
+      prompt: "consent",
+      include_granted_scopes: "true",
+    }
+  );
 }
 
 export type RegisterActionState = {

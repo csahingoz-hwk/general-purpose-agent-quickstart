@@ -1,7 +1,9 @@
 "use client";
 
 import {
+  CheckCircle2Icon,
   ClockIcon,
+  ExternalLinkIcon,
   KeyRoundIcon,
   LayersIcon,
   PauseIcon,
@@ -13,6 +15,7 @@ import {
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
+import { connectGoogleWorkspace } from "@/app/(auth)/actions";
 import { SubpageHeader } from "@/components/chat/subpage-header";
 import { toast } from "@/components/chat/toast";
 import { cn, fetcher } from "@/lib/utils";
@@ -163,6 +166,15 @@ function RoutinesPageContent() {
     `${basePath}/api/vault`,
     fetcher
   );
+  const { data: connectorsData, mutate: mutateConnectors } = useSWR<{
+    gmailReady?: boolean;
+    githubReady?: boolean;
+    googleSignInReady?: boolean;
+  }>(`${basePath}/api/connectors`, fetcher, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  });
+  const [githubTokenInput, setGithubTokenInput] = useState("");
 
   async function handleCreateRoutine(event: React.FormEvent) {
     event.preventDefault();
@@ -335,11 +347,11 @@ function RoutinesPageContent() {
 
         <div>
           <h1 className="font-semibold text-2xl tracking-tight">
-            Routines &amp; tasks
+            Routines &amp; connections
           </h1>
           <p className="mt-1 text-muted-foreground text-sm">
-            Create recurring briefings, review background task approvals, and
-            manage encrypted connector credentials.
+            Create recurring briefings, inspect background tasks, and connect
+            your accounts in one tap.
           </p>
         </div>
 
@@ -381,7 +393,7 @@ function RoutinesPageContent() {
             type="button"
           >
             <KeyRoundIcon className="size-4" />
-            Credentials ({vaultData?.secrets.length ?? 0})
+            Connections ({vaultData?.secrets.length ?? 0})
           </button>
         </div>
 
@@ -659,107 +671,267 @@ function RoutinesPageContent() {
 
         {tab === "vault" && (
           <div className="space-y-4">
-            {vaultData?.status !== "ready" && vaultData !== undefined && (
-              <div className="rounded-2xl border border-[color:var(--hairline)] bg-card p-4 text-sm">
-                <p className="font-medium text-foreground">
-                  Credential vault is read-only on this preview server
-                </p>
-                <p className="mt-1 text-muted-foreground text-xs">
-                  To store live connector keys, configure the vault encryption
-                  key and optional parity tables in an isolated environment.
-                </p>
-              </div>
-            )}
+            <div className="rounded-2xl border border-[color:var(--hairline)] bg-card p-4 text-sm">
+              <p className="font-medium text-foreground">
+                Included automatically — no API keys needed
+              </p>
+              <p className="mt-1 text-muted-foreground text-xs">
+                Everyday &amp; Detailed Chat, Web Search, Voice Dictation, Live
+                Speech, and Image Studio all work out of the box with your
+                sign-in.
+              </p>
+            </div>
 
-            <form
-              className="space-y-4 rounded-2xl border border-[color:var(--hairline)] bg-card p-4"
-              onSubmit={handleSaveSecret}
-            >
-              <div>
-                <h2 className="font-semibold text-[15px]">
-                  Save encrypted credential
-                </h2>
-                <p className="mt-0.5 text-muted-foreground text-xs">
-                  Encrypted on the server with AES-256-GCM. Values are never
-                  shown again or included in chat prompts.
-                </p>
+            <div className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3 p-4">
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <p className="font-semibold text-[15px] text-foreground">
+                    Google Gmail, Calendar &amp; Drive
+                  </p>
+                  <p className="text-muted-foreground text-xs">
+                    One-tap Google sign-in · read &amp; unsent drafts only,
+                    never sends without your approval.
+                  </p>
+                </div>
+                {connectorsData?.gmailReady ? (
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300">
+                      <CheckCircle2Icon className="size-3.5" />
+                      Connected
+                    </span>
+                    <button
+                      className="min-h-10 rounded-full border border-[color:var(--hairline)] px-3 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
+                      onClick={async () => {
+                        await fetch(
+                          `${basePath}/api/connectors?provider=google`,
+                          { method: "DELETE" }
+                        );
+                        await Promise.all([mutateVault(), mutateConnectors()]);
+                      }}
+                      type="button"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                ) : (
+                  <form action={connectGoogleWorkspace}>
+                    <input
+                      name="returnTo"
+                      type="hidden"
+                      value="/routines?tab=vault"
+                    />
+                    <button
+                      className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs transition-colors hover:bg-primary/90 disabled:opacity-50"
+                      disabled={connectorsData?.googleSignInReady === false}
+                      type="submit"
+                    >
+                      Connect Google
+                    </button>
+                  </form>
+                )}
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="space-y-1.5 text-sm">
-                  <span className="text-muted-foreground text-xs">Service</span>
-                  <select
-                    className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
-                    onChange={(e) => {
-                      const nextProvider = e.target.value;
-                      setSecretProvider(nextProvider);
-                      const preset = SERVICE_SECRET_PRESETS[nextProvider];
-                      if (preset) {
-                        setSecretName(preset.defaultName);
+              <div className="space-y-3 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1 space-y-0.5">
+                    <p className="font-semibold text-[15px] text-foreground">
+                      GitHub Pull Requests{" "}
+                      <span className="font-normal text-muted-foreground text-xs">
+                        (optional)
+                      </span>
+                    </p>
+                    <p className="text-muted-foreground text-xs">
+                      Read PRs &amp; issues and prepare unpublished draft
+                      reviews.
+                    </p>
+                  </div>
+                  {connectorsData?.githubReady && (
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300">
+                        <CheckCircle2Icon className="size-3.5" />
+                        Connected
+                      </span>
+                      <button
+                        className="min-h-10 rounded-full border border-[color:var(--hairline)] px-3 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
+                        onClick={async () => {
+                          await fetch(
+                            `${basePath}/api/connectors?provider=github`,
+                            { method: "DELETE" }
+                          );
+                          await Promise.all([
+                            mutateVault(),
+                            mutateConnectors(),
+                          ]);
+                        }}
+                        type="button"
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {!connectorsData?.githubReady && (
+                  <form
+                    className="space-y-2.5 rounded-xl bg-muted/50 p-3"
+                    onSubmit={async (event) => {
+                      event.preventDefault();
+                      if (!githubTokenInput.trim()) {
+                        return;
+                      }
+                      setBusy(true);
+                      try {
+                        const res = await fetch(`${basePath}/api/vault`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            name: "GITHUB_CONNECTOR_PAT",
+                            provider: "github",
+                            plaintext: githubTokenInput.trim(),
+                          }),
+                        });
+                        if (!res.ok) {
+                          throw new Error("Could not connect GitHub");
+                        }
+                        setGithubTokenInput("");
+                        await Promise.all([mutateVault(), mutateConnectors()]);
+                        toast({
+                          type: "success",
+                          description: "GitHub connected.",
+                        });
+                      } catch (err) {
+                        toast({
+                          type: "error",
+                          description:
+                            err instanceof Error
+                              ? err.message
+                              : "Could not connect GitHub",
+                        });
+                      } finally {
+                        setBusy(false);
                       }
                     }}
-                    value={secretProvider}
                   >
-                    <option value="gemini">Google Gemini</option>
-                    <option value="google">Google Workspace</option>
-                    <option value="github">GitHub</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="custom">Custom</option>
-                  </select>
-                </label>
+                    <a
+                      className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-card px-3.5 font-medium text-foreground text-xs hover:bg-muted"
+                      href="https://github.com/settings/tokens/new?description=Personal+Assistant+(Read+%26+Draft)&scopes=repo"
+                      rel="noopener noreferrer"
+                      target="_blank"
+                    >
+                      1. Open GitHub (permissions pre-selected)
+                      <ExternalLinkIcon className="size-3.5" />
+                    </a>
+                    <div className="flex gap-2">
+                      <input
+                        autoComplete="off"
+                        className="min-h-11 flex-1 rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                        onChange={(e) => setGithubTokenInput(e.target.value)}
+                        placeholder="2. Paste token generated on GitHub"
+                        required
+                        type="password"
+                        value={githubTokenInput}
+                      />
+                      <button
+                        className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs disabled:opacity-50"
+                        disabled={busy || vaultData?.status !== "ready"}
+                        type="submit"
+                      >
+                        Connect
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+            </div>
 
-                <label className="space-y-1.5 text-sm">
+            <details className="rounded-2xl border border-[color:var(--hairline)] bg-card">
+              <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between px-4 py-3 font-medium text-muted-foreground text-xs hover:text-foreground">
+                <span>Advanced: custom API key override (optional)</span>
+                <span>Show</span>
+              </summary>
+
+              <form
+                className="space-y-4 border-[color:var(--hairline)] border-t p-4"
+                onSubmit={handleSaveSecret}
+              >
+                <div>
+                  <h2 className="font-semibold text-[15px]">
+                    Save encrypted credential
+                  </h2>
+                  <p className="mt-0.5 text-muted-foreground text-xs">
+                    Optional personal API key override. Encrypted on the server
+                    with AES-256-GCM.
+                  </p>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="space-y-1.5 text-sm">
+                    <span className="text-muted-foreground text-xs">
+                      Service
+                    </span>
+                    <select
+                      className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                      onChange={(e) => {
+                        const nextProvider = e.target.value;
+                        setSecretProvider(nextProvider);
+                        const preset = SERVICE_SECRET_PRESETS[nextProvider];
+                        if (preset) {
+                          setSecretName(preset.defaultName);
+                        }
+                      }}
+                      value={secretProvider}
+                    >
+                      <option value="gemini">Google Gemini</option>
+                      <option value="google">Google Workspace</option>
+                      <option value="github">GitHub</option>
+                      <option value="openai">OpenAI</option>
+                      <option value="custom">Custom</option>
+                    </select>
+                  </label>
+
+                  <label className="space-y-1.5 text-sm">
+                    <span className="text-muted-foreground text-xs">
+                      Credential name
+                    </span>
+                    <input
+                      className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 font-mono text-[15px] text-foreground"
+                      onChange={(e) => setSecretName(e.target.value)}
+                      placeholder="e.g. GEMINI_API_KEY"
+                      required
+                      value={secretName}
+                    />
+                  </label>
+                </div>
+
+                <label className="block space-y-1.5 text-sm">
                   <span className="text-muted-foreground text-xs">
-                    Credential name
+                    API key or token
                   </span>
                   <input
-                    className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 font-mono text-[15px] text-foreground"
-                    onChange={(e) => setSecretName(e.target.value)}
-                    placeholder="e.g. GEMINI_API_KEY"
+                    autoComplete="off"
+                    className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                    onChange={(e) => setSecretPlaintext(e.target.value)}
+                    placeholder="Paste key or token"
                     required
-                    value={secretName}
+                    type="password"
+                    value={secretPlaintext}
                   />
                 </label>
-              </div>
 
-              {SERVICE_SECRET_PRESETS[secretProvider]?.hint && (
-                <p className="text-muted-foreground text-xs">
-                  {SERVICE_SECRET_PRESETS[secretProvider]?.hint}
-                </p>
-              )}
+                <div className="flex justify-end">
+                  <button
+                    className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-5 font-medium text-primary-foreground text-sm disabled:opacity-50"
+                    disabled={busy || vaultData?.status !== "ready"}
+                    type="submit"
+                  >
+                    <PlusIcon className="size-4" />
+                    Encrypt &amp; save
+                  </button>
+                </div>
+              </form>
+            </details>
 
-              <label className="block space-y-1.5 text-sm">
-                <span className="text-muted-foreground text-xs">
-                  API key or token
-                </span>
-                <input
-                  autoComplete="off"
-                  className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
-                  onChange={(e) => setSecretPlaintext(e.target.value)}
-                  placeholder="Paste key or token"
-                  required
-                  type="password"
-                  value={secretPlaintext}
-                />
-              </label>
-
-              <div className="flex justify-end">
-                <button
-                  className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-5 font-medium text-primary-foreground text-sm disabled:opacity-50"
-                  disabled={busy || vaultData?.status !== "ready"}
-                  type="submit"
-                >
-                  <PlusIcon className="size-4" />
-                  Encrypt &amp; save
-                </button>
-              </div>
-            </form>
-
-            {(vaultData?.secrets ?? []).length === 0 ? (
-              <p className="rounded-2xl border border-[color:var(--hairline)] bg-card p-6 text-center text-muted-foreground text-sm">
-                No credentials saved yet.
-              </p>
-            ) : (
+            {(vaultData?.secrets ?? []).length > 0 && (
               <div className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card">
                 {vaultData?.secrets.map((secret) => (
                   <article

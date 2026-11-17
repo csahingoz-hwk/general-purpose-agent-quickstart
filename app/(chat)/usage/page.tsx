@@ -1,13 +1,21 @@
 "use client";
 
-import { KeyRoundIcon, MonitorIcon, MoonIcon, SunIcon } from "lucide-react";
-import Link from "next/link";
+import {
+  CheckCircle2Icon,
+  ExternalLinkIcon,
+  MonitorIcon,
+  MoonIcon,
+  SunIcon,
+} from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import useSWR from "swr";
+import { connectGoogleWorkspace } from "@/app/(auth)/actions";
 import { HomeLocationPanel } from "@/components/chat/home-location";
 import { MascotPicker } from "@/components/chat/mascot-preference";
 import { SubpageHeader } from "@/components/chat/subpage-header";
+import { toast } from "@/components/chat/toast";
 import { cn, fetcher } from "@/lib/utils";
 
 type UsageCall = {
@@ -41,7 +49,9 @@ type ConnectorStatusResponse = {
   driveReady?: boolean;
   calendarReady?: boolean;
   geminiReady?: boolean;
+  mediaReady?: boolean;
   githubReady?: boolean;
+  googleSignInReady?: boolean;
   vaultConfigured?: boolean;
 };
 
@@ -51,9 +61,30 @@ type VoiceReadinessResponse = {
 };
 
 export default function UsagePage() {
+  return (
+    <Suspense fallback={<div className="h-dvh w-full bg-background" />}>
+      <UsagePageContent />
+    </Suspense>
+  );
+}
+
+function UsagePageContent() {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+  const searchParams = useSearchParams();
   const { theme, setTheme } = useTheme();
   const [hasSpeechApi, setHasSpeechApi] = useState(false);
+  const [githubSetupOpen, setGithubSetupOpen] = useState(false);
+  const [githubTokenInput, setGithubTokenInput] = useState("");
+  const [busyProvider, setBusyProvider] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (searchParams.get("connected") === "google") {
+      toast({
+        type: "success",
+        description: "Google Gmail, Calendar & Drive connected.",
+      });
+    }
+  }, [searchParams]);
 
   useEffect(() => {
     const win = window as unknown as {
@@ -69,16 +100,72 @@ export default function UsagePage() {
     `${basePath}/api/usage`,
     fetcher
   );
-  const { data: connectors } = useSWR<ConnectorStatusResponse>(
-    `${basePath}/api/connectors`,
-    fetcher,
-    { revalidateOnFocus: false, shouldRetryOnError: false }
-  );
+  const { data: connectors, mutate: mutateConnectors } =
+    useSWR<ConnectorStatusResponse>(`${basePath}/api/connectors`, fetcher, {
+      revalidateOnFocus: false,
+      shouldRetryOnError: false,
+    });
   const { data: voice } = useSWR<VoiceReadinessResponse>(
     `${basePath}/api/voice/transcribe`,
     fetcher,
     { revalidateOnFocus: false, shouldRetryOnError: false }
   );
+
+  async function handleDisconnect(provider: "google" | "github") {
+    setBusyProvider(provider);
+    try {
+      const res = await fetch(
+        `${basePath}/api/connectors?provider=${provider}`,
+        { method: "DELETE" }
+      );
+      if (res.ok) {
+        await mutateConnectors();
+        toast({
+          type: "success",
+          description:
+            provider === "google"
+              ? "Disconnected Google Workspace."
+              : "Disconnected GitHub.",
+        });
+      }
+    } finally {
+      setBusyProvider(null);
+    }
+  }
+
+  async function handleSaveGithubToken(event: React.FormEvent) {
+    event.preventDefault();
+    if (!githubTokenInput.trim()) {
+      return;
+    }
+    setBusyProvider("github");
+    try {
+      const res = await fetch(`${basePath}/api/vault`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: "GITHUB_CONNECTOR_PAT",
+          provider: "github",
+          plaintext: githubTokenInput.trim(),
+        }),
+      });
+      if (!res.ok) {
+        throw new Error("Could not save GitHub connection");
+      }
+      setGithubTokenInput("");
+      setGithubSetupOpen(false);
+      await mutateConnectors();
+      toast({ type: "success", description: "GitHub connected." });
+    } catch (err) {
+      toast({
+        type: "error",
+        description:
+          err instanceof Error ? err.message : "Could not connect GitHub",
+      });
+    } finally {
+      setBusyProvider(null);
+    }
+  }
 
   const usd = (value: number) => `$${value.toFixed(4)}`;
   const pct = data
@@ -149,126 +236,176 @@ export default function UsagePage() {
         </section>
 
         <section className="space-y-3">
-          <div className="flex flex-wrap items-end justify-between gap-2">
-            <div>
-              <h2 className="font-semibold text-xl tracking-tight">
-                Capabilities
-              </h2>
-              <p className="mt-1 text-muted-foreground text-sm">
-                Live connection status for voice, media, workspace drafts, and
-                credentials.
-              </p>
-            </div>
-            <Link
-              className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-card px-3.5 font-medium text-foreground text-xs transition-colors hover:bg-muted"
-              href="/routines?tab=vault"
-            >
-              <KeyRoundIcon className="size-3.5" />
-              Manage credentials
-            </Link>
+          <div>
+            <h2 className="font-semibold text-xl tracking-tight">
+              Capabilities &amp; connections
+            </h2>
+            <p className="mt-1 text-muted-foreground text-sm">
+              Chat, search, voice, and images work automatically. Connect
+              accounts in one tap when you want draft assistance.
+            </p>
           </div>
 
           <ul className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card text-sm">
             <li className="flex items-center justify-between gap-3 px-4 py-3.5">
               <div>
-                <p className="font-medium text-foreground">Voice dictation</p>
+                <p className="font-medium text-foreground">
+                  Voice dictation &amp; Live speech
+                </p>
                 <p className="text-muted-foreground text-xs">
-                  Dictate into the message box before sending
+                  Included automatically — speak hands-free or dictate into chat
                 </p>
               </div>
-              <span className="shrink-0 rounded-full bg-muted px-2.5 py-1 font-medium text-foreground text-xs">
-                {voice?.serverSttReady
-                  ? "Server STT active"
-                  : hasSpeechApi
-                    ? "Browser dictation ready"
-                    : "Unavailable in browser"}
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300">
+                <CheckCircle2Icon className="size-3.5" />
+                {voice?.liveReady || voice?.serverSttReady || hasSpeechApi
+                  ? "Active"
+                  : "Ready"}
               </span>
             </li>
+
             <li className="flex items-center justify-between gap-3 px-4 py-3.5">
               <div>
-                <p className="font-medium text-foreground">
-                  Google Gemini (Live Voice &amp; Media Studio)
-                </p>
+                <p className="font-medium text-foreground">Image Studio</p>
                 <p className="text-muted-foreground text-xs">
-                  Two-way Live Voice and Imagen / Veo generation (personal use)
+                  Included automatically — ask in chat to generate images
                 </p>
               </div>
               <span
                 className={cn(
-                  "shrink-0 rounded-full px-2.5 py-1 font-medium text-xs",
-                  connectors?.geminiReady || voice?.liveReady
+                  "inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 font-medium text-xs",
+                  connectors?.mediaReady || connectors?.geminiReady
                     ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
                     : "bg-muted text-muted-foreground"
                 )}
               >
-                {connectors?.geminiReady || voice?.liveReady
-                  ? "Connected"
-                  : "Add GEMINI_API_KEY"}
+                {connectors?.mediaReady || connectors?.geminiReady ? (
+                  <>
+                    <CheckCircle2Icon className="size-3.5" />
+                    Active
+                  </>
+                ) : (
+                  "Standby"
+                )}
               </span>
             </li>
-            <li className="flex items-center justify-between gap-3 px-4 py-3.5">
-              <div>
+
+            <li className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
+              <div className="min-w-0 flex-1">
                 <p className="font-medium text-foreground">
-                  Gmail, Drive &amp; Calendar
+                  Gmail, Calendar &amp; Drive
                 </p>
                 <p className="text-muted-foreground text-xs">
-                  Read &amp; unsent drafts only — never sends automatically
+                  Read &amp; unsent drafts only — never sends emails or invites
+                  without you
                 </p>
               </div>
-              <span
-                className={cn(
-                  "shrink-0 rounded-full px-2.5 py-1 font-medium text-xs",
-                  connectors?.gmailReady
-                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                    : "bg-muted text-muted-foreground"
-                )}
-              >
-                {connectors?.gmailReady
-                  ? "Connected (draft-only)"
-                  : "Not connected"}
-              </span>
+              {connectors?.gmailReady ? (
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300">
+                    <CheckCircle2Icon className="size-3.5" />
+                    Connected
+                  </span>
+                  <button
+                    className="min-h-10 rounded-full border border-[color:var(--hairline)] px-3 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
+                    disabled={busyProvider === "google"}
+                    onClick={() => handleDisconnect("google")}
+                    type="button"
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <form action={connectGoogleWorkspace}>
+                  <input
+                    name="returnTo"
+                    type="hidden"
+                    value="/usage?connected=google"
+                  />
+                  <button
+                    className="inline-flex min-h-10 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs transition-colors hover:bg-primary/90 disabled:opacity-50"
+                    disabled={connectors?.googleSignInReady === false}
+                    type="submit"
+                  >
+                    Connect Google
+                  </button>
+                </form>
+              )}
             </li>
-            <li className="flex items-center justify-between gap-3 px-4 py-3.5">
-              <div>
-                <p className="font-medium text-foreground">
-                  GitHub Pull Requests
-                </p>
-                <p className="text-muted-foreground text-xs">
-                  Read PRs &amp; issues and create pending draft reviews
-                </p>
-              </div>
-              <span
-                className={cn(
-                  "shrink-0 rounded-full px-2.5 py-1 font-medium text-xs",
-                  connectors?.githubReady
-                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                    : "bg-muted text-muted-foreground"
+
+            <li className="space-y-3 px-4 py-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-foreground">
+                    GitHub Pull Requests{" "}
+                    <span className="font-normal text-muted-foreground text-xs">
+                      (optional)
+                    </span>
+                  </p>
+                  <p className="text-muted-foreground text-xs">
+                    Read pull requests &amp; prepare unpublished draft reviews
+                  </p>
+                </div>
+                {connectors?.githubReady ? (
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300">
+                      <CheckCircle2Icon className="size-3.5" />
+                      Connected
+                    </span>
+                    <button
+                      className="min-h-10 rounded-full border border-[color:var(--hairline)] px-3 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
+                      disabled={busyProvider === "github"}
+                      onClick={() => handleDisconnect("github")}
+                      type="button"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className="inline-flex min-h-10 shrink-0 items-center rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-foreground text-xs transition-colors hover:bg-muted"
+                    onClick={() => setGithubSetupOpen((prev) => !prev)}
+                    type="button"
+                  >
+                    {githubSetupOpen ? "Cancel" : "Connect GitHub"}
+                  </button>
                 )}
-              >
-                {connectors?.githubReady
-                  ? "Connected (draft-only)"
-                  : "Not connected"}
-              </span>
-            </li>
-            <li className="flex items-center justify-between gap-3 px-4 py-3.5">
-              <div>
-                <p className="font-medium text-foreground">
-                  Encrypted secret vault
-                </p>
-                <p className="text-muted-foreground text-xs">
-                  AES-256-GCM server credential store
-                </p>
               </div>
-              <span
-                className={cn(
-                  "shrink-0 rounded-full px-2.5 py-1 font-medium text-xs",
-                  connectors?.vaultConfigured
-                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                    : "bg-muted text-muted-foreground"
-                )}
-              >
-                {connectors?.vaultConfigured ? "Ready" : "Preview mode"}
-              </span>
+
+              {githubSetupOpen && !connectors?.githubReady && (
+                <form
+                  className="space-y-2.5 rounded-xl bg-muted/50 p-3"
+                  onSubmit={handleSaveGithubToken}
+                >
+                  <a
+                    className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-card px-3.5 font-medium text-foreground text-xs hover:bg-muted"
+                    href="https://github.com/settings/tokens/new?description=Personal+Assistant+(Read+%26+Draft)&scopes=repo"
+                    rel="noopener noreferrer"
+                    target="_blank"
+                  >
+                    1. Open GitHub (permissions pre-selected)
+                    <ExternalLinkIcon className="size-3.5" />
+                  </a>
+                  <div className="flex gap-2">
+                    <input
+                      autoComplete="off"
+                      className="min-h-11 flex-1 rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[16px] text-foreground"
+                      onChange={(e) => setGithubTokenInput(e.target.value)}
+                      placeholder="2. Paste token generated on GitHub"
+                      required
+                      type="password"
+                      value={githubTokenInput}
+                    />
+                    <button
+                      className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs disabled:opacity-50"
+                      disabled={busyProvider === "github"}
+                      type="submit"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </form>
+              )}
             </li>
           </ul>
         </section>

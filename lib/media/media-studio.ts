@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { LUNA } from "@/lib/ai/routing/catalog";
+import { createGateway, generateImage } from "ai";
+import { gatewayEnabled, LUNA } from "@/lib/ai/routing/catalog";
 import { createUsageLedger, type UsageLedger } from "@/lib/ai/routing/ledger";
 import { ModelFailure } from "@/lib/ai/routing/policy";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
@@ -131,11 +132,11 @@ export async function generateImageWithImagen(opts: {
   const model = resolveImagenModelName();
   const vault = opts.vaultStore ?? createPostgresVaultStore();
   const geminiKey = await readGeminiKeyFromVault(opts.userId, vault);
-  if (!geminiKey) {
+  const useGateway = !geminiKey && gatewayEnabled();
+  if (!geminiKey && !useGateway) {
     return {
       status: "setup_required",
-      message:
-        "Media Studio requires GEMINI_API_KEY in /routines -> Secret Vault before generating images.",
+      message: "Image generation isn't active on this server yet.",
     };
   }
 
@@ -161,6 +162,56 @@ export async function generateImageWithImagen(opts: {
     throw error;
   }
 
+  if (useGateway) {
+    try {
+      const gateway = createGateway();
+      const generated = await generateImage({
+        model: gateway.imageModel(`google/${model}`),
+        prompt: trimmedPrompt,
+        aspectRatio: opts.aspectRatio ?? "1:1",
+      });
+      const base64Png = generated.image.base64;
+      const bytes = generated.image.uint8Array;
+      const fileStore = opts.fileStore ?? getDefaultPrivateFileStore();
+      const safeName = "generated-image.png";
+      const saved = await fileStore.save({
+        userId: opts.userId,
+        safeName,
+        contentType: "image/png",
+        bytes,
+      });
+      const signedToken = createSignedFileToken({
+        uid: opts.userId,
+        fid: saved.fileId,
+        name: safeName,
+        ct: "image/png",
+        size: bytes.byteLength,
+        ref: saved.storageRef,
+        secret: opts.signingSecret,
+      });
+      await ledger.settle(reservationId, LUNA, "media_imagen_ok");
+      return {
+        status: "ok",
+        kind: "image",
+        model,
+        prompt: trimmedPrompt,
+        base64Png,
+        fileId: saved.fileId,
+        fileUrl: `/api/files/${encodeURIComponent(signedToken)}`,
+        reservedUsd: IMAGE_RESERVE_USD,
+        reservationId,
+      };
+    } catch {
+      await ledger
+        .settle(reservationId, LUNA, "media_imagen_exception", undefined, 0)
+        .catch(() => null);
+      return {
+        status: "error",
+        message: "Image generation could not complete right now.",
+      };
+    }
+  }
+
   const fetchFn = opts.fetchImpl ?? fetch;
   try {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
@@ -170,7 +221,7 @@ export async function generateImageWithImagen(opts: {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-goog-api-key": geminiKey,
+        "x-goog-api-key": geminiKey ?? "",
       },
       body: JSON.stringify({
         instances: [{ prompt: trimmedPrompt }],
@@ -343,7 +394,7 @@ export async function generateVideoWithVeo(opts: {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-goog-api-key": geminiKey,
+        "x-goog-api-key": geminiKey ?? "",
       },
       body: JSON.stringify({
         instances: [{ prompt: trimmedPrompt }],

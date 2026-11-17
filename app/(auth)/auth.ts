@@ -2,12 +2,17 @@ import NextAuth, { type DefaultSession } from "next-auth";
 import type { DefaultJWT } from "next-auth/jwt";
 import Google from "next-auth/providers/google";
 import { isOwnerIdentity } from "@/lib/access-policy";
+import { GOOGLE_VAULT_SECRET_NAMES } from "@/lib/connectors/google-vault-auth";
 import { getOrCreateGoogleOwner } from "@/lib/db/queries";
 import {
   GOOGLE_IDENTITY_SCOPE,
   isGoogleSignInConfigured,
   resolveGoogleOwner,
 } from "@/lib/google-owner";
+import {
+  createPostgresVaultStore,
+  isVaultConfigured,
+} from "@/lib/vault/secret-vault";
 import { authConfig } from "./auth.config";
 
 export type UserType = "guest" | "regular";
@@ -65,6 +70,48 @@ export const {
       }
       // Keep database identity stable so existing conversations stay attached.
       Object.assign(user, owner);
+
+      const grantedScope = account.scope ?? "";
+      const hasWorkspaceScope =
+        grantedScope.includes("gmail.") ||
+        grantedScope.includes("drive.") ||
+        grantedScope.includes("calendar.");
+      if (hasWorkspaceScope && isVaultConfigured()) {
+        try {
+          const vault = createPostgresVaultStore();
+          if (account.refresh_token?.trim()) {
+            await vault.upsertSecret({
+              userId: owner.id,
+              name: GOOGLE_VAULT_SECRET_NAMES.refreshToken,
+              provider: "google",
+              plaintext: account.refresh_token.trim(),
+            });
+            await vault
+              .deleteSecret({
+                userId: owner.id,
+                name: GOOGLE_VAULT_SECRET_NAMES.accessToken,
+              })
+              .catch(() => false);
+          } else if (account.access_token?.trim()) {
+            const existingRefresh = await vault
+              .resolveSecret({
+                userId: owner.id,
+                name: GOOGLE_VAULT_SECRET_NAMES.refreshToken,
+              })
+              .catch(() => null);
+            if (!existingRefresh?.trim()) {
+              await vault.upsertSecret({
+                userId: owner.id,
+                name: GOOGLE_VAULT_SECRET_NAMES.accessToken,
+                provider: "google",
+                plaintext: account.access_token.trim(),
+              });
+            }
+          }
+        } catch {
+          /* non-fatal if database vault isn't reachable during callback */
+        }
+      }
       return true;
     },
     jwt({ token, user }) {

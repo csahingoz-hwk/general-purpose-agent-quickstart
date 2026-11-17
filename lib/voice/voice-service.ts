@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { gatewayEnabled, openAIEnabled } from "@/lib/ai/routing/catalog";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import {
   createPostgresVaultStore,
@@ -307,37 +308,50 @@ export async function createLiveVoiceSessionDescriptor(opts: {
 
   const model = resolveLiveVoiceModelName();
   const store = opts.vaultStore ?? createPostgresVaultStore();
+  const builtInVoiceReady = gatewayEnabled() || openAIEnabled();
 
   try {
-    const geminiKey = await store.resolveSecret({
-      userId: opts.userId,
-      name: VOICE_VAULT_SECRET_NAMES.geminiApiKey,
-    });
-    if (!geminiKey?.trim()) {
+    const geminiKey = await store
+      .resolveSecret({
+        userId: opts.userId,
+        name: VOICE_VAULT_SECRET_NAMES.geminiApiKey,
+      })
+      .catch(() => null);
+    if (!geminiKey?.trim() && !builtInVoiceReady) {
       return {
         status: "setup_required",
         message:
-          "Save GEMINI_API_KEY in Secret Vault to enable Gemini Live API sessions.",
+          "Live speech is ready once your assistant model lane is active.",
       };
     }
 
-    // Never return raw GEMINI_API_KEY to the browser; mint a short-lived server session descriptor.
     return {
       status: "ready",
       sessionId: randomUUID(),
       model,
-      billingNotice:
-        "Paid per-use Gemini Live API via Google Cloud Billing (drawn from US$40/mo GCP credit).",
+      billingNotice: geminiKey?.trim()
+        ? "Paid per-use Gemini Live API via Google Cloud Billing."
+        : "Included with your workspace assistant lane.",
       dataBoundaryNotice:
         "Personal assistant use only — do not discuss Korn Ferry or employer confidential material.",
       estimatedTokensPerMinute: 1620,
       expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
     };
   } catch {
+    if (builtInVoiceReady) {
+      return {
+        status: "ready",
+        sessionId: randomUUID(),
+        model,
+        billingNotice: "Included with your workspace assistant lane.",
+        dataBoundaryNotice: "Personal assistant use only.",
+        estimatedTokensPerMinute: 1620,
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+      };
+    }
     return {
       status: "setup_required",
-      message:
-        "Secret Vault is not configured yet (check SECRET_VAULT_KEY and VaultSecret table).",
+      message: "Live speech is not available right now.",
     };
   }
 }

@@ -1141,11 +1141,14 @@ test("owner credentials vault, sticky subpage header, and teammate chat wiring w
       });
     });
 
-    // 1. Deep-link to /routines?tab=vault, verify sticky header + auto-filled GEMINI_API_KEY + Encrypt & save
+    // 1. Deep-link to /routines?tab=vault, verify consumer-friendly 1-tap Connections + sticky header + optional Advanced override
     await page.goto(`${origin}/routines?tab=vault`);
-    await page.getByText("Save encrypted credential").waitFor();
-    const nameInput = page.getByPlaceholder("e.g. GEMINI_API_KEY");
-    await expect(nameInput).toHaveValue("GEMINI_API_KEY");
+    await page
+      .getByText("Included automatically — no API keys needed")
+      .waitFor();
+    await expect(
+      page.getByRole("button", { name: "Connect Google" })
+    ).toBeVisible();
 
     // Scroll main container and verify SubpageHeader stays sticky at top = 0
     await page
@@ -1160,6 +1163,11 @@ test("owner credentials vault, sticky subpage header, and teammate chat wiring w
       .evaluate((el) => Math.round(el.getBoundingClientRect().top));
     assert.equal(headerTop, 0);
 
+    await page
+      .getByText("Advanced: custom API key override (optional)")
+      .click();
+    const nameInput = page.getByPlaceholder("e.g. GEMINI_API_KEY");
+    await expect(nameInput).toHaveValue("GEMINI_API_KEY");
     await page
       .getByPlaceholder("Paste key or token")
       .fill("AIzaSyTestKey123456789");

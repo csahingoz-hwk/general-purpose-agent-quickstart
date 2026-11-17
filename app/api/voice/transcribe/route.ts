@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createGateway, experimental_transcribe as transcribeAudio } from "ai";
 import { NextResponse } from "next/server";
 import { auth } from "@/app/(auth)/auth";
-import { gatewayEnabled, LUNA } from "@/lib/ai/routing/catalog";
+import { gatewayEnabled, LUNA, openAIEnabled } from "@/lib/ai/routing/catalog";
 import { createUsageLedger } from "@/lib/ai/routing/ledger";
 import { createPostgresVaultStore } from "@/lib/vault/secret-vault";
 import {
@@ -21,7 +21,7 @@ export async function GET() {
     );
   }
 
-  const gatewayReady = gatewayEnabled();
+  const gatewayReady = gatewayEnabled() || openAIEnabled();
 
   if (!isVoiceEnabled()) {
     return NextResponse.json({
@@ -50,12 +50,12 @@ export async function GET() {
     const hasOpenAi = Boolean(openAiKey?.trim());
     return NextResponse.json({
       serverSttReady: gatewayReady || hasGemini || hasOpenAi,
-      liveReady: hasGemini,
+      liveReady: gatewayReady || hasGemini || hasOpenAi,
     });
   } catch {
     return NextResponse.json({
       serverSttReady: gatewayReady,
-      liveReady: false,
+      liveReady: gatewayReady,
     });
   }
 }

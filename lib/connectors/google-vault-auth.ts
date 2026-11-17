@@ -11,6 +11,16 @@ export const GOOGLE_VAULT_SECRET_NAMES = {
   clientSecret: "GOOGLE_CONNECTOR_CLIENT_SECRET",
 } as const;
 
+export const GOOGLE_WORKSPACE_CONNECT_SCOPE = [
+  "openid",
+  "email",
+  "profile",
+  "https://www.googleapis.com/auth/gmail.readonly",
+  "https://www.googleapis.com/auth/gmail.compose",
+  "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/calendar.events",
+].join(" ");
+
 export type ResolvedGoogleAuth =
   | {
       ok: true;
@@ -51,7 +61,7 @@ export async function resolveGoogleAccessTokenFromVault(opts: {
       };
     }
 
-    const [refreshToken, clientId, clientSecret] = await Promise.all([
+    const [refreshToken, vaultClientId, vaultClientSecret] = await Promise.all([
       store.resolveSecret({
         userId: opts.userId,
         name: GOOGLE_VAULT_SECRET_NAMES.refreshToken,
@@ -66,20 +76,25 @@ export async function resolveGoogleAccessTokenFromVault(opts: {
       }),
     ]);
 
+    const clientId =
+      vaultClientId?.trim() || process.env.AUTH_GOOGLE_ID?.trim() || "";
+    const clientSecret =
+      vaultClientSecret?.trim() || process.env.AUTH_GOOGLE_SECRET?.trim() || "";
+
     if (!refreshToken || !clientId || !clientSecret) {
       return {
         ok: false,
         code: "connector_secret_missing",
         message:
-          "Google connector credentials are not stored in the Secret Vault yet. Save GOOGLE_CONNECTOR_ACCESS_TOKEN (or GOOGLE_CONNECTOR_REFRESH_TOKEN + GOOGLE_CONNECTOR_CLIENT_ID + GOOGLE_CONNECTOR_CLIENT_SECRET) in /routines -> Secret Vault.",
+          "Google Workspace isn't connected yet. Open Settings and tap Connect Google to allow Gmail, Calendar, and Drive read/draft access.",
       };
     }
 
     const body = new URLSearchParams({
       grant_type: "refresh_token",
       refresh_token: refreshToken.trim(),
-      client_id: clientId.trim(),
-      client_secret: clientSecret.trim(),
+      client_id: clientId,
+      client_secret: clientSecret,
     });
 
     const response = await fetchFn("https://oauth2.googleapis.com/token", {

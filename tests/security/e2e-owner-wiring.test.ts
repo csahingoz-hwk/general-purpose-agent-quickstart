@@ -4,7 +4,11 @@ import { selectActiveTools } from "../../lib/ai/context/select-tools";
 import { getCapabilities } from "../../lib/ai/models";
 import { filterFactsForBot } from "../../lib/bots/roster";
 import { isGithubConnectorEnabled } from "../../lib/connectors/calendar-and-github";
-import { isGoogleConnectorsEnabled } from "../../lib/connectors/google-vault-auth";
+import {
+  GOOGLE_VAULT_SECRET_NAMES,
+  isGoogleConnectorsEnabled,
+  resolveGoogleAccessTokenFromVault,
+} from "../../lib/connectors/google-vault-auth";
 import { isRoutinesEnabled } from "../../lib/cron/routine-presets";
 import { isMediaStudioEnabled } from "../../lib/media/media-studio";
 import {
@@ -54,6 +58,62 @@ test("after owner verification, AUTH_SECRET + default flags embed vault, voice, 
     // 1. Vault is immediately ready via domain-separated HKDF over AUTH_SECRET
     assert.equal(isVaultConfigured(), true);
     const vault = createInMemoryVaultStore();
+
+    const savedGateway = process.env.AI_GATEWAY_USAGE_ENABLED;
+    const savedGoogleId = process.env.AUTH_GOOGLE_ID;
+    const savedGoogleSecret = process.env.AUTH_GOOGLE_SECRET;
+    try {
+      process.env.AI_GATEWAY_USAGE_ENABLED = "true";
+      process.env.AUTH_GOOGLE_ID =
+        "owner-oauth-client.apps.googleusercontent.com";
+      process.env.AUTH_GOOGLE_SECRET = "GOCSPX-owner-oauth-secret";
+
+      // Zero-key Live Speech works out of the box BEFORE any API key is saved in vault!
+      const zeroKeyLive = await createLiveVoiceSessionDescriptor({
+        userId: "owner-zero-key",
+        vaultStore: vault,
+      });
+      assert.equal(zeroKeyLive.status, "ready");
+
+      // One-tap Google OAuth refresh_token uses AUTH_GOOGLE_ID/SECRET automatically without manual client secrets
+      await vault.upsertSecret({
+        userId: "owner-oauth",
+        name: GOOGLE_VAULT_SECRET_NAMES.refreshToken,
+        provider: "google",
+        plaintext: "1//0gOneTapGoogleOAuthRefreshToken",
+      });
+      const oauthResolved = await resolveGoogleAccessTokenFromVault({
+        userId: "owner-oauth",
+        vaultStore: vault,
+        fetchImpl: (() =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({ access_token: "ya29.one-tap-oauth-token" }),
+              { status: 200 }
+            )
+          )) as typeof fetch,
+      });
+      assert.equal(oauthResolved.ok, true);
+      if (oauthResolved.ok) {
+        assert.equal(oauthResolved.accessToken, "ya29.one-tap-oauth-token");
+      }
+    } finally {
+      if (savedGateway === undefined) {
+        Reflect.deleteProperty(process.env, "AI_GATEWAY_USAGE_ENABLED");
+      } else {
+        process.env.AI_GATEWAY_USAGE_ENABLED = savedGateway;
+      }
+      if (savedGoogleId === undefined) {
+        Reflect.deleteProperty(process.env, "AUTH_GOOGLE_ID");
+      } else {
+        process.env.AUTH_GOOGLE_ID = savedGoogleId;
+      }
+      if (savedGoogleSecret === undefined) {
+        Reflect.deleteProperty(process.env, "AUTH_GOOGLE_SECRET");
+      } else {
+        process.env.AUTH_GOOGLE_SECRET = savedGoogleSecret;
+      }
+    }
 
     // 2. Mixed-case secret name ("Gemini_API_Key") normalizes to GEMINI_API_KEY and unlocks Live Voice
     const stored = await vault.upsertSecret({

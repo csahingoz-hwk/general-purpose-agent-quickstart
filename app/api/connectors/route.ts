@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/app/(auth)/auth";
+import { gatewayEnabled } from "@/lib/ai/routing/catalog";
 import {
   GITHUB_VAULT_SECRET_NAME,
   isGithubConnectorEnabled,
@@ -8,6 +9,7 @@ import {
   GOOGLE_VAULT_SECRET_NAMES,
   isGoogleConnectorsEnabled,
 } from "@/lib/connectors/google-vault-auth";
+import { isGoogleSignInConfigured } from "@/lib/google-owner";
 import {
   createPostgresVaultStore,
   isVaultConfigured,
@@ -24,11 +26,15 @@ export async function GET() {
   const enabled = isGoogleConnectorsEnabled();
   const githubEnabled = isGithubConnectorEnabled();
   const vaultKeyReady = isVaultConfigured();
+  const googleSignInReady = isGoogleSignInConfigured();
+  const gatewayMediaReady = gatewayEnabled();
 
   if (!vaultKeyReady) {
     return NextResponse.json({
       enabled,
       vaultConfigured: false,
+      googleSignInReady,
+      mediaReady: gatewayMediaReady,
       policy: "read_and_draft_only_never_send",
       gmailReady: false,
       driveReady: false,
@@ -56,8 +62,9 @@ export async function GET() {
     const hasAccess = names.has(GOOGLE_VAULT_SECRET_NAMES.accessToken);
     const hasRefreshSet =
       names.has(GOOGLE_VAULT_SECRET_NAMES.refreshToken) &&
-      names.has(GOOGLE_VAULT_SECRET_NAMES.clientId) &&
-      names.has(GOOGLE_VAULT_SECRET_NAMES.clientSecret);
+      ((names.has(GOOGLE_VAULT_SECRET_NAMES.clientId) &&
+        names.has(GOOGLE_VAULT_SECRET_NAMES.clientSecret)) ||
+        googleSignInReady);
     const ready = enabled && (hasAccess || hasRefreshSet);
     const hasGemini = names.has(VOICE_VAULT_SECRET_NAMES.geminiApiKey);
     const hasOpenAiVoice = names.has(VOICE_VAULT_SECRET_NAMES.openaiApiKey);
@@ -66,6 +73,8 @@ export async function GET() {
     return NextResponse.json({
       enabled,
       vaultConfigured: true,
+      googleSignInReady,
+      mediaReady: gatewayMediaReady || hasGemini,
       policy: "read_and_draft_only_never_send",
       gmailReady: ready,
       driveReady: ready,
@@ -93,6 +102,8 @@ export async function GET() {
       return NextResponse.json({
         enabled,
         vaultConfigured: false,
+        googleSignInReady,
+        mediaReady: gatewayMediaReady,
         policy: "read_and_draft_only_never_send",
         gmailReady: false,
         driveReady: false,
@@ -106,6 +117,53 @@ export async function GET() {
     }
     return NextResponse.json(
       { error: "Failed to inspect connector status" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: Request) {
+  const session = await auth();
+  if (!session?.user?.id || session.user.type === "guest") {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const provider = new URL(request.url).searchParams.get("provider") ?? "";
+  const store = createPostgresVaultStore();
+
+  try {
+    if (provider === "google") {
+      await Promise.all([
+        store.deleteSecret({
+          userId: session.user.id,
+          name: GOOGLE_VAULT_SECRET_NAMES.accessToken,
+        }),
+        store.deleteSecret({
+          userId: session.user.id,
+          name: GOOGLE_VAULT_SECRET_NAMES.refreshToken,
+        }),
+        store.deleteSecret({
+          userId: session.user.id,
+          name: GOOGLE_VAULT_SECRET_NAMES.clientId,
+        }),
+        store.deleteSecret({
+          userId: session.user.id,
+          name: GOOGLE_VAULT_SECRET_NAMES.clientSecret,
+        }),
+      ]);
+      return NextResponse.json({ disconnected: "google" });
+    }
+    if (provider === "github") {
+      await store.deleteSecret({
+        userId: session.user.id,
+        name: GITHUB_VAULT_SECRET_NAME,
+      });
+      return NextResponse.json({ disconnected: "github" });
+    }
+    return NextResponse.json({ error: "Unknown provider" }, { status: 400 });
+  } catch {
+    return NextResponse.json(
+      { error: "Could not disconnect service" },
       { status: 500 }
     );
   }
