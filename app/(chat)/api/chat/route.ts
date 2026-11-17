@@ -7,6 +7,7 @@ import {
   isStepCount,
   streamText,
   toUIMessageStream,
+  type UIMessageStreamOutcome,
 } from "ai";
 import { checkBotId } from "botid/server";
 import { after } from "next/server";
@@ -35,6 +36,7 @@ import {
 } from "@/lib/ai/conversation-state";
 import { getRequestModelAvailability } from "@/lib/ai/model-runtime";
 import { chatModels, getCapabilities } from "@/lib/ai/models";
+import { createMultiSearchRecoveryStream } from "@/lib/ai/multi-search-fallback";
 import { systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
 import {
@@ -111,7 +113,7 @@ import { convertToUIMessages, generateUUID } from "@/lib/utils";
 import { generateTitleFromUserMessage } from "../../actions";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
-export const maxDuration = 60;
+export const maxDuration = 180;
 
 // When using Model = Sonnet 4.6 we get a bug: ""
 // Composio generates tool call IDs that can contain characters outside the
@@ -595,15 +597,14 @@ export async function POST(request: Request) {
             model: getLanguageModel(chatModel),
             instructions: replySystemPrompt,
             messages: prepared.messages,
-            // Multi-step agent loop: 0 tools = 1 step; single tool = up to 4 steps
-            // (tool call + retry/follow-up + written answer); multi-tool / operator
-            // turns = bounded 8-step loop.
+            // Multi-step agent loop: 0 tools = 1 step; single tool (e.g. webSearch)
+            // = up to 8 steps; multi-tool / operator turns = bounded 12-step loop.
             stopWhen: isStepCount(
               activeTools.length === 0
                 ? 1
                 : activeTools.length > 1 || activeTools.includes("delegateTask")
-                  ? 8
-                  : 4
+                  ? 12
+                  : 8
             ),
             maxOutputTokens: replyTokens,
             maxRetries: 0,
@@ -613,7 +614,7 @@ export async function POST(request: Request) {
             },
             abortSignal: AbortSignal.any([
               request.signal,
-              AbortSignal.timeout(50_000),
+              AbortSignal.timeout(140_000),
             ]),
             activeTools,
             prepareStep: ({ messages: stepMessages, stepNumber }) => {
@@ -651,13 +652,58 @@ export async function POST(request: Request) {
             },
           });
 
+          let primaryOutcome: UIMessageStreamOutcome | null = null;
           dataStream.merge(
             toUIMessageStream<typeof tools, ChatMessage>({
               stream: result.stream,
-              onEnd: ({ outcome }) => dataStream.setOutcome(outcome),
+              onEnd: ({ outcome }) => {
+                primaryOutcome = outcome;
+              },
               sendReasoning: false,
               onError: (error) => safeModelError(error, finalUserText),
-            }).pipeThrough(safeUIStream(finalUserText))
+            })
+              .pipeThrough(
+                createMultiSearchRecoveryStream({
+                  userText: finalUserText,
+                  synthesize: ({ prompt }) => {
+                    if (request.signal.aborted) {
+                      return (async function* empty() {
+                        /* request already cancelled by client */
+                      })();
+                    }
+                    const synthSession = {
+                      ...execution,
+                      exposed: false,
+                      toolBoundary: false,
+                    };
+                    return inferenceSession.run(synthSession, () => {
+                      const synthResult = streamText({
+                        model: getLanguageModel(chatModel),
+                        instructions: replySystemPrompt,
+                        prompt,
+                        maxOutputTokens: Math.min(replyTokens, 2048),
+                        maxRetries: 0,
+                        onError: () => {
+                          /* Deterministic partial answer handles synthesis errors. */
+                        },
+                        abortSignal: AbortSignal.any([
+                          request.signal,
+                          AbortSignal.timeout(25_000),
+                        ]),
+                      });
+                      return synthResult.textStream;
+                    });
+                  },
+                  onFinalize: (recovered) => {
+                    dataStream.setOutcome(
+                      recovered
+                        ? { status: "completed" }
+                        : (primaryOutcome ?? { status: "completed" })
+                    );
+                  },
+                })
+              )
+              .pipeThrough(safeUIStream(finalUserText))
           );
 
           if (titlePromise) {

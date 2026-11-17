@@ -11,6 +11,7 @@ import { DEFAULT_CHAT_MODEL } from "../../lib/ai/models";
 import { systemPrompt } from "../../lib/ai/prompts";
 import {
   LUNA,
+  premiumModels,
   TERRA,
   WEB_SEARCH_COST_USD,
   WEB_SEARCH_MAX_CALLS,
@@ -341,7 +342,7 @@ async function drain(model: LanguageModelV4, tools: unknown[]) {
 
 test("search price is defined once and equals USD 0.75 per 1,000 billable requests", () => {
   assert.equal(WEB_SEARCH_COST_USD, 0.75 / 1000);
-  assert.equal(WEB_SEARCH_MAX_CALLS, 3);
+  assert.equal(WEB_SEARCH_MAX_CALLS, 8);
 });
 
 test("settled estimate adds search spend to token spend and keeps reservations when usage is unknown", () => {
@@ -365,7 +366,7 @@ test("a search call reserves the capped worst case and settles the observed numb
     tools: [searchTool],
     responseFormat: undefined,
   };
-  const base = reserveCost(LUNA, params, 2048);
+  const base = reserveCost(LUNA, params, premiumModels[LUNA].outputLimit);
   const delta = f.reserved[0].reserveUsd - base;
   assert.ok(
     Math.abs(delta - WEB_SEARCH_MAX_CALLS * WEB_SEARCH_COST_USD) < 1e-9,

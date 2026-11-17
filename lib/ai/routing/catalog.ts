@@ -7,7 +7,7 @@ export const premiumModels = {
     output: 0.5,
     contextWindow: 1_050_000,
     inferenceBudget: 32_768,
-    outputLimit: 2048,
+    outputLimit: 4096,
   },
   "gpt-6.1-terra": {
     input: 1,
@@ -16,7 +16,7 @@ export const premiumModels = {
     output: 5,
     contextWindow: 1_050_000,
     inferenceBudget: 65_536,
-    outputLimit: 4096,
+    outputLimit: 8192,
   },
 } as const;
 export type PremiumModelId = keyof typeof premiumModels;
@@ -33,7 +33,7 @@ export const WEB_SEARCH_COST_USD = 0.000_75;
  * lets the model continue inside the same call, so the SDK step budget cannot
  * bound it; the routed model counts tool calls and aborts above this cap.
  */
-export const WEB_SEARCH_MAX_CALLS = 3;
+export const WEB_SEARCH_MAX_CALLS = 8;
 /** Provider-executed tool id of gateway.tools.deepseekSearch (AI Gateway only). */
 export const WEB_SEARCH_TOOL_ID = "gateway.deepseek_search";
 export const LUNA: PremiumModelId = "gpt-6-luna";

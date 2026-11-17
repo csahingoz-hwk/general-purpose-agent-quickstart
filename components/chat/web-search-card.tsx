@@ -10,8 +10,6 @@ import {
   webSearchView,
 } from "@/lib/web-search-sources";
 
-const copy = getCopy();
-
 function sourceCount(count: number, locale: "en" | "tr"): string {
   if (locale === "tr") {
     return count === 1 ? "1 kaynak" : `${count} kaynak`;
@@ -55,14 +53,25 @@ export function WebSearchCard({
   locale?: "en" | "tr";
 }) {
   const [open, setOpen] = useState(false);
+  if (
+    output &&
+    typeof output === "object" &&
+    "skippedForSynthesis" in output &&
+    (output as { skippedForSynthesis?: boolean }).skippedForSynthesis === true
+  ) {
+    return null;
+  }
+  const copy = getCopy(locale);
   const loading = state === "input-streaming" || state === "input-available";
   const view: WebSearchView | null =
     state === "output-available" ? webSearchView(output) : null;
   const failed = state === "output-error" || view?.kind === "error";
   const sources = view?.kind === "results" ? view.sources : [];
-  const marks = sources.flatMap((source) =>
-    source.hostname ? [source.hostname] : []
-  );
+  const marks = Array.from(
+    new Set(
+      sources.flatMap((source) => (source.hostname ? [source.hostname] : []))
+    )
+  ).slice(0, 4);
 
   return (
     <div

@@ -13,6 +13,16 @@ export const DEFAULT_VISUAL_MODEL = "gpt-6-luna";
 
 export type SeriesPoint = { label: string; value: number };
 
+export type WeatherIconKind =
+  | "sun"
+  | "partly-cloudy"
+  | "cloud"
+  | "fog"
+  | "drizzle"
+  | "rain"
+  | "snow"
+  | "storm";
+
 export type VisualSnapshot = {
   series: Record<
     string,
@@ -21,10 +31,22 @@ export type VisualSnapshot = {
       kind: "line" | "bar" | "pie";
       unit?: string;
       points: SeriesPoint[];
+      secondaryTitle?: string;
+      secondaryPoints?: SeriesPoint[];
     }
   >;
   tables: Record<string, { columns: string[]; rows: string[][] }>;
-  stats: Record<string, { label: string; value: string; hint?: string }>;
+  stats: Record<
+    string,
+    {
+      label: string;
+      value: string;
+      hint?: string;
+      description?: string;
+      icon?: WeatherIconKind;
+      subtext?: string;
+    }
+  >;
   places: Record<
     string,
     { label: string; latitude: number; longitude: number }
@@ -148,6 +170,72 @@ function searchHits(record: Record<string, unknown>) {
   return hits;
 }
 
+const SHORT_WEEKDAYS = [
+  "Sun",
+  "Mon",
+  "Tue",
+  "Wed",
+  "Thu",
+  "Fri",
+  "Sat",
+] as const;
+
+export function formatShortDate(isoDate: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(isoDate.trim());
+  if (!match) {
+    return isoDate.slice(0, 12);
+  }
+  const utc = new Date(
+    Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  );
+  if (Number.isNaN(utc.getTime())) {
+    return isoDate.slice(0, 12);
+  }
+  return `${SHORT_WEEKDAYS[utc.getUTCDay()]} ${Number(match[3])}`;
+}
+
+export function describeWeatherCode(
+  code: number | null,
+  rainChance: number | null = null
+): { icon: WeatherIconKind; description: string } {
+  if (code !== null) {
+    if (code === 0) {
+      return { icon: "sun", description: "Clear sky" };
+    }
+    if (code === 1) {
+      return { icon: "partly-cloudy", description: "Mainly clear" };
+    }
+    if (code === 2) {
+      return { icon: "partly-cloudy", description: "Partly cloudy" };
+    }
+    if (code === 3) {
+      return { icon: "cloud", description: "Overcast" };
+    }
+    if (code === 45 || code === 48) {
+      return { icon: "fog", description: "Foggy" };
+    }
+    if (code >= 51 && code <= 57) {
+      return { icon: "drizzle", description: "Light drizzle" };
+    }
+    if ((code >= 61 && code <= 67) || (code >= 80 && code <= 82)) {
+      return { icon: "rain", description: "Rain showers" };
+    }
+    if ((code >= 71 && code <= 77) || code === 85 || code === 86) {
+      return { icon: "snow", description: "Snow" };
+    }
+    if (code >= 95) {
+      return { icon: "storm", description: "Thunderstorm" };
+    }
+  }
+  if (rainChance !== null && rainChance >= 60) {
+    return { icon: "rain", description: "Rain likely" };
+  }
+  if (rainChance !== null && rainChance >= 30) {
+    return { icon: "partly-cloudy", description: "Scattered clouds" };
+  }
+  return { icon: "partly-cloudy", description: "Partly cloudy" };
+}
+
 export function buildWeatherSnapshot(output: unknown): VisualSnapshot | null {
   const record = asRecord(output);
   if (!record || "error" in record) {
@@ -156,6 +244,8 @@ export function buildWeatherSnapshot(output: unknown): VisualSnapshot | null {
   const current = asRecord(record.current);
   const daily = asRecord(record.daily);
   const temperature = finiteNumber(current?.temperature_2m);
+  const feelsLike = finiteNumber(current?.apparent_temperature);
+  const windSpeed = finiteNumber(current?.wind_speed_10m);
   const times = Array.isArray(daily?.time) ? daily.time : [];
   const highs = Array.isArray(daily?.temperature_2m_max)
     ? daily.temperature_2m_max
@@ -166,47 +256,79 @@ export function buildWeatherSnapshot(output: unknown): VisualSnapshot | null {
   const rain = Array.isArray(daily?.precipitation_probability_max)
     ? daily.precipitation_probability_max
     : [];
+  const dailyCodes = Array.isArray(daily?.weather_code)
+    ? daily.weather_code
+    : [];
+  const weatherCode =
+    finiteNumber(current?.weather_code) ?? finiteNumber(dailyCodes[0]);
   if (temperature === null && times.length === 0) {
     return null;
   }
   const city = plain(record.cityName, 80) || "Forecast";
   const unit = plain(asRecord(record.current_units)?.temperature_2m, 8) || "°C";
   const snapshot = emptySnapshot();
+  const todayHigh = finiteNumber(highs[0]);
+  const todayLow = finiteNumber(lows[0]);
+  const todayRain = finiteNumber(rain[0]);
+  const condition = describeWeatherCode(weatherCode, todayRain);
   if (temperature !== null) {
+    const subBits: string[] = [];
+    if (todayHigh !== null && todayLow !== null) {
+      subBits.push(`H ${Math.round(todayHigh)}° · L ${Math.round(todayLow)}°`);
+    }
+    if (feelsLike !== null) {
+      subBits.push(`Feels ${Math.round(feelsLike)}°`);
+    } else if (todayRain !== null) {
+      subBits.push(`${Math.round(todayRain)}% rain`);
+    }
+    if (windSpeed !== null) {
+      subBits.push(`${Math.round(windSpeed)} km/h wind`);
+    }
     snapshot.stats.current = {
       label: "Now",
-      value: `${temperature}${unit}`,
+      value: `${Math.round(temperature * 10) / 10}${unit}`,
       hint: city,
+      description: condition.description,
+      icon: condition.icon,
+      subtext: subBits.join(" · ") || undefined,
     };
   }
   const points: SeriesPoint[] = [];
+  const lowPoints: SeriesPoint[] = [];
   const rows: string[][] = [];
-  for (let index = 0; index < Math.min(times.length, 3); index += 1) {
-    const day = plain(times[index], 20);
+  for (let index = 0; index < Math.min(times.length, 5); index += 1) {
+    const rawDay = plain(times[index], 20);
+    const shortDay = rawDay ? formatShortDate(rawDay) : "";
     const high = finiteNumber(highs[index]);
     const low = finiteNumber(lows[index]);
     const chance = finiteNumber(rain[index]);
-    if (day && high !== null) {
-      points.push({ label: day.slice(5), value: high });
+    if (shortDay && high !== null) {
+      points.push({ label: shortDay, value: Math.round(high * 10) / 10 });
+      if (low !== null) {
+        lowPoints.push({ label: shortDay, value: Math.round(low * 10) / 10 });
+      }
     }
     rows.push([
-      day,
-      high === null ? "" : String(high),
-      low === null ? "" : String(low),
-      chance === null ? "" : String(chance),
+      shortDay || rawDay,
+      high === null ? "—" : `${Math.round(high)}°`,
+      low === null ? "—" : `${Math.round(low)}°`,
+      chance === null ? "—" : `${Math.round(chance)}%`,
     ]);
   }
   if (points.length > 0) {
     snapshot.series.dailyHigh = {
-      title: "Daily high",
+      title: "Daily high & low",
       kind: "line",
       unit,
       points,
+      ...(lowPoints.length === points.length
+        ? { secondaryTitle: "Low", secondaryPoints: lowPoints }
+        : {}),
     };
   }
   if (rows.some((row) => row.some(Boolean))) {
     snapshot.tables.daily = {
-      columns: ["Date", "High", "Low", "Rain %"],
+      columns: ["Day", "High", "Low", "Rain"],
       rows,
     };
   }
@@ -319,7 +441,9 @@ export function specForSnapshot(
     children.push("latest");
   }
   if (data.series.dailyHigh) {
-    lines.push(`chart = Chart(${quote("Daily high")}, "line", "dailyHigh")`);
+    lines.push(
+      `chart = Chart(${quote(data.series.dailyHigh.title)}, "line", "dailyHigh")`
+    );
     children.push("chart");
   }
   if (data.series.rates) {

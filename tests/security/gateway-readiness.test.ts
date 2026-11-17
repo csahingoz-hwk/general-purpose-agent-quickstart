@@ -317,5 +317,5 @@ test("inference uses the native provider with the exact OpenAI slug, request-sco
   const body = JSON.parse(first.body);
   assert.deepEqual(body.providerOptions.gateway, { only: ["openai"] });
   assert.equal(body.providerOptions.openai.store, false);
-  assert.equal(body.maxOutputTokens, 2048);
+  assert.equal(body.maxOutputTokens, 4096);
 });
