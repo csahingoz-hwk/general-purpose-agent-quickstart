@@ -1,8 +1,8 @@
 "use client";
 
 import {
+  AudioLinesIcon,
   MicIcon,
-  PhoneCallIcon,
   SquareIcon,
   Volume2Icon,
   VolumeXIcon,
@@ -21,7 +21,7 @@ import {
 } from "@/components/ui/sheet";
 import { cn, fetcher } from "@/lib/utils";
 
-type VoiceReadiness = {
+export type VoiceReadiness = {
   serverSttReady: boolean;
   liveReady: boolean;
 };
@@ -111,36 +111,9 @@ function extensionForAudioMime(mime: string): string {
   return "webm";
 }
 
-export function VoiceMemoControls({
-  disabled,
-  onTranscript,
-  onSendVoiceTurn,
-  latestAssistantSpeech,
-}: {
-  disabled: boolean;
-  onTranscript: (text: string) => void;
-  onSendVoiceTurn?: (text: string) => void;
-  latestAssistantSpeech?: string | null;
-}) {
+export function useVoiceReadiness(): VoiceReadiness {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
-  const [hasSpeechApi, setHasSpeechApi] = useState(false);
-  const [recording, setRecording] = useState(false);
-  const [transcribing, setTranscribing] = useState(false);
-  const [liveOpen, setLiveOpen] = useState(false);
-  const [liveLoading, setLiveLoading] = useState(false);
-  const [liveSession, setLiveSession] = useState<LiveSessionInfo | null>(null);
-  const [lastSpokenTurn, setLastSpokenTurn] = useState<string>("");
-  const [autoSpeakReplies, setAutoSpeakReplies] = useState(true);
-
-  const captureModeRef = useRef<"dictate" | "live">("dictate");
-  const lastReadAssistantRef = useRef<string>("");
-  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
-  const uncommittedInterimRef = useRef<string>("");
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
-
-  const { data: readiness } = useSWR<VoiceReadiness>(
+  const { data } = useSWR<VoiceReadiness>(
     `${basePath}/api/voice/transcribe`,
     fetcher,
     {
@@ -148,45 +121,29 @@ export function VoiceMemoControls({
       shouldRetryOnError: false,
     }
   );
+  return {
+    serverSttReady: data?.serverSttReady === true,
+    liveReady: data?.liveReady === true,
+  };
+}
 
-  const deliverSpokenText = useCallback(
-    (raw: string) => {
-      const cleaned = raw.trim();
-      if (!cleaned) {
-        return;
-      }
-      if (captureModeRef.current === "live" && onSendVoiceTurn) {
-        setLastSpokenTurn(cleaned);
-        onSendVoiceTurn(cleaned);
-      } else {
-        onTranscript(cleaned);
-      }
-    },
-    [onSendVoiceTurn, onTranscript]
-  );
+function useSpeechCapture({
+  serverSttReady,
+  onResult,
+}: {
+  serverSttReady: boolean;
+  onResult: (text: string) => void;
+}) {
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+  const [hasSpeechApi, setHasSpeechApi] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
 
-  useEffect(() => {
-    if (!liveOpen) {
-      if (typeof window !== "undefined" && "speechSynthesis" in window) {
-        window.speechSynthesis.cancel();
-      }
-      return;
-    }
-    const text = latestAssistantSpeech?.trim() ?? "";
-    if (!text || !autoSpeakReplies || text === lastReadAssistantRef.current) {
-      return;
-    }
-    lastReadAssistantRef.current = text;
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      try {
-        window.speechSynthesis.cancel();
-        const utterance = new SpeechSynthesisUtterance(text.slice(0, 1200));
-        window.speechSynthesis.speak(utterance);
-      } catch {
-        /* ignore browser TTS errors */
-      }
-    }
-  }, [autoSpeakReplies, latestAssistantSpeech, liveOpen]);
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const uncommittedInterimRef = useRef<string>("");
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
     setHasSpeechApi(Boolean(getSpeechRecognitionCtor()));
@@ -221,7 +178,7 @@ export function VoiceMemoControls({
     };
   }, [cleanupMediaStream, cleanupRecognition]);
 
-  const stopDictation = useCallback(() => {
+  const stopCapture = useCallback(() => {
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
@@ -235,78 +192,6 @@ export function VoiceMemoControls({
     }
     setRecording(false);
   }, [cleanupRecognition]);
-
-  const startBrowserSpeechDictation = useCallback(
-    (Ctor: SpeechRecognitionConstructor) => {
-      try {
-        const recognition = new Ctor();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang =
-          (typeof navigator !== "undefined" && navigator.language) || "en-GB";
-
-        uncommittedInterimRef.current = "";
-
-        recognition.onresult = (event) => {
-          let finalChunk = "";
-          let interimChunk = "";
-          for (let i = event.resultIndex; i < event.results.length; i += 1) {
-            const res = event.results[i];
-            const piece = res?.[0]?.transcript ?? "";
-            if (res?.isFinal) {
-              finalChunk += piece;
-            } else {
-              interimChunk += piece;
-            }
-          }
-          if (finalChunk.trim()) {
-            uncommittedInterimRef.current = "";
-            deliverSpokenText(finalChunk.trim());
-          } else {
-            uncommittedInterimRef.current = interimChunk.trim();
-          }
-        };
-
-        recognition.onerror = (event) => {
-          const code = event.error ?? "";
-          uncommittedInterimRef.current = "";
-          setRecording(false);
-          recognitionRef.current = null;
-          if (code === "not-allowed" || code === "service-not-allowed") {
-            toast.error(
-              "Microphone access is turned off. Allow microphone access in browser settings or type your message."
-            );
-          } else if (code && code !== "aborted" && code !== "no-speech") {
-            toast.error(
-              "Voice dictation stopped unexpectedly. Try again or type your message."
-            );
-          }
-        };
-
-        recognition.onend = () => {
-          // Flush any trailing interim speech iOS Safari didn't mark final before stopping
-          const leftover = uncommittedInterimRef.current.trim();
-          uncommittedInterimRef.current = "";
-          recognitionRef.current = null;
-          setRecording(false);
-          if (leftover) {
-            deliverSpokenText(leftover);
-          }
-        };
-
-        recognitionRef.current = recognition;
-        recognition.start();
-        setRecording(true);
-      } catch {
-        cleanupRecognition();
-        setRecording(false);
-        toast.error(
-          "Voice dictation could not start in this browser; please type your message."
-        );
-      }
-    },
-    [cleanupRecognition, deliverSpokenText]
-  );
 
   const startServerAudioMemo = useCallback(async () => {
     if (
@@ -356,12 +241,15 @@ export function VoiceMemoControls({
           const data = (await res.json()) as {
             transcript?: string;
             message?: string;
+            error?: string;
           };
-          if (res.ok && data.transcript) {
-            deliverSpokenText(data.transcript);
+          if (res.ok && data.transcript?.trim()) {
+            onResult(data.transcript.trim());
           } else {
             toast.error(
-              data.message ?? "Could not transcribe that voice clip."
+              data.message ??
+                data.error ??
+                "Could not transcribe that voice clip."
             );
           }
         } catch {
@@ -381,7 +269,201 @@ export function VoiceMemoControls({
         "Microphone access is turned off. Allow microphone access in browser settings or type your message."
       );
     }
-  }, [basePath, cleanupMediaStream, deliverSpokenText]);
+  }, [basePath, cleanupMediaStream, onResult]);
+
+  const startBrowserSpeechDictation = useCallback(
+    (Ctor: SpeechRecognitionConstructor) => {
+      try {
+        const recognition = new Ctor();
+        recognition.continuous = true;
+        recognition.interimResults = true;
+        recognition.lang =
+          (typeof navigator !== "undefined" && navigator.language) || "en-GB";
+
+        uncommittedInterimRef.current = "";
+
+        recognition.onresult = (event) => {
+          let finalChunk = "";
+          let interimChunk = "";
+          for (let i = event.resultIndex; i < event.results.length; i += 1) {
+            const res = event.results[i];
+            const piece = res?.[0]?.transcript ?? "";
+            if (res?.isFinal) {
+              finalChunk += piece;
+            } else {
+              interimChunk += piece;
+            }
+          }
+          if (finalChunk.trim()) {
+            uncommittedInterimRef.current = "";
+            onResult(finalChunk.trim());
+          } else {
+            uncommittedInterimRef.current = interimChunk.trim();
+          }
+        };
+
+        recognition.onerror = (event) => {
+          const code = event.error ?? "";
+          uncommittedInterimRef.current = "";
+          setRecording(false);
+          recognitionRef.current = null;
+          if (code === "not-allowed") {
+            toast.error(
+              "Microphone access is turned off. Allow microphone access in browser settings or type your message."
+            );
+          } else if (
+            (code === "service-not-allowed" || code === "network") &&
+            serverSttReady
+          ) {
+            startServerAudioMemo().catch(() => null);
+          } else if (code && code !== "aborted" && code !== "no-speech") {
+            toast.error(
+              "Voice dictation stopped unexpectedly. Try again or type your message."
+            );
+          }
+        };
+
+        recognition.onend = () => {
+          const leftover = uncommittedInterimRef.current.trim();
+          uncommittedInterimRef.current = "";
+          recognitionRef.current = null;
+          setRecording(false);
+          if (leftover) {
+            onResult(leftover);
+          }
+        };
+
+        recognitionRef.current = recognition;
+        recognition.start();
+        setRecording(true);
+      } catch {
+        cleanupRecognition();
+        setRecording(false);
+        if (serverSttReady) {
+          startServerAudioMemo().catch(() => null);
+        } else {
+          toast.error(
+            "Voice dictation could not start in this browser; please type your message."
+          );
+        }
+      }
+    },
+    [cleanupRecognition, onResult, serverSttReady, startServerAudioMemo]
+  );
+
+  const startCapture = useCallback(() => {
+    const SpeechCtor = getSpeechRecognitionCtor();
+    if (SpeechCtor) {
+      startBrowserSpeechDictation(SpeechCtor);
+      return;
+    }
+    if (serverSttReady) {
+      startServerAudioMemo().catch(() => null);
+    }
+  }, [serverSttReady, startBrowserSpeechDictation, startServerAudioMemo]);
+
+  return {
+    canCapture: hasSpeechApi || serverSttReady,
+    recording,
+    transcribing,
+    startCapture,
+    stopCapture,
+  };
+}
+
+export function VoiceMemoControls({
+  disabled,
+  onTranscript,
+}: {
+  disabled: boolean;
+  onTranscript: (text: string) => void;
+}) {
+  const { serverSttReady } = useVoiceReadiness();
+  const { canCapture, recording, transcribing, startCapture, stopCapture } =
+    useSpeechCapture({
+      serverSttReady,
+      onResult: onTranscript,
+    });
+
+  if (!canCapture) {
+    return null;
+  }
+
+  return (
+    <Button
+      aria-label={recording ? "Stop dictation" : "Dictate message"}
+      aria-pressed={recording}
+      className={cn(
+        "size-11! rounded-full border-transparent bg-control p-0 shadow-none transition-colors motion-reduce:transition-none hover:bg-control",
+        recording
+          ? "bg-destructive/15 text-destructive ring-2 ring-destructive/30"
+          : "text-foreground"
+      )}
+      data-recording={recording ? "true" : "false"}
+      data-testid="voice-memo-button"
+      disabled={(disabled && !recording) || transcribing}
+      onClick={(e) => {
+        e.preventDefault();
+        if (recording) {
+          stopCapture();
+        } else {
+          startCapture();
+        }
+      }}
+      title={
+        recording
+          ? "Tap to finish dictation"
+          : transcribing
+            ? "Transcribing…"
+            : "Dictate into message box"
+      }
+      type="button"
+      variant="ghost"
+    >
+      {recording ? (
+        <SquareIcon aria-hidden="true" className="size-4 fill-current" />
+      ) : (
+        <MicIcon aria-hidden="true" className="size-4" />
+      )}
+    </Button>
+  );
+}
+
+export function LiveVoiceButton({
+  disabled,
+  onSendVoiceTurn,
+  latestAssistantSpeech,
+}: {
+  disabled: boolean;
+  onSendVoiceTurn: (text: string) => void;
+  latestAssistantSpeech?: string | null;
+}) {
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+  const { serverSttReady } = useVoiceReadiness();
+  const [liveOpen, setLiveOpen] = useState(false);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [liveSession, setLiveSession] = useState<LiveSessionInfo | null>(null);
+  const [lastSpokenTurn, setLastSpokenTurn] = useState<string>("");
+  const [autoSpeakReplies, setAutoSpeakReplies] = useState(true);
+  const lastReadAssistantRef = useRef<string>("");
+
+  const handleSpokenTurn = useCallback(
+    (spoken: string) => {
+      const cleaned = spoken.trim();
+      if (!cleaned) {
+        return;
+      }
+      setLastSpokenTurn(cleaned);
+      onSendVoiceTurn(cleaned);
+    },
+    [onSendVoiceTurn]
+  );
+
+  const { recording, transcribing, startCapture, stopCapture } =
+    useSpeechCapture({
+      serverSttReady,
+      onResult: handleSpokenTurn,
+    });
 
   const initializeLiveSession = useCallback(async () => {
     setLiveLoading(true);
@@ -394,234 +476,185 @@ export function VoiceMemoControls({
     } catch {
       setLiveSession({
         status: "error",
-        message: "Live voice session could not connect right now.",
+        message: "Live speech could not connect right now.",
       });
     } finally {
       setLiveLoading(false);
     }
   }, [basePath]);
 
-  const serverSttReady = readiness?.serverSttReady === true;
-  const liveReady = readiness?.liveReady === true;
-  const canDictate = hasSpeechApi || serverSttReady;
-
-  if (!canDictate && !liveReady) {
-    return null;
-  }
+  useEffect(() => {
+    if (!liveOpen) {
+      if (typeof window !== "undefined" && "speechSynthesis" in window) {
+        window.speechSynthesis.cancel();
+      }
+      return;
+    }
+    const text = latestAssistantSpeech?.trim() ?? "";
+    if (!text || !autoSpeakReplies || text === lastReadAssistantRef.current) {
+      return;
+    }
+    lastReadAssistantRef.current = text;
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      try {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text.slice(0, 1200));
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        /* ignore browser TTS errors */
+      }
+    }
+  }, [autoSpeakReplies, latestAssistantSpeech, liveOpen]);
 
   return (
-    <>
-      {canDictate && (
+    <Sheet
+      onOpenChange={(next) => {
+        setLiveOpen(next);
+        if (next) {
+          lastReadAssistantRef.current = latestAssistantSpeech?.trim() ?? "";
+          initializeLiveSession().catch(() => null);
+        } else if (recording) {
+          stopCapture();
+        }
+      }}
+      open={liveOpen}
+    >
+      <SheetTrigger asChild>
         <Button
-          aria-label={recording ? "Stop dictation" : "Dictate message"}
-          aria-pressed={recording}
-          className={cn(
-            "size-11! rounded-full border-transparent bg-control p-0 shadow-none transition-colors motion-reduce:transition-none hover:bg-control",
-            recording
-              ? "bg-destructive/15 text-destructive ring-2 ring-destructive/30"
-              : "text-foreground"
-          )}
-          data-recording={recording ? "true" : "false"}
-          data-testid="voice-memo-button"
-          disabled={(disabled && !recording) || transcribing}
-          onClick={(e) => {
-            e.preventDefault();
-            if (recording) {
-              stopDictation();
-              return;
-            }
-            captureModeRef.current = "dictate";
-            const SpeechCtor = getSpeechRecognitionCtor();
-            if (SpeechCtor && !serverSttReady) {
-              // Synchronous start inside click handler (required by iOS Safari WebKit)
-              startBrowserSpeechDictation(SpeechCtor);
-              return;
-            }
-            if (serverSttReady) {
-              startServerAudioMemo().catch(() => null);
-              return;
-            }
-            if (SpeechCtor) {
-              startBrowserSpeechDictation(SpeechCtor);
-            }
-          }}
-          title={
-            recording
-              ? "Tap to finish dictation"
-              : transcribing
-                ? "Transcribing…"
-                : "Dictate with voice"
-          }
+          aria-label="Live speech"
+          className="size-11! rounded-full border-transparent bg-send p-0 text-send-foreground shadow-none transition-colors duration-150 hover:bg-send/90 motion-reduce:transition-none"
+          data-testid="live-voice-button"
+          disabled={disabled}
+          title="Start live speech"
           type="button"
-          variant="ghost"
+          variant="secondary"
         >
-          {recording ? (
-            <SquareIcon aria-hidden="true" className="size-4 fill-current" />
-          ) : (
-            <MicIcon aria-hidden="true" className="size-4" />
-          )}
+          <AudioLinesIcon aria-hidden="true" className="size-5" />
         </Button>
-      )}
+      </SheetTrigger>
+      <SheetContent
+        className="mx-auto w-full rounded-t-[28px] border-[color:var(--hairline)] border-x border-t px-5 pt-5 pb-[max(1.75rem,calc(env(safe-area-inset-bottom)+1rem))] sm:bottom-4 sm:max-w-md sm:rounded-[28px] sm:border"
+        side="bottom"
+      >
+        <SheetHeader className="p-0 pr-10 text-left">
+          <SheetTitle className="font-semibold text-lg">Live speech</SheetTitle>
+          <SheetDescription>
+            Speak hands-free turns into this conversation · personal assistant
+            use only.
+          </SheetDescription>
+        </SheetHeader>
 
-      {liveReady && (
-        <Sheet
-          onOpenChange={(next) => {
-            setLiveOpen(next);
-            if (next) {
-              lastReadAssistantRef.current =
-                latestAssistantSpeech?.trim() ?? "";
-              initializeLiveSession().catch(() => null);
-            } else if (recording) {
-              stopDictation();
-            }
-          }}
-          open={liveOpen}
-        >
-          <SheetTrigger asChild>
-            <Button
-              aria-label="Live voice session"
-              className="inline-flex size-11! rounded-full border-transparent bg-control p-0 text-foreground shadow-none transition-colors motion-reduce:transition-none hover:bg-control"
-              data-testid="live-voice-button"
-              disabled={disabled}
-              title="Live voice session"
-              type="button"
-              variant="ghost"
-            >
-              <PhoneCallIcon aria-hidden="true" className="size-4" />
-            </Button>
-          </SheetTrigger>
-          <SheetContent className="w-full sm:max-w-md" side="right">
-            <SheetHeader>
-              <SheetTitle>Live Voice Session</SheetTitle>
-              <SheetDescription>
-                Speak hands-free turns into the current conversation · personal
-                assistant use only.
-              </SheetDescription>
-            </SheetHeader>
+        <div className="mt-4 space-y-3.5 text-sm">
+          {liveLoading ? (
+            <p className="py-4 text-muted-foreground text-sm">
+              Connecting voice session…
+            </p>
+          ) : liveSession?.status === "ready" ? (
+            <div className="space-y-3.5">
+              <div className="space-y-3.5 rounded-2xl border border-[color:var(--hairline)] bg-card p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-foreground">
+                    {recording
+                      ? "Listening — tap below to send"
+                      : transcribing
+                        ? "Transcribing your turn…"
+                        : disabled
+                          ? "Assistant is replying…"
+                          : "Ready for your voice"}
+                  </span>
+                  <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 font-medium text-emerald-700 text-xs dark:text-emerald-300">
+                    Connected
+                  </span>
+                </div>
 
-            <div className="mt-5 space-y-4 text-sm">
-              {liveLoading ? (
-                <p className="text-muted-foreground text-sm">
-                  Preparing voice session…
-                </p>
-              ) : liveSession?.status === "ready" ? (
-                <div className="space-y-4">
-                  <div className="space-y-3 rounded-2xl border border-[color:var(--hairline)] bg-card p-4">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium">
-                        {recording
-                          ? "Listening — tap below to send"
-                          : transcribing
-                            ? "Transcribing your turn…"
-                            : disabled
-                              ? "Assistant is replying…"
-                              : "Ready for your voice"}
-                      </span>
-                      <span className="rounded-full bg-emerald-500/15 px-2.5 py-0.5 font-medium text-emerald-700 text-xs dark:text-emerald-300">
-                        {liveSession.model}
-                      </span>
-                    </div>
+                <button
+                  className={cn(
+                    "inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full font-medium text-sm transition-colors disabled:opacity-50",
+                    recording
+                      ? "bg-destructive text-destructive-foreground"
+                      : "bg-primary text-primary-foreground"
+                  )}
+                  disabled={(disabled && !recording) || transcribing}
+                  onClick={() => {
+                    if (recording) {
+                      stopCapture();
+                      return;
+                    }
+                    if (
+                      typeof window !== "undefined" &&
+                      "speechSynthesis" in window
+                    ) {
+                      window.speechSynthesis.cancel();
+                    }
+                    startCapture();
+                  }}
+                  type="button"
+                >
+                  {recording ? (
+                    <>
+                      <SquareIcon className="size-4 fill-current" />
+                      Stop &amp; send turn
+                    </>
+                  ) : (
+                    <>
+                      <AudioLinesIcon className="size-4" />
+                      {transcribing ? "Transcribing…" : "Tap to speak"}
+                    </>
+                  )}
+                </button>
 
-                    <button
-                      className={cn(
-                        "inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full font-medium text-sm transition-colors disabled:opacity-50",
-                        recording
-                          ? "bg-destructive text-destructive-foreground"
-                          : "bg-primary text-primary-foreground"
-                      )}
-                      disabled={(disabled && !recording) || transcribing}
-                      onClick={() => {
-                        if (recording) {
-                          stopDictation();
-                          return;
-                        }
+                <div className="flex items-center justify-between pt-0.5">
+                  <span className="text-muted-foreground text-xs">
+                    Hands-free voice mode
+                  </span>
+                  <button
+                    className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] px-3.5 text-xs hover:bg-muted"
+                    onClick={() => {
+                      setAutoSpeakReplies((prev) => {
+                        const next = !prev;
                         if (
+                          !next &&
                           typeof window !== "undefined" &&
                           "speechSynthesis" in window
                         ) {
                           window.speechSynthesis.cancel();
                         }
-                        captureModeRef.current = "live";
-                        const SpeechCtor = getSpeechRecognitionCtor();
-                        if (serverSttReady) {
-                          startServerAudioMemo().catch(() => null);
-                          return;
-                        }
-                        if (SpeechCtor) {
-                          startBrowserSpeechDictation(SpeechCtor);
-                        }
-                      }}
-                      type="button"
-                    >
-                      {recording ? (
-                        <>
-                          <SquareIcon className="size-4 fill-current" />
-                          Stop &amp; send turn
-                        </>
-                      ) : (
-                        <>
-                          <MicIcon className="size-4" />
-                          {transcribing ? "Transcribing…" : "Tap to speak"}
-                        </>
-                      )}
-                    </button>
-
-                    <div className="flex items-center justify-between pt-1">
-                      <span className="text-muted-foreground text-xs">
-                        Est. ~{liveSession.estimatedTokensPerMinute} audio
-                        tokens/min
-                      </span>
-                      <button
-                        className="inline-flex min-h-9 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] px-3 text-xs hover:bg-muted"
-                        onClick={() => {
-                          setAutoSpeakReplies((prev) => {
-                            const next = !prev;
-                            if (
-                              !next &&
-                              typeof window !== "undefined" &&
-                              "speechSynthesis" in window
-                            ) {
-                              window.speechSynthesis.cancel();
-                            }
-                            return next;
-                          });
-                        }}
-                        type="button"
-                      >
-                        {autoSpeakReplies ? (
-                          <>
-                            <Volume2Icon className="size-3.5" />
-                            Read replies aloud
-                          </>
-                        ) : (
-                          <>
-                            <VolumeXIcon className="size-3.5" />
-                            Replies muted
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  {lastSpokenTurn && (
-                    <div className="rounded-2xl border border-[color:var(--hairline)] bg-card p-3.5 text-xs">
-                      <p className="text-muted-foreground">You said</p>
-                      <p className="mt-1 text-foreground text-sm">
-                        {lastSpokenTurn}
-                      </p>
-                    </div>
-                  )}
+                        return next;
+                      });
+                    }}
+                    type="button"
+                  >
+                    {autoSpeakReplies ? (
+                      <>
+                        <Volume2Icon className="size-3.5" />
+                        Read replies aloud
+                      </>
+                    ) : (
+                      <>
+                        <VolumeXIcon className="size-3.5" />
+                        Replies muted
+                      </>
+                    )}
+                  </button>
                 </div>
-              ) : (
-                <p className="text-muted-foreground text-sm">
-                  {liveSession?.message ??
-                    "Live voice is not active right now."}
-                </p>
+              </div>
+
+              {lastSpokenTurn && (
+                <div className="rounded-2xl border border-[color:var(--hairline)] bg-card p-3.5 text-xs">
+                  <p className="text-muted-foreground">You said</p>
+                  <p className="mt-1 text-foreground text-sm">
+                    {lastSpokenTurn}
+                  </p>
+                </div>
               )}
             </div>
-          </SheetContent>
-        </Sheet>
-      )}
-    </>
+          ) : (
+            <p className="text-muted-foreground text-sm">
+              {liveSession?.message ?? "Live speech is not active right now."}
+            </p>
+          )}
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }

@@ -49,7 +49,11 @@ import {
   slashCommands,
 } from "./slash-commands";
 import type { VisibilityType } from "./visibility-selector";
-import { VoiceMemoControls } from "./voice-memo-button";
+import {
+  LiveVoiceButton,
+  useVoiceReadiness,
+  VoiceMemoControls,
+} from "./voice-memo-button";
 
 const copy = getCopy();
 
@@ -116,6 +120,7 @@ function PureMultimodalInput({
     modelAvailability.models?.some(
       (model: ChatModel) => model.id === selectedModelId
     );
+  const voiceReadiness = useVoiceReadiness();
   const { setTheme, resolvedTheme } = useTheme();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { width } = useWindowSize();
@@ -577,6 +582,27 @@ function PureMultimodalInput({
             />
             <VoiceMemoControls
               disabled={status !== "ready"}
+              onTranscript={(spoken) => {
+                setInput((prev) =>
+                  prev.trim() ? `${prev.trim()} ${spoken}` : spoken
+                );
+              }}
+            />
+            <ModelSelectorCompact
+              onModelChange={onModelChange}
+              selectedModelId={selectedModelId}
+            />
+          </PromptInputTools>
+
+          {status === "submitted" || status === "streaming" ? (
+            <StopButton setMessages={setMessages} stop={stop} />
+          ) : modelReady &&
+            voiceReadiness.liveReady &&
+            !input.trim() &&
+            attachments.length === 0 &&
+            uploadQueue.length === 0 ? (
+            <LiveVoiceButton
+              disabled={status !== "ready"}
               latestAssistantSpeech={
                 status === "ready"
                   ? ([...messages]
@@ -604,20 +630,7 @@ function PureMultimodalInput({
                   parts: [{ type: "text", text: spoken.trim() }],
                 });
               }}
-              onTranscript={(spoken) => {
-                setInput((prev) =>
-                  prev.trim() ? `${prev.trim()} ${spoken}` : spoken
-                );
-              }}
             />
-            <ModelSelectorCompact
-              onModelChange={onModelChange}
-              selectedModelId={selectedModelId}
-            />
-          </PromptInputTools>
-
-          {status === "submitted" || status === "streaming" ? (
-            <StopButton setMessages={setMessages} stop={stop} />
           ) : (
             <PromptInputSubmit
               aria-label={copy.send}

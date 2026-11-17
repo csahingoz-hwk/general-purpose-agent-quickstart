@@ -1182,12 +1182,32 @@ test("owner credentials vault, sticky subpage header, and teammate chat wiring w
     await page.getByRole("link", { name: /Back to chat/i }).click();
     await page.waitForURL(`${origin}/`);
 
-    // 3. Verify header displays active teammate + Live Voice button is visible on mobile + /api/chat receives selectedBotSlug
+    // 3. Verify header displays active teammate + right-hand Live Speech button when empty + bottom sheet clears top safe area
     await page.getByText("Finance Controller").first().waitFor();
-    await expect(page.getByTestId("live-voice-button")).toBeVisible();
+    const liveVoiceBtn = page.getByTestId("live-voice-button");
+    await expect(liveVoiceBtn).toBeVisible();
+    assert.equal(await page.getByTestId("send-button").count(), 0);
+    const liveBox = await liveVoiceBtn.boundingBox();
+    assert.ok(
+      liveBox && liveBox.x > 290,
+      `live speech button sits in right-hand composer slot (x=${liveBox?.x})`
+    );
 
+    await liveVoiceBtn.click();
+    await page.getByText("Live speech").waitFor();
+    const sheetTop = await page
+      .locator('[data-slot="sheet-content"]')
+      .evaluate((el) => Math.round(el.getBoundingClientRect().top));
+    assert.ok(
+      sheetTop > 200,
+      `bottom live speech sheet stays well clear of iOS top status bar (top=${sheetTop})`
+    );
+    await page.keyboard.press("Escape");
+
+    // 4. Typing switches right-hand slot to Send arrow and delivers selectedBotSlug
     const composer = page.getByTestId("multimodal-input").last();
     await composer.fill("Prepare close checklist");
+    await expect(page.getByTestId("send-button")).toBeVisible();
     await page.getByTestId("send-button").click();
     await page.getByText("Ready to reconcile.").waitFor();
     assert.equal(captured.chatBody?.selectedBotSlug, "finance-controller");

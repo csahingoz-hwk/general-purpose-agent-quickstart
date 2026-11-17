@@ -104,13 +104,7 @@ export async function POST(request: Request) {
           reserveUsd: 0.01,
           fallbackReason: "voice:stt",
         });
-        const gateway = createGateway({
-          headers: request.headers.get("x-vercel-oidc-token")
-            ? {
-                Authorization: `Bearer ${request.headers.get("x-vercel-oidc-token")}`,
-              }
-            : undefined,
-        });
+        const gateway = createGateway();
         const stt = await transcribeAudio({
           model: gateway.transcriptionModel("openai/gpt-4o-mini-transcribe"),
           audio: bytes,
