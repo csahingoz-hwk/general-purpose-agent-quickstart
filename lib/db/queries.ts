@@ -1,3 +1,4 @@
+import type { HomeLocation } from "../temporal";
 import "server-only";
 
 import {
@@ -12,17 +13,19 @@ import {
   lt,
   lte,
   type SQL,
+  sql,
 } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import type { ArtifactKind } from "@/components/chat/artifact";
 import type { VisibilityType } from "@/components/chat/visibility-selector";
+import { isOwnerEmail } from "../access-policy";
 import { ChatbotError } from "../errors";
 import { generateUUID } from "../utils";
 import {
   type Chat,
-  chat,
   type CronJob,
+  chat,
   cronJob,
   type DBMessage,
   document,
@@ -43,13 +46,47 @@ const db = drizzle(client);
 
 export async function getUser(email: string): Promise<User[]> {
   try {
-    return await db.select().from(user).where(eq(user.email, email));
+    return await db
+      .select()
+      .from(user)
+      .where(sql`lower(${user.email}) = ${email.trim().toLowerCase()}`);
   } catch (_error) {
     throw new ChatbotError(
       "bad_request:database",
       "Failed to get user by email"
     );
   }
+}
+
+// Invoked only after a verified Google owner profile is authorized.
+export async function getOrCreateGoogleOwner(email: string) {
+  if (!isOwnerEmail(email)) {
+    throw new Error("Unauthorized");
+  }
+  const normalizedEmail = email.trim().toLowerCase();
+  return await db.transaction(async (tx) => {
+    // Serialize concurrent first sign-ins without changing the existing schema.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(748391002)`);
+    const existing = await tx
+      .select()
+      .from(user)
+      .where(sql`lower(${user.email}) = ${normalizedEmail}`);
+    if (existing.length > 1) {
+      throw new Error("Owner identity requires account review");
+    }
+    if (existing[0]) {
+      return existing[0];
+    }
+    const [created] = await tx
+      .insert(user)
+      .values({
+        email: normalizedEmail,
+        emailVerified: true,
+        isAnonymous: false,
+      })
+      .returning();
+    return created;
+  });
 }
 
 export async function createUser(email: string, password: string) {
@@ -638,10 +675,7 @@ export async function createCronJob({
       .returning();
     return row;
   } catch (_error) {
-    throw new ChatbotError(
-      "bad_request:database",
-      "Failed to create cron job"
-    );
+    throw new ChatbotError("bad_request:database", "Failed to create cron job");
   }
 }
 
@@ -723,6 +757,51 @@ export async function deleteCronJob({
     return result.length > 0;
   } catch (_error) {
     throw new ChatbotError("bad_request:database", "Failed to delete cron job");
+  }
+}
+
+export async function getCronJobByIdAndUser({
+  id,
+  userId,
+}: {
+  id: string;
+  userId: string;
+}): Promise<CronJob | null> {
+  try {
+    const [row] = await db
+      .select()
+      .from(cronJob)
+      .where(and(eq(cronJob.id, id), eq(cronJob.userId, userId)))
+      .limit(1);
+    return row ?? null;
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to get cron job");
+  }
+}
+
+export async function setCronJobEnabled({
+  id,
+  userId,
+  enabled,
+  nextRunAt,
+}: {
+  id: string;
+  userId: string;
+  enabled: boolean;
+  nextRunAt?: Date;
+}): Promise<CronJob | null> {
+  try {
+    const [updated] = await db
+      .update(cronJob)
+      .set({
+        enabled,
+        ...(nextRunAt ? { nextRunAt } : {}),
+      })
+      .where(and(eq(cronJob.id, id), eq(cronJob.userId, userId)))
+      .returning();
+    return updated ?? null;
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to update cron job");
   }
 }
 
@@ -819,10 +898,7 @@ export async function unlinkTelegram({
       })
       .where(eq(user.id, userId));
   } catch (_error) {
-    throw new ChatbotError(
-      "bad_request:database",
-      "Failed to unlink telegram"
-    );
+    throw new ChatbotError("bad_request:database", "Failed to unlink telegram");
   }
 }
 
@@ -948,6 +1024,46 @@ export async function getStreamIdsByChatId({ chatId }: { chatId: string }) {
     throw new ChatbotError(
       "bad_request:database",
       "Failed to get stream ids by chat id"
+    );
+  }
+}
+
+export async function getUserHomeLocation({
+  userId,
+}: {
+  userId: string;
+}): Promise<HomeLocation | null> {
+  try {
+    const [row] = await db
+      .select({ homeLocation: user.homeLocation })
+      .from(user)
+      .where(eq(user.id, userId))
+      .limit(1);
+    return row?.homeLocation ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get home location"
+    );
+  }
+}
+
+export async function setUserHomeLocation({
+  userId,
+  homeLocation,
+}: {
+  userId: string;
+  homeLocation: HomeLocation | null;
+}): Promise<void> {
+  try {
+    await db
+      .update(user)
+      .set({ homeLocation, updatedAt: new Date() })
+      .where(eq(user.id, userId));
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to save home location"
     );
   }
 }

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { memo } from "react";
 import { useChatVisibility } from "@/hooks/use-chat-visibility";
 import type { Chat } from "@/lib/db/schema";
@@ -30,12 +29,10 @@ const PureChatItem = ({
   chat,
   isActive,
   onDelete,
-  setOpenMobile,
 }: {
   chat: Chat;
   isActive: boolean;
   onDelete: (chatId: string) => void;
-  setOpenMobile: (open: boolean) => void;
 }) => {
   const { visibilityType, setVisibilityType } = useChatVisibility({
     chatId: chat.id,
@@ -43,21 +40,21 @@ const PureChatItem = ({
   });
 
   return (
-    <SidebarMenuItem>
+    <SidebarMenuItem className="border-t border-[color:var(--hairline)] first:border-t-0">
       <SidebarMenuButton
         asChild
-        className="h-8 rounded-none text-[13px] text-sidebar-foreground/50 transition-all duration-150 hover:bg-transparent hover:text-sidebar-foreground data-active:bg-transparent data-active:font-normal data-active:text-sidebar-foreground/50 data-[active=true]:text-sidebar-foreground data-[active=true]:font-medium data-[active=true]:border-b data-[active=true]:border-dashed data-[active=true]:border-sidebar-foreground/50"
+        className="h-auto min-h-[60px] rounded-none py-2 pr-[4.5rem]! pl-5 text-[17px] font-normal text-foreground hover:bg-foreground/5 data-[active=true]:bg-foreground/5 data-[active=true]:font-medium"
         isActive={isActive}
       >
-        <Link href={`/chat/${chat.id}`} onClick={() => setOpenMobile(false)}>
+        <a href={`/chat/${chat.id}`}>
           <span className="truncate">{chat.title}</span>
-        </Link>
+        </a>
       </SidebarMenuButton>
 
       <DropdownMenu modal={true}>
         <DropdownMenuTrigger asChild>
           <SidebarMenuAction
-            className="mr-0.5 rounded-md text-sidebar-foreground/50 ring-0 transition-colors duration-150 focus-visible:ring-0 hover:text-sidebar-foreground data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+            className="top-1/2! right-2! h-11! w-11! -translate-y-1/2 rounded-full text-muted-foreground ring-0 hover:bg-foreground/5 hover:text-foreground data-[state=open]:bg-foreground/5"
             showOnHover={!isActive}
           >
             <MoreHorizontalIcon />

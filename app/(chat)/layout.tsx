@@ -1,10 +1,11 @@
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import Script from "next/script";
 import { Suspense } from "react";
 import { Toaster } from "sonner";
 import { AppSidebar } from "@/components/chat/app-sidebar";
 import { DataStreamProvider } from "@/components/chat/data-stream-provider";
-import { ChatShell } from "@/components/chat/shell";
+import { RouteSlot } from "@/components/chat/route-slot";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { ActiveChatProvider } from "@/hooks/use-active-chat";
 import { auth } from "../(auth)/auth";
@@ -27,6 +28,9 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
 async function SidebarShell({ children }: { children: React.ReactNode }) {
   const [session, cookieStore] = await Promise.all([auth(), cookies()]);
+  if (!session) {
+    redirect("/login");
+  }
   const isCollapsed = cookieStore.get("sidebar_state")?.value !== "true";
 
   return (
@@ -34,19 +38,26 @@ async function SidebarShell({ children }: { children: React.ReactNode }) {
       <AppSidebar user={session?.user} />
       <SidebarInset>
         <Toaster
+          mobileOffset={{
+            top: "max(3.75rem, calc(env(safe-area-inset-top) + 0.875rem))",
+            left: "1rem",
+            right: "1rem",
+          }}
+          offset={{
+            top: "max(3.75rem, calc(env(safe-area-inset-top) + 0.875rem))",
+          }}
           position="top-center"
           theme="system"
           toastOptions={{
             className:
-              "!bg-card !text-foreground !border-border/50 !shadow-[var(--shadow-float)]",
+              "!rounded-[20px] !bg-card !text-foreground !border-[color:var(--hairline)] !shadow-[var(--shadow-float)]",
           }}
         />
         <Suspense fallback={<div className="flex h-dvh" />}>
           <ActiveChatProvider>
-            <ChatShell />
+            <RouteSlot>{children}</RouteSlot>
           </ActiveChatProvider>
         </Suspense>
-        {children}
       </SidebarInset>
     </SidebarProvider>
   );

@@ -1,45 +1,58 @@
 "use server";
 
-import { z } from "zod";
+import { redirect } from "next/navigation";
+import { GOOGLE_WORKSPACE_CONNECT_SCOPE } from "@/lib/connectors/google-vault-auth";
+import { isGoogleSignInConfigured } from "@/lib/google-owner";
+import { auth, signIn } from "./auth";
 
-import { createUser, getUser } from "@/lib/db/queries";
-
-import { signIn } from "./auth";
-
-const authFormSchema = z.object({
-  email: z.string().email(),
-  password: z.string().min(6),
-});
-
-export type LoginActionState = {
-  status: "idle" | "in_progress" | "success" | "failed" | "invalid_data";
-};
-
-export const login = async (
-  _: LoginActionState,
-  formData: FormData
-): Promise<LoginActionState> => {
-  try {
-    const validatedData = authFormSchema.parse({
-      email: formData.get("email"),
-      password: formData.get("password"),
-    });
-
-    await signIn("credentials", {
-      email: validatedData.email,
-      password: validatedData.password,
-      redirect: false,
-    });
-
-    return { status: "success" };
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return { status: "invalid_data" };
-    }
-
-    return { status: "failed" };
+export async function loginWithGoogle() {
+  if (!isGoogleSignInConfigured()) {
+    redirect("/login?error=Configuration");
   }
-};
+  await signIn("google", { redirectTo: "/" });
+}
+
+export async function connectGoogleWorkspace(formData?: FormData) {
+  const session = await auth();
+  if (!session?.user || !isGoogleSignInConfigured()) {
+    redirect("/usage");
+  }
+  const rawReturn =
+    formData?.get("returnTo")?.toString() ?? "/usage?connected=google";
+  const safeReturn =
+    rawReturn.startsWith("/") && !rawReturn.startsWith("//")
+      ? rawReturn
+      : "/usage?connected=google";
+  await signIn(
+    "google",
+    { redirectTo: safeReturn },
+    {
+      scope: GOOGLE_WORKSPACE_CONNECT_SCOPE,
+      access_type: "offline",
+      prompt: "consent",
+      include_granted_scopes: "true",
+      ...(session.user.email ? { login_hint: session.user.email } : {}),
+    }
+  );
+}
+
+export async function connectGithubAccount(formData?: FormData) {
+  const session = await auth();
+  if (
+    !session?.user ||
+    !process.env.AUTH_GITHUB_ID?.trim() ||
+    !process.env.AUTH_GITHUB_SECRET?.trim()
+  ) {
+    redirect("/setup");
+  }
+  const rawReturn =
+    formData?.get("returnTo")?.toString() ?? "/setup?connected=github";
+  const safeReturn =
+    rawReturn.startsWith("/") && !rawReturn.startsWith("//")
+      ? rawReturn
+      : "/setup?connected=github";
+  await signIn("github", { redirectTo: safeReturn });
+}
 
 export type RegisterActionState = {
   status:
@@ -51,34 +64,8 @@ export type RegisterActionState = {
     | "invalid_data";
 };
 
+// No public signup. Only the verified configured owner can be provisioned.
 export const register = async (
   _: RegisterActionState,
-  formData: FormData
-): Promise<RegisterActionState> => {
-  try {
-    const validatedData = authFormSchema.parse({
-      email: formData.get("email"),
-      password: formData.get("password"),
-    });
-
-    const [user] = await getUser(validatedData.email);
-
-    if (user) {
-      return { status: "user_exists" } as RegisterActionState;
-    }
-    await createUser(validatedData.email, validatedData.password);
-    await signIn("credentials", {
-      email: validatedData.email,
-      password: validatedData.password,
-      redirect: false,
-    });
-
-    return { status: "success" };
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return { status: "invalid_data" };
-    }
-
-    return { status: "failed" };
-  }
-};
+  _formData: FormData
+): Promise<RegisterActionState> => ({ status: "failed" });

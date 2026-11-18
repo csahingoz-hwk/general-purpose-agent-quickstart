@@ -1,4 +1,5 @@
 import { generateDummyPassword } from "./db/utils";
+import { getCopy } from "./ui-copy";
 
 export const isProductionEnvironment = process.env.NODE_ENV === "production";
 export const isDevelopmentEnvironment = process.env.NODE_ENV === "development";
@@ -12,9 +13,4 @@ export const guestRegex = /^guest-\d+$/;
 
 export const DUMMY_PASSWORD = generateDummyPassword();
 
-export const suggestions = [
-  "What are the advantages of using Next.js?",
-  "Write code to demonstrate Dijkstra's algorithm",
-  "Help me write an essay about Silicon Valley",
-  "What is the weather in San Francisco?",
-];
+export const suggestions: readonly string[] = getCopy().suggestions;

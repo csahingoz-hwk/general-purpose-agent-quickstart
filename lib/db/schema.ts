@@ -3,6 +3,7 @@ import {
   boolean,
   foreignKey,
   json,
+  jsonb,
   pgTable,
   primaryKey,
   text,
@@ -10,6 +11,7 @@ import {
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
+import type { HomeLocation } from "../temporal";
 
 export const user = pgTable("User", {
   id: uuid("id").primaryKey().notNull().defaultRandom(),
@@ -25,6 +27,7 @@ export const user = pgTable("User", {
     withTimezone: true,
   }),
   soul: text("soul"),
+  homeLocation: jsonb("homeLocation").$type<HomeLocation>(),
   createdAt: timestamp("createdAt").notNull().defaultNow(),
   updatedAt: timestamp("updatedAt").notNull().defaultNow(),
 });

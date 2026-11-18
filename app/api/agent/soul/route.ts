@@ -28,7 +28,9 @@ export async function PATCH(request: Request) {
 
   const raw = body.soul;
   const next =
-    raw === null || raw === undefined || (typeof raw === "string" && raw.trim() === "")
+    raw === null ||
+    raw === undefined ||
+    (typeof raw === "string" && raw.trim() === "")
       ? null
       : String(raw).slice(0, MAX_SOUL_LENGTH);
 

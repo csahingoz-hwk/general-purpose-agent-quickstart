@@ -1,12 +1,6 @@
-export const DEFAULT_CHAT_MODEL = "anthropic/claude-sonnet-4.6";
-
-export const titleModel = {
-  id: "mistral/mistral-small",
-  name: "Mistral Small",
-  provider: "mistral",
-  description: "Fast model for title generation",
-  gatewayOrder: ["mistral"],
-};
+export const DEFAULT_CHAT_MODEL = "gemini-4-hydrogen";
+export const ESCALATED_RESEARCH_MODEL = "gemini-4-argon";
+export const FALLBACK_CHAT_MODEL = "claude-haiku-5.5";
 
 export type ModelCapabilities = {
   tools: boolean;
@@ -19,184 +13,103 @@ export type ChatModel = {
   name: string;
   provider: string;
   description: string;
-  gatewayOrder?: string[];
   reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
 };
 
+// Standing owner rule: NO pay-per-use models (no paid AI Gateway credits,
+// no OpenAI/Anthropic API keys). Primary chat runs on Google AI Ultra credit
+// (`0140A2-72DEB2-62EDCD` via keyless Vertex WIF); automatic fallback on Vertex
+// failure/timeout runs ONLY on GitHub Copilot SDK (`claude-haiku-5.5`) via the
+// Cloud VM bridge.
 export const chatModels: ChatModel[] = [
   {
-    id: "deepseek/deepseek-v3.2",
-    name: "DeepSeek V3.2",
-    provider: "deepseek",
-    description: "Fast and capable model with tool use",
-    gatewayOrder: ["bedrock", "deepinfra"],
+    id: "gemini-4-hydrogen",
+    name: "Gemini 4 Hydrogen",
+    provider: "google",
+    description: "Default · fast ~1s responses via Vertex AI on Ultra credit",
+    reasoningEffort: "low",
   },
   {
-    id: "mistral/codestral",
-    name: "Codestral",
-    provider: "mistral",
-    description: "Code-focused model with tool use",
-    gatewayOrder: ["mistral"],
+    id: "gemini-4-argon",
+    name: "Gemini 4 Argon",
+    provider: "google",
+    description: "Deep research & hard questions · Vertex AI on Ultra credit",
+    reasoningEffort: "medium",
+  },
+];
+
+// Hermetic CI wire-fixture candidates ONLY (`tests/sdk7/provider-fixture.ts`).
+// Never exposed when `isSyntheticSdk7FixtureMode()` is false.
+export const SYNTHETIC_SDK7_FIXTURE_MODELS: ChatModel[] = [
+  {
+    id: "gpt-6-luna",
+    name: "Everyday chat",
+    provider: "openai",
+    description: "GPT-6 Luna · economical bilingual conversation",
+    reasoningEffort: "low",
   },
   {
-    id: "mistral/mistral-small",
-    name: "Mistral Small",
-    provider: "mistral",
-    description: "Fast vision model with tool use",
-    gatewayOrder: ["mistral"],
-  },
-  {
-    id: "moonshotai/kimi-k2",
-    name: "Kimi K2",
-    provider: "moonshotai",
-    description: "Fast model with tool use",
-    gatewayOrder: ["baseten", "fireworks"],
-  },
-  {
-    id: "moonshotai/kimi-k2.5",
-    name: "Kimi K2.5",
-    provider: "moonshotai",
-    description: "Moonshot AI flagship model",
-    gatewayOrder: ["fireworks", "bedrock"],
-  },
-  {
-    id: "moonshotai/kimi-k2.6",
-    name: "Kimi K2.6",
-    provider: "moonshotai",
-    description: "Latest Moonshot K2 release",
-    gatewayOrder: ["fireworks", "bedrock"],
-  },
-  {
-    id: "anthropic/claude-sonnet-4.6",
-    name: "Claude Sonnet 4.6",
-    provider: "anthropic",
-    description: "Strong general model for tool use and reasoning",
-    gatewayOrder: ["anthropic", "bedrock"],
+    id: "gpt-6.1-terra",
+    name: "Detailed chat",
+    provider: "openai",
+    description: "GPT-6.1 Terra · deeper thinking when needed",
+    reasoningEffort: "medium",
   },
   {
     id: "openai/gpt-oss-20b",
-    name: "GPT OSS 20B",
-    provider: "openai",
-    description: "Compact reasoning model",
-    gatewayOrder: ["groq", "bedrock"],
+    name: "Everyday chat",
+    provider: "groq",
+    description: "GPT OSS 20B · free-account quota applies",
     reasoningEffort: "low",
   },
   {
     id: "openai/gpt-oss-120b",
-    name: "GPT OSS 120B",
-    provider: "openai",
-    description: "Open-source 120B parameter model",
-    gatewayOrder: ["fireworks", "bedrock"],
+    name: "Detailed chat",
+    provider: "groq",
+    description: "GPT OSS 120B · free-account quota applies",
     reasoningEffort: "low",
-  },
-  {
-    id: "xai/grok-4.1-fast-non-reasoning",
-    name: "Grok 4.1 Fast",
-    provider: "xai",
-    description: "Fast non-reasoning model with tool use",
-    gatewayOrder: ["xai"],
   },
 ];
 
-export async function getCapabilities(): Promise<
-  Record<string, ModelCapabilities>
-> {
-  const results = await Promise.all(
-    chatModels.map(async (model) => {
-      try {
-        const res = await fetch(
-          `https://ai-gateway.vercel.sh/v1/models/${model.id}/endpoints`,
-          { next: { revalidate: 86_400 } }
-        );
-        if (!res.ok) {
-          return [model.id, { tools: false, vision: false, reasoning: false }];
-        }
-
-        const json = await res.json();
-        const endpoints = json.data?.endpoints ?? [];
-        const params = new Set(
-          endpoints.flatMap(
-            (e: { supported_parameters?: string[] }) =>
-              e.supported_parameters ?? []
-          )
-        );
-        const inputModalities = new Set(
-          json.data?.architecture?.input_modalities ?? []
-        );
-
-        return [
-          model.id,
-          {
-            tools: params.has("tools"),
-            vision: inputModalities.has("image"),
-            reasoning: params.has("reasoning"),
-          },
-        ];
-      } catch {
-        return [model.id, { tools: false, vision: false, reasoning: false }];
-      }
-    })
-  );
-
-  return Object.fromEntries(results);
-}
-
-export const isDemo = process.env.IS_DEMO === "1";
-
-type GatewayModel = {
-  id: string;
-  name: string;
-  type?: string;
-  tags?: string[];
+const MODEL_DISPLAY_NAMES: Record<string, string> = {
+  "gemini-4-hydrogen": "Gemini 4 Hydrogen",
+  "gemini-4-argon": "Gemini 4 Argon",
+  "claude-haiku-5.5": "Claude Haiku 5.5",
+  "claude-haiku-4.5": "Claude Haiku 4.5",
 };
 
-export type GatewayModelWithCapabilities = ChatModel & {
-  capabilities: ModelCapabilities;
-};
-
-export async function getAllGatewayModels(): Promise<
-  GatewayModelWithCapabilities[]
-> {
-  try {
-    const res = await fetch("https://ai-gateway.vercel.sh/v1/models", {
-      next: { revalidate: 86_400 },
-    });
-    if (!res.ok) {
-      return [];
-    }
-
-    const json = await res.json();
-    return (json.data ?? [])
-      .filter((m: GatewayModel) => m.type === "language")
-      .map((m: GatewayModel) => ({
-        id: m.id,
-        name: m.name,
-        provider: m.id.split("/")[0],
-        description: "",
-        capabilities: {
-          tools: m.tags?.includes("tool-use") ?? false,
-          vision: m.tags?.includes("vision") ?? false,
-          reasoning: m.tags?.includes("reasoning") ?? false,
-        },
-      }));
-  } catch {
-    return [];
-  }
+export function getModelDisplayName(modelId: string): string {
+  return MODEL_DISPLAY_NAMES[modelId] ?? modelId;
 }
 
-export function getActiveModels(): ChatModel[] {
-  return chatModels;
+export const allowedModelIds = new Set(chatModels.map((model) => model.id));
+
+export function getCapabilities(): Record<string, ModelCapabilities> {
+  const entries: [string, ModelCapabilities][] = chatModels.map((model) => [
+    model.id,
+    {
+      tools: true,
+      vision: model.provider === "google",
+      reasoning: true,
+    },
+  ]);
+  entries.push([
+    FALLBACK_CHAT_MODEL,
+    { tools: true, vision: true, reasoning: false },
+  ]);
+  // Preserve compatibility lookup for legacy persisted message metadata & CI wire-fixture tests only.
+  entries.push(["gpt-6-luna", { tools: true, vision: true, reasoning: true }]);
+  entries.push([
+    "gpt-6.1-terra",
+    { tools: true, vision: true, reasoning: true },
+  ]);
+  entries.push([
+    "openai/gpt-oss-20b",
+    { tools: true, vision: false, reasoning: true },
+  ]);
+  entries.push([
+    "openai/gpt-oss-120b",
+    { tools: true, vision: false, reasoning: true },
+  ]);
+  return Object.fromEntries(entries);
 }
-
-export const allowedModelIds = new Set(chatModels.map((m) => m.id));
-
-export const modelsByProvider = chatModels.reduce(
-  (acc, model) => {
-    if (!acc[model.provider]) {
-      acc[model.provider] = [];
-    }
-    acc[model.provider].push(model);
-    return acc;
-  },
-  {} as Record<string, ChatModel[]>
-);

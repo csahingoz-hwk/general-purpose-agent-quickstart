@@ -1,10 +1,10 @@
 "use client";
 
 import {
-  MessageSquareIcon,
+  BookOpenIcon,
   PanelLeftIcon,
   PenSquareIcon,
-  TrashIcon,
+  XIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -32,6 +32,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { getCopy } from "@/lib/ui-copy";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,7 +43,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
+
+const copy = getCopy();
 
 export function AppSidebar({ user }: { user: User | undefined }) {
   const router = useRouter();
@@ -67,75 +69,80 @@ export function AppSidebar({ user }: { user: User | undefined }) {
   return (
     <>
       <Sidebar collapsible="icon">
-        <SidebarHeader className="pb-0 pt-3">
-          <SidebarMenu>
-            <SidebarMenuItem className="flex flex-row items-center justify-between">
-              <div className="group/logo relative flex items-center justify-center">
-                <SidebarMenuButton
-                  asChild
-                  className="size-8 !px-0 items-center justify-center group-data-[collapsible=icon]:group-hover/logo:opacity-0"
-                  tooltip="Chatbot"
-                >
-                  <Link href="/" onClick={() => setOpenMobile(false)}>
-                    <MessageSquareIcon className="size-4 text-sidebar-foreground/50" />
-                  </Link>
-                </SidebarMenuButton>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <SidebarMenuButton
-                      className="pointer-events-none absolute inset-0 size-8 opacity-0 group-data-[collapsible=icon]:pointer-events-auto group-data-[collapsible=icon]:group-hover/logo:opacity-100"
-                      onClick={() => toggleSidebar()}
-                    >
-                      <PanelLeftIcon className="size-4" />
-                    </SidebarMenuButton>
-                  </TooltipTrigger>
-                  <TooltipContent className="hidden md:block" side="right">
-                    Open sidebar
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-              <div className="group-data-[collapsible=icon]:hidden">
-                <SidebarTrigger className="text-sidebar-foreground/60 transition-colors duration-150 hover:text-sidebar-foreground" />
-              </div>
-            </SidebarMenuItem>
-          </SidebarMenu>
+        <SidebarHeader className="sticky top-0 z-10 border-[color:var(--hairline)] border-b bg-background/95 px-4 pt-3 pb-2.5 backdrop-blur-sm md:static md:border-b-0 md:bg-transparent md:pt-4 md:pb-1 md:backdrop-blur-none group-data-[collapsible=icon]:px-2">
+          <div className="flex items-center justify-between gap-3 group-data-[collapsible=icon]:justify-center">
+            <Link
+              className="min-w-0 truncate font-semibold text-[17px] text-foreground group-data-[collapsible=icon]:hidden"
+              href="/"
+              onClick={() => setOpenMobile(false)}
+            >
+              {copy.assistant}
+            </Link>
+            <SidebarMenuButton
+              className="hidden size-8 group-data-[collapsible=icon]:inline-flex"
+              onClick={() => toggleSidebar()}
+              tooltip="Open sidebar"
+            >
+              <PanelLeftIcon className="size-4" />
+            </SidebarMenuButton>
+            <button
+              aria-label="Close History"
+              className="inline-flex size-11 items-center justify-center rounded-full bg-card text-foreground shadow-[var(--shadow-card)] md:hidden"
+              onClick={() => setOpenMobile(false)}
+              type="button"
+            >
+              <XIcon className="size-4" />
+            </button>
+            <SidebarTrigger className="hidden size-8 rounded-full text-foreground group-data-[collapsible=icon]:hidden md:inline-flex" />
+          </div>
         </SidebarHeader>
         <SidebarContent>
-          <SidebarGroup className="pt-1">
+          <SidebarGroup className="px-4 pt-2 group-data-[collapsible=icon]:px-2">
             <SidebarGroupContent>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    className="h-8 rounded-lg border border-sidebar-border text-[13px] text-sidebar-foreground/70 transition-colors duration-150 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-                    onClick={() => {
-                      setOpenMobile(false);
-                      router.push("/");
-                    }}
-                    tooltip="New Chat"
-                  >
-                    <PenSquareIcon className="size-4" />
-                    <span className="font-medium">New chat</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                {user && (
+              <div className="overflow-hidden rounded-[20px] bg-card group-data-[collapsible=icon]:overflow-visible group-data-[collapsible=icon]:rounded-none group-data-[collapsible=icon]:bg-transparent">
+                <SidebarMenu className="divide-y divide-[color:var(--hairline)] group-data-[collapsible=icon]:divide-y-0">
                   <SidebarMenuItem>
                     <SidebarMenuButton
-                      className="rounded-lg text-sidebar-foreground/40 transition-colors duration-150 hover:bg-destructive/10 hover:text-destructive"
-                      onClick={() => setShowDeleteAllDialog(true)}
-                      tooltip="Delete All Chats"
+                      className="h-auto min-h-[54px] rounded-none px-5 text-[16px] text-foreground hover:bg-foreground/5 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:min-h-8! group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-2!"
+                      onClick={() => {
+                        setOpenMobile(false);
+                        router.push("/");
+                      }}
+                      tooltip={copy.newChat}
                     >
-                      <TrashIcon className="size-4" />
-                      <span className="text-[13px]">Delete all</span>
+                      <PenSquareIcon className="size-4" />
+                      <span>{copy.newChat}</span>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
-                )}
-              </SidebarMenu>
+                  {user && (
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        className="h-auto min-h-[52px] rounded-none px-5 text-[16px] text-foreground hover:bg-foreground/5 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:min-h-8! group-data-[collapsible=icon]:rounded-lg group-data-[collapsible=icon]:px-2!"
+                        data-testid="sidebar-memory-link"
+                        onClick={() => {
+                          setOpenMobile(false);
+                          router.push("/memory");
+                        }}
+                        tooltip={copy.memory}
+                      >
+                        <BookOpenIcon className="size-4" />
+                        <span>{copy.memory}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  )}
+                </SidebarMenu>
+              </div>
             </SidebarGroupContent>
           </SidebarGroup>
           <SidebarHistory user={user} />
         </SidebarContent>
-        <SidebarFooter className="border-t border-sidebar-border pt-2 pb-3">
-          {user && <SidebarUserNav user={user} />}
+        <SidebarFooter className="border-0 px-4 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] group-data-[collapsible=icon]:px-2">
+          {user && (
+            <SidebarUserNav
+              onRequestDeleteAll={() => setShowDeleteAllDialog(true)}
+              user={user}
+            />
+          )}
         </SidebarFooter>
         <SidebarRail />
       </Sidebar>

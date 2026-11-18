@@ -1,6 +1,6 @@
-import type { LanguageModelV3GenerateResult } from "@ai-sdk/provider";
+import type { LanguageModelV4GenerateResult } from "@ai-sdk/provider";
 import { simulateReadableStream } from "ai";
-import { MockLanguageModelV3 } from "ai/test";
+import { MockLanguageModelV4 } from "ai/test";
 import { getResponseChunksByPrompt } from "@/tests/prompts/utils";
 
 const mockUsage = {
@@ -10,21 +10,21 @@ const mockUsage = {
 
 const mockFinishReason = { unified: "stop" as const, raw: undefined };
 
-const mockGenerateResult: LanguageModelV3GenerateResult = {
+const mockGenerateResult: LanguageModelV4GenerateResult = {
   finishReason: mockFinishReason,
   usage: mockUsage,
   content: [{ type: "text", text: "Hello, world!" }],
   warnings: [],
 };
 
-const titleGenerateResult: LanguageModelV3GenerateResult = {
+const titleGenerateResult: LanguageModelV4GenerateResult = {
   finishReason: mockFinishReason,
   usage: mockUsage,
   content: [{ type: "text", text: "This is a test title" }],
   warnings: [],
 };
 
-export const chatModel = new MockLanguageModelV3({
+export const chatModel = new MockLanguageModelV4({
   doGenerate: mockGenerateResult,
   doStream: async ({ prompt }) => ({
     stream: simulateReadableStream({
@@ -35,7 +35,7 @@ export const chatModel = new MockLanguageModelV3({
   }),
 });
 
-export const reasoningModel = new MockLanguageModelV3({
+export const reasoningModel = new MockLanguageModelV4({
   doGenerate: mockGenerateResult,
   doStream: async ({ prompt }) => ({
     stream: simulateReadableStream({
@@ -46,7 +46,7 @@ export const reasoningModel = new MockLanguageModelV3({
   }),
 });
 
-export const titleModel = new MockLanguageModelV3({
+export const titleModel = new MockLanguageModelV4({
   doGenerate: titleGenerateResult,
   doStream: async () => ({
     stream: simulateReadableStream({

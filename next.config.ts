@@ -20,8 +20,10 @@ const nextConfig: NextConfig = {
     : {}),
   env: {
     NEXT_PUBLIC_BASE_PATH: basePath,
+    VERIFIED_GROQ_MODELS: process.env.VERIFIED_GROQ_MODELS ?? "",
   },
   cacheComponents: true,
+  partialPrefetching: false,
   devIndicators: false,
   poweredByHeader: false,
   reactCompiler: true,
@@ -40,12 +42,27 @@ const nextConfig: NextConfig = {
         protocol: "https",
         hostname: "*.public.blob.vercel-storage.com",
       },
+      {
+        protocol: "https",
+        hostname: "r2.thesportsdb.com",
+      },
+      {
+        protocol: "https",
+        hostname: "www.thesportsdb.com",
+      },
+      {
+        protocol: "https",
+        hostname: "crests.football-data.org",
+      },
+      {
+        protocol: "https",
+        hostname: "icons.duckduckgo.com",
+      },
     ],
   },
   experimental: {
     prefetchInlining: true,
     cachedNavigations: true,
-    appNewScrollHandler: true,
     inlineCss: true,
     turbopackFileSystemCacheForDev: true,
   },

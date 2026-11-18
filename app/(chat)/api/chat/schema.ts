@@ -2,14 +2,14 @@ import { z } from "zod";
 
 const textPartSchema = z.object({
   type: z.enum(["text"]),
-  text: z.string().min(1).max(2000),
+  text: z.string().min(1).max(50_000),
 });
 
 const filePartSchema = z.object({
   type: z.enum(["file"]),
-  mediaType: z.enum(["image/jpeg", "image/png"]),
-  name: z.string().min(1).max(100),
-  url: z.string().url(),
+  mediaType: z.enum(["image/jpeg", "image/png", "application/pdf", "text/csv"]),
+  name: z.string().min(1).max(200),
+  url: z.string().url().max(2048),
 });
 
 const partSchema = z.union([textPartSchema, filePartSchema]);
@@ -17,21 +17,39 @@ const partSchema = z.union([textPartSchema, filePartSchema]);
 const userMessageSchema = z.object({
   id: z.string().uuid(),
   role: z.enum(["user"]),
-  parts: z.array(partSchema),
+  parts: z.array(partSchema).min(1),
 });
 
 const toolApprovalMessageSchema = z.object({
   id: z.string(),
   role: z.enum(["user", "assistant"]),
-  parts: z.array(z.record(z.unknown())),
+  parts: z.array(z.record(z.string(), z.unknown())),
 });
 
-export const postRequestBodySchema = z.object({
-  id: z.string().uuid(),
-  message: userMessageSchema.optional(),
-  messages: z.array(toolApprovalMessageSchema).optional(),
-  selectedChatModel: z.string(),
-  selectedVisibilityType: z.enum(["public", "private"]),
+export const editedDraftApprovalSchema = z.object({
+  approvalId: z.string().min(1).max(160),
+  recipient: z.string().trim().email().max(320),
+  subject: z.string().trim().max(200).optional(),
+  body: z.string().trim().min(1).max(4000),
 });
+
+export const postRequestBodySchema = z
+  .object({
+    id: z.string().uuid(),
+    message: userMessageSchema.optional(),
+    messages: z.array(toolApprovalMessageSchema).optional(),
+    editedDraftApproval: editedDraftApprovalSchema.optional(),
+    retry: z.boolean().optional(),
+    selectedChatModel: z.string(),
+    selectedBotSlug: z.string().max(64).optional(),
+    timeZone: z.string().max(64).optional(),
+    selectedVisibilityType: z.enum(["public", "private"]),
+  })
+  .refine((body) => Boolean(body.message) !== Boolean(body.messages?.length), {
+    message: "Submit a user turn or an approval continuation",
+  })
+  .refine((body) => !body.retry || Boolean(body.message), {
+    message: "Retry requires a user turn",
+  });
 
 export type PostRequestBody = z.infer<typeof postRequestBodySchema>;

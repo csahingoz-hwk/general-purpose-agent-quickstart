@@ -1,12 +1,10 @@
 "use server";
 
-import { generateText, type UIMessage } from "ai";
+import type { UIMessage } from "ai";
 import { cookies } from "next/headers";
 import { auth } from "@/app/(auth)/auth";
 import type { VisibilityType } from "@/components/chat/visibility-selector";
-import { titleModel } from "@/lib/ai/models";
-import { titlePrompt } from "@/lib/ai/prompts";
-import { getTitleModel } from "@/lib/ai/providers";
+import { acquireChatLock } from "@/lib/db/chat-lock";
 import {
   deleteMessagesByChatIdAfterTimestamp,
   getChatById,
@@ -16,6 +14,9 @@ import {
 import { getTextFromMessage } from "@/lib/utils";
 
 export async function saveChatModelAsCookie(model: string) {
+  if (!(await auth())) {
+    throw new Error("Unauthorized");
+  }
   const cookieStore = await cookies();
   cookieStore.set("chat-model", model);
 }
@@ -25,18 +26,13 @@ export async function generateTitleFromUserMessage({
 }: {
   message: UIMessage;
 }) {
-  const { text } = await generateText({
-    model: getTitleModel(),
-    system: titlePrompt,
-    prompt: getTextFromMessage(message),
-    providerOptions: {
-      gateway: { order: titleModel.gatewayOrder },
-    },
-  });
-  return text
-    .replace(/^[#*"\s]+/, "")
-    .replace(/["]+$/, "")
-    .trim();
+  if (!(await auth())) {
+    throw new Error("Unauthorized");
+  }
+  return (
+    getTextFromMessage(message).replace(/\s+/g, " ").trim().slice(0, 70) ||
+    "New chat"
+  );
 }
 
 export async function deleteTrailingMessages({ id }: { id: string }) {
@@ -55,10 +51,18 @@ export async function deleteTrailingMessages({ id }: { id: string }) {
     throw new Error("Unauthorized");
   }
 
-  await deleteMessagesByChatIdAfterTimestamp({
-    chatId: message.chatId,
-    timestamp: message.createdAt,
-  });
+  const release = await acquireChatLock(message.chatId);
+  if (!release) {
+    throw new Error("Wait for the current reply before editing");
+  }
+  try {
+    await deleteMessagesByChatIdAfterTimestamp({
+      chatId: message.chatId,
+      timestamp: message.createdAt,
+    });
+  } finally {
+    await release();
+  }
 }
 
 export async function updateChatVisibility({

@@ -1,59 +1,79 @@
-import { put } from "@vercel/blob";
 import { NextResponse } from "next/server";
-import { z } from "zod";
-
 import { auth } from "@/app/(auth)/auth";
-
-const FileSchema = z.object({
-  file: z
-    .instanceof(Blob)
-    .refine((file) => file.size <= 5 * 1024 * 1024, {
-      message: "File size should be less than 5MB",
-    })
-    .refine((file) => ["image/jpeg", "image/png"].includes(file.type), {
-      message: "File type should be JPEG or PNG",
-    }),
-});
+import { validateAttachmentBuffer } from "@/lib/files/attachment-validator";
+import {
+  buildSignedFileProxyUrl,
+  createSignedFileToken,
+} from "@/lib/files/signed-url";
+import { getDefaultPrivateFileStore } from "@/lib/files/store";
 
 export async function POST(request: Request) {
   const session = await auth();
 
-  if (!session) {
+  if (!session?.user?.id || session.user.type === "guest") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   if (request.body === null) {
-    return new Response("Request body is empty", { status: 400 });
+    return NextResponse.json(
+      { error: "Request body is empty" },
+      { status: 400 }
+    );
   }
 
   try {
     const formData = await request.formData();
-    const file = formData.get("file") as Blob;
+    const entry = formData.get("file");
 
-    if (!file) {
+    if (!(entry instanceof Blob)) {
       return NextResponse.json({ error: "No file uploaded" }, { status: 400 });
     }
 
-    const validatedFile = FileSchema.safeParse({ file });
+    const rawFilename =
+      entry instanceof File && entry.name ? entry.name : "attachment";
+    const bytes = new Uint8Array(await entry.arrayBuffer());
 
-    if (!validatedFile.success) {
-      const errorMessage = validatedFile.error.errors
-        .map((error) => error.message)
-        .join(", ");
+    const validation = validateAttachmentBuffer({
+      filename: rawFilename,
+      declaredType: entry.type,
+      bytes,
+    });
 
-      return NextResponse.json({ error: errorMessage }, { status: 400 });
+    if (!validation.valid) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
     }
 
-    const filename = (formData.get("file") as File).name;
-    const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const fileBuffer = await file.arrayBuffer();
-
     try {
-      const data = await put(`${safeName}`, fileBuffer, {
-        access: "public",
+      const store = getDefaultPrivateFileStore();
+      const stored = await store.save({
+        userId: session.user.id,
+        safeName: validation.safeName,
+        contentType: validation.mediaType,
+        bytes,
       });
 
-      return NextResponse.json(data);
+      const token = createSignedFileToken({
+        uid: session.user.id,
+        fid: stored.fileId,
+        name: validation.safeName,
+        ct: validation.mediaType,
+        size: validation.size,
+        ref: stored.storageRef,
+      });
+
+      const requestUrl = new URL(request.url);
+      const proxyUrl = buildSignedFileProxyUrl({
+        origin: requestUrl.origin,
+        basePath: process.env.NEXT_PUBLIC_BASE_PATH ?? "",
+        token,
+      });
+
+      return NextResponse.json({
+        url: proxyUrl,
+        pathname: validation.safeName,
+        contentType: validation.mediaType,
+        size: validation.size,
+      });
     } catch (_error) {
       return NextResponse.json({ error: "Upload failed" }, { status: 500 });
     }

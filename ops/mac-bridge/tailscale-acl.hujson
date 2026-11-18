@@ -1,0 +1,36 @@
+// Tailscale Admin Console -> Access Controls (HuJSON)
+// Enforces:
+// 1. ONLY `tag:bot` (plus owner admin in 12h `check` re-auth mode) can reach `tag:mac`, and ONLY on port 22 (SSH).
+// 2. `tag:bot` logs in exclusively as dedicated non-admin macOS user `botrunner` (never `caglar`, never `root`).
+// 3. `action: "check"` (`checkPeriod: "12h"`) forces periodic IdP re-authentication for human SSH sessions.
+//    (Tailscale's policy compiler forbids `check` mode when `src` is a tag like `tag:bot` because headless tags have no browser OIDC session.)
+// 4. `nodeAttrs` intentionally omits `funnel` everywhere — Tailscale Funnel is NEVER enabled.
+{
+  "tagOwners": {
+    "tag:bot": ["autogroup:admin"],
+    "tag:mac": ["autogroup:admin"]
+  },
+  "acls": [
+    { "action": "accept", "src": ["tag:bot"], "dst": ["tag:mac:22"] },
+    {
+      "action": "accept",
+      "src": ["autogroup:admin"],
+      "dst": ["autogroup:self:*", "tag:bot:22", "tag:mac:22"]
+    }
+  ],
+  "ssh": [
+    {
+      "action": "accept",
+      "src": ["tag:bot"],
+      "dst": ["tag:mac"],
+      "users": ["botrunner"]
+    },
+    {
+      "action": "check",
+      "src": ["autogroup:admin"],
+      "dst": ["tag:mac", "tag:bot"],
+      "users": ["autogroup:nonroot"],
+      "checkPeriod": "12h"
+    }
+  ]
+}

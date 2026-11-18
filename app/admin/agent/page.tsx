@@ -1,5 +1,5 @@
-import { connection } from "next/server";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
 import { Suspense } from "react";
 import { auth } from "@/app/(auth)/auth";
 import { DEFAULT_SOUL } from "@/lib/ai/prompts";
@@ -45,7 +45,7 @@ async function AgentSettingsContent() {
         </a>
       </div>
 
-      <SoulEditor initialSoul={soul} defaultSoul={DEFAULT_SOUL} />
+      <SoulEditor defaultSoul={DEFAULT_SOUL} initialSoul={soul} />
     </main>
   );
 }

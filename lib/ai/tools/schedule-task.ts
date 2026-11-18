@@ -1,7 +1,10 @@
 import { tool } from "ai";
 import type { Session } from "next-auth";
 import { z } from "zod";
-import { computeNextRunAt, validateCronExpression } from "@/lib/cron/cron-utils";
+import {
+  isRoutinesEnabled,
+  validateRoutineInput,
+} from "@/lib/cron/routine-presets";
 import { createCronJob } from "@/lib/db/queries";
 
 type ScheduleTaskProps = {
@@ -11,52 +14,48 @@ type ScheduleTaskProps = {
 export const scheduleTask = ({ session }: ScheduleTaskProps) =>
   tool({
     description:
-      "Schedule a task to run automatically on a recurring schedule. The agent will re-run with the given prompt at every cron tick. Use 5-field cron expressions (minute hour day-of-month month day-of-week). Examples: '0 9 * * *' = 9am daily, '0 9 * * 1-5' = 9am weekdays, '*/15 * * * *' = every 15 minutes.",
+      "Propose a recurring routine on a 5-field cron schedule (e.g. '0 8 * * 1-5' in 'Europe/London') for explicit owner approval.",
     inputSchema: z.object({
       cronExpression: z
         .string()
         .describe("Standard 5-field cron expression in the given timezone."),
       prompt: z
         .string()
-        .describe(
-          "The instruction to re-run when the schedule fires. Be explicit and self-contained — the cron has no chat history."
-        ),
+        .describe("Self-contained instruction to run when the schedule fires."),
       timezone: z
         .string()
-        .default("UTC")
-        .describe(
-          "IANA timezone (e.g. 'America/Los_Angeles'). Defaults to UTC."
-        ),
+        .default("Europe/London")
+        .describe("IANA timezone (defaults to Europe/London)."),
     }),
+    needsApproval: true,
     execute: async ({ cronExpression, prompt, timezone }) => {
-      if (session.user.type === "guest") {
+      if (!isRoutinesEnabled() || session.user.type === "guest") {
         return {
           error:
-            "Guest users cannot schedule tasks. Sign up for a real account first.",
+            "Schedule creation is disabled until ROUTINES_ENABLED=true is enabled",
         };
       }
-
-      const validation = validateCronExpression(cronExpression, timezone);
-      if (!validation.valid) {
-        return { error: `Invalid cron expression: ${validation.error}` };
-      }
-
-      const nextRunAt = computeNextRunAt(cronExpression, timezone);
-
-      const job = await createCronJob({
-        userId: session.user.id,
+      const validated = validateRoutineInput({
         cronExpression,
         timezone,
         prompt,
-        nextRunAt,
       });
-
+      if (!validated.ok) {
+        return { error: validated.error };
+      }
+      const created = await createCronJob({
+        userId: session.user.id,
+        cronExpression: validated.cronExpression,
+        timezone: validated.timezone,
+        prompt: validated.prompt,
+        nextRunAt: validated.nextRunAt,
+      });
       return {
-        id: job.id,
-        cronExpression: job.cronExpression,
-        timezone: job.timezone,
-        prompt: job.prompt,
-        nextRunAt: job.nextRunAt.toISOString(),
+        id: created.id,
+        cronExpression: created.cronExpression,
+        timezone: created.timezone,
+        prompt: created.prompt,
+        nextRunAt: created.nextRunAt.toISOString(),
       };
     },
   });

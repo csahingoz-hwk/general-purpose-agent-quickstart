@@ -1,11 +1,17 @@
 import type { InferUITool, UIMessage } from "ai";
 import { z } from "zod";
 import type { ArtifactKind } from "@/components/chat/artifact";
+import type { askUserQuestion } from "./ai/tools/ask-question";
 import type { createDocument } from "./ai/tools/create-document";
+import type { demoInbox } from "./ai/tools/demo-inbox";
+import type { draftOutboundMessage } from "./ai/tools/draft-outbound";
+import type { getFixtures } from "./ai/tools/get-fixtures";
 import type { getWeather } from "./ai/tools/get-weather";
 import type { requestSuggestions } from "./ai/tools/request-suggestions";
 import type { updateDocument } from "./ai/tools/update-document";
+import type { webSearch } from "./ai/tools/web-search";
 import type { Suggestion } from "./db/schema";
+import type { OpenUiPayload } from "./openui/snapshot";
 
 export const messageMetadataSchema = z.object({
   createdAt: z.string(),
@@ -13,21 +19,32 @@ export const messageMetadataSchema = z.object({
 
 export type MessageMetadata = z.infer<typeof messageMetadataSchema>;
 
-type weatherTool = InferUITool<typeof getWeather>;
+type weatherTool = InferUITool<ReturnType<typeof getWeather>>;
+type fixturesTool = InferUITool<ReturnType<typeof getFixtures>>;
+type webSearchTool = InferUITool<ReturnType<typeof webSearch>>;
 type createDocumentTool = InferUITool<ReturnType<typeof createDocument>>;
+type demoInboxTool = InferUITool<typeof demoInbox>;
 type updateDocumentTool = InferUITool<ReturnType<typeof updateDocument>>;
 type requestSuggestionsTool = InferUITool<
   ReturnType<typeof requestSuggestions>
 >;
+type draftOutboundTool = InferUITool<ReturnType<typeof draftOutboundMessage>>;
+type askUserQuestionTool = InferUITool<typeof askUserQuestion>;
 
 export type ChatTools = {
+  demoInbox: demoInboxTool;
   getWeather: weatherTool;
+  getFixtures: fixturesTool;
+  webSearch: webSearchTool;
   createDocument: createDocumentTool;
   updateDocument: updateDocumentTool;
   requestSuggestions: requestSuggestionsTool;
+  draftOutboundMessage: draftOutboundTool;
+  askUserQuestion: askUserQuestionTool;
 };
 
 export type CustomUIDataTypes = {
+  "reply-status": { status: "complete" | "interrupted"; retryable: boolean };
   textDelta: string;
   imageDelta: string;
   sheetDelta: string;
@@ -40,6 +57,25 @@ export type CustomUIDataTypes = {
   clear: null;
   finish: null;
   "chat-title": string;
+  openui: OpenUiPayload;
+  "turn-status": {
+    phase: "searching" | "weather" | "fixtures" | "tool" | "thinking";
+    model: string;
+  };
+  "task-step": {
+    stepIndex: number;
+    label: string;
+    toolName: string;
+    status: "running" | "done" | "error";
+    elapsedMs: number;
+  };
+  "model-used": {
+    modelId: string;
+    modelName: string;
+    isFallback: boolean;
+    fallbackFrom?: string;
+    escalated?: boolean;
+  };
 };
 
 export type ChatMessage = UIMessage<

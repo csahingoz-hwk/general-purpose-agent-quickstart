@@ -24,7 +24,6 @@ import type { VisibilityType } from "@/components/chat/visibility-selector";
 import { useAutoResume } from "@/hooks/use-auto-resume";
 import { DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
 import type { Vote } from "@/lib/db/schema";
-import { ChatbotError } from "@/lib/errors";
 import type { ChatMessage } from "@/lib/types";
 import { fetcher, fetchWithErrorHandlers, generateUUID } from "@/lib/utils";
 
@@ -34,6 +33,7 @@ type ActiveChatContextValue = {
   setMessages: UseChatHelpers<ChatMessage>["setMessages"];
   sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
   status: UseChatHelpers<ChatMessage>["status"];
+  error: UseChatHelpers<ChatMessage>["error"];
   stop: UseChatHelpers<ChatMessage>["stop"];
   regenerate: UseChatHelpers<ChatMessage>["regenerate"];
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
@@ -45,11 +45,17 @@ type ActiveChatContextValue = {
   votes: Vote[] | undefined;
   currentModelId: string;
   setCurrentModelId: (id: string) => void;
-  showCreditCardAlert: boolean;
-  setShowCreditCardAlert: Dispatch<SetStateAction<boolean>>;
 };
 
 const ActiveChatContext = createContext<ActiveChatContextValue | null>(null);
+
+function browserTimeZone(): string | undefined {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function extractChatId(pathname: string): string | null {
   const match = pathname.match(/\/chat\/([^/]+)/);
@@ -80,7 +86,27 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
   }, [currentModelId]);
 
   const [input, setInput] = useState("");
-  const [showCreditCardAlert, setShowCreditCardAlert] = useState(false);
+  const { data: modelAvailability } = useSWR(
+    `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/models`,
+    fetcher,
+    { revalidateOnFocus: true, dedupingInterval: 60_000 }
+  );
+  useEffect(() => {
+    if (modelAvailability?.status !== "ready") {
+      return;
+    }
+    if (
+      !modelAvailability.models.some(
+        (model: { id: string }) => model.id === currentModelId
+      )
+    ) {
+      const selected = modelAvailability.defaultModelId;
+      if (selected) {
+        currentModelIdRef.current = selected;
+        setCurrentModelId(selected);
+      }
+    }
+  }, [modelAvailability, currentModelId]);
 
   const { data: chatData, isLoading } = useSWR(
     isNewChat
@@ -102,6 +128,7 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
     setMessages,
     sendMessage,
     status,
+    error,
     stop,
     regenerate,
     resumeStream,
@@ -127,25 +154,37 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       fetch: fetchWithErrorHandlers,
       prepareSendMessagesRequest(request) {
         const lastMessage = request.messages.at(-1);
+        const isRetry = request.trigger === "regenerate-message";
+        const retryUserMessage = isRetry
+          ? [...request.messages].reverse().find((msg) => msg.role === "user")
+          : undefined;
         const isToolApprovalContinuation =
-          lastMessage?.role !== "user" ||
-          request.messages.some((msg) =>
-            msg.parts?.some((part) => {
-              const state = (part as { state?: string }).state;
-              return (
-                state === "approval-responded" || state === "output-denied"
-              );
-            })
+          !isRetry &&
+          lastMessage?.role === "assistant" &&
+          lastMessage.parts.some(
+            (part) => "state" in part && part.state === "approval-responded"
           );
+
+        let activeBotSlug: string | null = null;
+        try {
+          activeBotSlug =
+            window.localStorage.getItem("assistant-active-bot")?.trim() || null;
+        } catch {
+          activeBotSlug = null;
+        }
 
         return {
           body: {
             id: request.id,
-            ...(isToolApprovalContinuation
-              ? { messages: request.messages }
-              : { message: lastMessage }),
+            ...(isRetry
+              ? { message: retryUserMessage, retry: true }
+              : isToolApprovalContinuation
+                ? { messages: request.messages }
+                : { message: lastMessage }),
             selectedChatModel: currentModelIdRef.current,
             selectedVisibilityType: visibility,
+            timeZone: browserTimeZone(),
+            ...(activeBotSlug ? { selectedBotSlug: activeBotSlug } : {}),
             ...request.body,
           },
         };
@@ -158,16 +197,14 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       mutate(unstable_serialize(getChatHistoryPaginationKey));
     },
     onError: (error) => {
-      if (error.message?.includes("AI Gateway requires a valid credit card")) {
-        setShowCreditCardAlert(true);
-      } else if (error instanceof ChatbotError) {
-        toast({ type: "error", description: error.message });
-      } else {
-        toast({
-          type: "error",
-          description: error.message || "Oops, an error occurred!",
-        });
-      }
+      // The message was already persisted by the API. Restoring it to the
+      // composer would create a second turn when sent again.
+      toast({
+        type: "error",
+        description:
+          error.message ||
+          "Couldn't finish this reply. Tap Retry response to continue.",
+      });
     },
   });
 
@@ -198,22 +235,34 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
   }, [chatId, isNewChat, setMessages]);
 
   useEffect(() => {
-    if (chatData && !isNewChat) {
+    if (modelAvailability?.status === "ready") {
       const cookieModel = document.cookie
         .split("; ")
-        .find((row) => row.startsWith("chat-model="))
+        .find((row) => row.startsWith("chat-model-manual-v2="))
         ?.split("=")[1];
       if (cookieModel) {
-        setCurrentModelId(decodeURIComponent(cookieModel));
+        const candidate = decodeURIComponent(cookieModel);
+        if (
+          modelAvailability?.models?.some(
+            (model: { id: string }) => model.id === candidate
+          )
+        ) {
+          currentModelIdRef.current = candidate;
+          setCurrentModelId(candidate);
+        }
       }
     }
-  }, [chatData, isNewChat]);
+  }, [modelAvailability]);
 
   const hasAppendedQueryRef = useRef(false);
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const query = params.get("query");
-    if (query && !hasAppendedQueryRef.current) {
+    if (
+      query &&
+      modelAvailability?.status === "ready" &&
+      !hasAppendedQueryRef.current
+    ) {
       hasAppendedQueryRef.current = true;
       window.history.replaceState(
         {},
@@ -225,7 +274,7 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
         parts: [{ type: "text", text: query }],
       });
     }
-  }, [sendMessage, chatId]);
+  }, [sendMessage, chatId, modelAvailability]);
 
   useAutoResume({
     autoResume: !isNewChat && !!chatData,
@@ -251,6 +300,7 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       setMessages,
       sendMessage,
       status,
+      error,
       stop,
       regenerate,
       addToolApprovalResponse,
@@ -262,8 +312,6 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       votes,
       currentModelId,
       setCurrentModelId,
-      showCreditCardAlert,
-      setShowCreditCardAlert,
     }),
     [
       chatId,
@@ -271,6 +319,7 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       setMessages,
       sendMessage,
       status,
+      error,
       stop,
       regenerate,
       addToolApprovalResponse,
@@ -281,7 +330,6 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       isLoading,
       votes,
       currentModelId,
-      showCreditCardAlert,
     ]
   );
 

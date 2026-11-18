@@ -1,6 +1,6 @@
-import { Suspense } from "react";
-import { connection } from "next/server";
 import { redirect } from "next/navigation";
+import { connection } from "next/server";
+import { Suspense } from "react";
 import { auth } from "@/app/(auth)/auth";
 import { getTelegramLinkStatus } from "@/lib/db/queries";
 import { LinkTelegramPanel } from "./link-panel";
@@ -23,7 +23,8 @@ async function TelegramSettingsContent() {
 
   const isGuest = session.user.type === "guest";
   const botUsername = process.env.TELEGRAM_BOT_USERNAME;
-  const hasBot = Boolean(process.env.TELEGRAM_BOT_TOKEN) && Boolean(botUsername);
+  const hasBot =
+    Boolean(process.env.TELEGRAM_BOT_TOKEN) && Boolean(botUsername);
 
   const { telegramChatId } = isGuest
     ? { telegramChatId: null }
@@ -65,9 +66,9 @@ async function TelegramSettingsContent() {
         </section>
       ) : (
         <LinkTelegramPanel
-          initialLinked={telegramChatId !== null}
-          initialChatId={telegramChatId}
           botUsername={botUsername}
+          initialChatId={telegramChatId}
+          initialLinked={telegramChatId !== null}
         />
       )}
     </main>

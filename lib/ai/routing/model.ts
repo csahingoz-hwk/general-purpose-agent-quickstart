@@ -1,0 +1,519 @@
+import { createOpenAI } from "@ai-sdk/openai";
+import type {
+  LanguageModelV4,
+  LanguageModelV4CallOptions,
+  LanguageModelV4StreamPart,
+  LanguageModelV4Usage,
+} from "@ai-sdk/provider";
+import { createGateway } from "ai";
+import { z } from "zod";
+import {
+  ARGON,
+  COPILOT_HAIKU,
+  HYDROGEN,
+  isCopilotFallbackModel,
+  isVertexModel,
+  LUNA,
+  type PremiumModelId,
+  premiumModels,
+  TERRA,
+  WEB_SEARCH_COST_USD,
+  WEB_SEARCH_MAX_CALLS,
+  WEB_SEARCH_TOOL_ID,
+} from "./catalog";
+import { inputTokenBound, reserveCost } from "./cost";
+import { gatewaySlug } from "./gateway";
+import {
+  failureKind,
+  ModelFailure,
+  mayFallback,
+  mayFallbackFromVertexToCopilot,
+} from "./policy";
+import type { InferenceSession } from "./session";
+
+/** Official API only. No Gateway, web session, hosted tool or provider fallback. */
+export function createPremiumAdapter(
+  key: string,
+  model: PremiumModelId,
+  fetcher: typeof fetch = fetch
+): LanguageModelV4 {
+  return createOpenAI({
+    apiKey: key,
+    baseURL: "https://api.openai.com/v1",
+    fetch: fetcher,
+  }).responses(model);
+}
+
+/**
+ * Native AI SDK Gateway provider. Authentication (OIDC request header on Vercel,
+ * AI_GATEWAY_API_KEY, or a local OIDC token) is resolved by the provider on every
+ * request, so rotating OIDC tokens never need manual handling here. Only the
+ * verified provider-prefixed OpenAI slug is ever requested.
+ */
+export function createGatewayAdapter(
+  model: PremiumModelId,
+  provider: (id: string) => LanguageModelV4 = createGateway()
+): LanguageModelV4 {
+  return provider(gatewaySlug(model));
+}
+
+/** One request shares its exposure/tool/fallback boundary across all SDK steps and artifacts. */
+export function createRoutedModel(
+  initial: PremiumModelId,
+  session: InferenceSession,
+  factory: (id: PremiumModelId) => LanguageModelV4,
+  {
+    gateway = false,
+    vertexSearch = false,
+  }: { gateway?: boolean; vertexSearch?: boolean } = {}
+): LanguageModelV4 {
+  function isSubscriptionBackedZeroCashModel(model: PremiumModelId): boolean {
+    return isVertexModel(model) || isCopilotFallbackModel(model);
+  }
+  function fallbackTargetFor(model: PremiumModelId): PremiumModelId | null {
+    // Owner chain: Gemini 4 Hydrogen -> Argon (escalation) -> Copilot Claude Haiku 5.5
+    // (fallback ONLY on Vertex failure/timeout via Cloud VM bridge).
+    if (model === HYDROGEN || model === ARGON) {
+      return session.available.includes(COPILOT_HAIKU) ? COPILOT_HAIKU : null;
+    }
+    if (model === COPILOT_HAIKU || model === TERRA) {
+      return null;
+    }
+    // Synthetic unit-test compatibility when createRoutedModel(LUNA, ...) is tested directly:
+    return session.available.includes(TERRA) ? TERRA : null;
+  }
+  function options(
+    model: PremiumModelId,
+    params: LanguageModelV4CallOptions
+  ): LanguageModelV4CallOptions {
+    const maxOutputTokens = Math.min(
+      params.maxOutputTokens ?? premiumModels[model].outputLimit,
+      premiumModels[model].outputLimit
+    );
+    const requestedEffort = (
+      params.providerOptions?.openai as { reasoningEffort?: string } | undefined
+    )?.reasoningEffort;
+    const safeEffort: "low" | "medium" | "high" =
+      requestedEffort === "high"
+        ? "high"
+        : requestedEffort === "medium"
+          ? "medium"
+          : requestedEffort === "low" && (model === HYDROGEN || model === LUNA)
+            ? "low"
+            : model === HYDROGEN || model === LUNA
+              ? "low"
+              : "medium";
+    if (isSubscriptionBackedZeroCashModel(model)) {
+      return {
+        ...params,
+        maxOutputTokens,
+        providerOptions: {
+          openai: { reasoningEffort: safeEffort },
+        },
+      };
+    }
+    return {
+      ...params,
+      maxOutputTokens,
+      providerOptions: {
+        openai: {
+          // Deliberately override arbitrary provider options; no paid hosted tools,
+          // persistence, premium tiers, 12h cache writes or unbounded reasoning.
+          reasoningEffort: safeEffort,
+          store: false,
+          serviceTier: "default",
+          parallelToolCalls: false,
+          promptCacheOptions: { mode: "implicit", ttl: "30m" },
+        },
+        // Keep routing on OpenAI itself: no silent hop to another host or model.
+        ...(gateway ? { gateway: { only: ["openai"] } } : {}),
+      },
+    };
+  }
+  function recordedOutcome(model: PremiumModelId, error: unknown) {
+    const failure = failureKind(error);
+    if (failure !== "transient" && failure !== "structured") {
+      return failure;
+    }
+    if (session.toolBoundary) {
+      return `${failure}_after_tool`;
+    }
+    if (session.exposed) {
+      return `${failure}_after_output`;
+    }
+    const target = fallbackTargetFor(model);
+    if (!target) {
+      return `${failure}_terra_unavailable`;
+    }
+    if (session.fallbackUsed) {
+      return `${failure}_fallback_used`;
+    }
+    return failure;
+  }
+  function next(
+    model: PremiumModelId,
+    error: unknown,
+    params: LanguageModelV4CallOptions,
+    visited: Set<PremiumModelId>
+  ): { reason: string; target: PremiumModelId } {
+    const failure = failureKind(error);
+    const target = fallbackTargetFor(model);
+    const cancelled = params.abortSignal?.aborted ?? false;
+    const allowed =
+      target !== null &&
+      !visited.has(target) &&
+      (isVertexModel(model) && target === COPILOT_HAIKU
+        ? mayFallbackFromVertexToCopilot({
+            failure,
+            exposed: session.exposed,
+            toolBoundary: session.toolBoundary,
+            used: session.fallbackUsed,
+            available: true,
+            cancelled,
+          })
+        : mayFallback({
+            failure,
+            exposed: session.exposed,
+            toolBoundary: session.toolBoundary,
+            used: session.fallbackUsed,
+            available: true,
+            cancelled,
+          }));
+    if (!allowed || !target) {
+      throw new ModelFailure(failure);
+    }
+    session.fallbackUsed = true;
+    session.activeModelId = target;
+    visited.add(target);
+    session.onFallback?.({
+      fromModel: model,
+      toModel: target,
+      reason: failure,
+    });
+    return { reason: failure, target };
+  }
+  function reserve(
+    model: PremiumModelId,
+    params: LanguageModelV4CallOptions,
+    fallbackReason?: string
+  ) {
+    params.abortSignal?.throwIfAborted();
+    if (
+      inputTokenBound({
+        prompt: params.prompt,
+        tools: params.tools,
+        responseFormat: params.responseFormat,
+      }) > 272_000
+    ) {
+      throw new ModelFailure("context");
+    }
+    const allowWebSearchOnModel = isSubscriptionBackedZeroCashModel(model)
+      ? vertexSearch
+      : gateway;
+    const searchChargePerCall = isSubscriptionBackedZeroCashModel(model)
+      ? 0
+      : WEB_SEARCH_COST_USD;
+    const searchTools =
+      params.tools?.filter(
+        (tool) => tool.type === "provider" && tool.id === WEB_SEARCH_TOOL_ID
+      ).length ?? 0;
+    if (
+      params.tools?.some(
+        (tool) =>
+          tool.type !== "function" &&
+          !(
+            allowWebSearchOnModel &&
+            tool.type === "provider" &&
+            tool.id === WEB_SEARCH_TOOL_ID
+          )
+      ) ||
+      searchTools > 1
+    ) {
+      throw new ModelFailure("tool");
+    }
+    return session.ledger.reserve({
+      model,
+      // Search is billed outside token usage on AI Gateway; Vertex AI Google
+      // Search grounding bills to GCP Ultra credit ($0 Gateway allowance).
+      reserveUsd:
+        reserveCost(
+          model,
+          {
+            prompt: params.prompt,
+            tools: params.tools,
+            responseFormat: params.responseFormat,
+          },
+          params.maxOutputTokens ?? premiumModels[model].outputLimit
+        ) +
+        searchTools * WEB_SEARCH_MAX_CALLS * searchChargePerCall,
+      fallbackReason,
+    });
+  }
+  /**
+   * AI Gateway runs the search internally and the model keeps writing in the same
+   * call, so searches appear as provider-executed tool calls inside one stream.
+   * Count every attempt (failed searches are not billed, but we never under-count).
+   */
+  function searchCalls(
+    parts: readonly { type: string; providerExecuted?: boolean }[]
+  ) {
+    return parts.filter(
+      (part) => part.type === "tool-call" && part.providerExecuted === true
+    ).length;
+  }
+  function exposed(part: LanguageModelV4StreamPart) {
+    if (
+      part.type.startsWith("tool-") ||
+      part.type === "tool-call" ||
+      part.type === "tool-result"
+    ) {
+      session.toolBoundary = true;
+    }
+    if (
+      (part.type === "text-delta" || part.type === "reasoning-delta") &&
+      part.delta
+    ) {
+      session.exposed = true;
+    }
+  }
+  return {
+    specificationVersion: "v4",
+    provider: "openai.responses",
+    modelId: initial,
+    supportedUrls: {},
+    async doGenerate(params) {
+      let model = initial;
+      let reason: string | undefined;
+      const visited = new Set<PremiumModelId>([initial]);
+      for (;;) {
+        session.activeModelId = model;
+        const opts = options(model, params);
+        const id = await reserve(model, opts, reason);
+        let usage: LanguageModelV4Usage | undefined;
+        let searches = 0;
+        try {
+          const result = await factory(model).doGenerate(opts);
+          usage = result.usage;
+          searches = searchCalls(result.content);
+          if (searches > WEB_SEARCH_MAX_CALLS) {
+            throw new ModelFailure("tool");
+          }
+          if (
+            result.finishReason.unified === "length" ||
+            result.finishReason.unified === "error"
+          ) {
+            throw new ModelFailure(
+              params.responseFormat?.type === "json"
+                ? "structured"
+                : "unavailable"
+            );
+          }
+          if (
+            params.responseFormat?.type === "json" &&
+            params.responseFormat.schema
+          ) {
+            try {
+              z.fromJSONSchema(params.responseFormat.schema).parse(
+                JSON.parse(
+                  result.structuredOutputText ??
+                    result.content
+                      .filter((p) => p.type === "text")
+                      .map((p) => p.text)
+                      .join("")
+                )
+              );
+            } catch {
+              throw new ModelFailure("structured");
+            }
+          }
+          await session.ledger.settle(
+            id,
+            model,
+            "completed",
+            usage,
+            searches *
+              (isSubscriptionBackedZeroCashModel(model)
+                ? 0
+                : WEB_SEARCH_COST_USD)
+          );
+          session.exposed = true;
+          if (result.content.some((p) => p.type === "tool-call")) {
+            session.toolBoundary = true;
+          }
+          return result;
+        } catch (error) {
+          await session.ledger.settle(
+            id,
+            model,
+            recordedOutcome(model, error),
+            usage,
+            searches *
+              (isSubscriptionBackedZeroCashModel(model)
+                ? 0
+                : WEB_SEARCH_COST_USD)
+          );
+          const fallback = next(model, error, params, visited);
+          reason = fallback.reason;
+          model = fallback.target;
+        }
+      }
+    },
+    doStream(params) {
+      let currentReader:
+        | ReadableStreamDefaultReader<LanguageModelV4StreamPart>
+        | undefined;
+      let cancelled = false;
+      return Promise.resolve({
+        stream: new ReadableStream<LanguageModelV4StreamPart>({
+          async start(controller) {
+            let model = initial;
+            let reason: string | undefined;
+            const visited = new Set<PremiumModelId>([initial]);
+            for (;;) {
+              session.activeModelId = model;
+              const opts = options(model, params);
+              let id: string | undefined;
+              let usage: LanguageModelV4Usage | undefined;
+              let searches = 0;
+              try {
+                id = await reserve(model, opts, reason);
+                const result = await factory(model).doStream(opts);
+                currentReader = result.stream.getReader();
+                const structured =
+                  params.responseFormat?.type === "json" &&
+                  params.responseFormat.schema;
+                const held: LanguageModelV4StreamPart[] = [];
+                let text = "";
+                let finished = false;
+                while (!cancelled) {
+                  params.abortSignal?.throwIfAborted();
+                  const item = await currentReader.read();
+                  if (item.done) {
+                    break;
+                  }
+                  const part = item.value;
+                  if (part.type === "error") {
+                    throw part.error;
+                  }
+                  if (searchCalls([part]) > 0) {
+                    searches++;
+                    // Cancelling the read ends the Gateway-side loop; no new search starts.
+                    if (searches > WEB_SEARCH_MAX_CALLS) {
+                      throw new ModelFailure("tool");
+                    }
+                  }
+                  if (part.type === "finish") {
+                    usage = part.usage;
+                    if (
+                      part.finishReason.unified === "length" ||
+                      part.finishReason.unified === "error"
+                    ) {
+                      throw new ModelFailure(
+                        structured ? "structured" : "unavailable"
+                      );
+                    }
+                    finished = true;
+                  }
+                  if (structured) {
+                    held.push(part);
+                    if (part.type === "text-delta") {
+                      text += part.delta;
+                    }
+                    if (text.length > 100_000 || held.length > 20_000) {
+                      throw new ModelFailure("structured");
+                    }
+                    // Never buffer or replay a tool call in structured mode.
+                    if (part.type.startsWith("tool-")) {
+                      session.toolBoundary = true;
+                      throw new ModelFailure("tool");
+                    }
+                  } else if (
+                    !session.exposed &&
+                    !session.toolBoundary &&
+                    [
+                      "stream-start",
+                      "response-metadata",
+                      "text-start",
+                      "reasoning-start",
+                    ].includes(part.type)
+                  ) {
+                    held.push(part);
+                  } else {
+                    exposed(part);
+                    for (const h of held.splice(0)) {
+                      controller.enqueue(h);
+                    }
+                    controller.enqueue(part);
+                  }
+                }
+                if (cancelled) {
+                  throw new ModelFailure("cancelled");
+                }
+                if (!finished) {
+                  throw new ModelFailure("unavailable");
+                }
+                if (structured) {
+                  try {
+                    z.fromJSONSchema(structured).parse(JSON.parse(text));
+                  } catch {
+                    throw new ModelFailure("structured");
+                  }
+                  session.exposed = true;
+                }
+                await session.ledger.settle(
+                  id,
+                  model,
+                  "completed",
+                  usage,
+                  searches *
+                    (isSubscriptionBackedZeroCashModel(model)
+                      ? 0
+                      : WEB_SEARCH_COST_USD)
+                );
+                for (const h of held) {
+                  controller.enqueue(h);
+                }
+                controller.close();
+                return;
+              } catch (error) {
+                await currentReader?.cancel().catch(() => {
+                  /* Preserve the original failure. */
+                });
+                if (id) {
+                  await session.ledger.settle(
+                    id,
+                    model,
+                    recordedOutcome(model, error),
+                    usage,
+                    searches *
+                      (isSubscriptionBackedZeroCashModel(model)
+                        ? 0
+                        : WEB_SEARCH_COST_USD)
+                  );
+                }
+                if (cancelled) {
+                  return;
+                }
+                try {
+                  const fallback = next(model, error, params, visited);
+                  reason = fallback.reason;
+                  model = fallback.target;
+                } catch (safeError) {
+                  controller.error(safeError);
+                  return;
+                }
+              } finally {
+                currentReader?.releaseLock();
+                currentReader = undefined;
+              }
+            }
+          },
+          async cancel() {
+            cancelled = true;
+            await currentReader?.cancel();
+          },
+        }),
+      });
+    },
+  };
+}

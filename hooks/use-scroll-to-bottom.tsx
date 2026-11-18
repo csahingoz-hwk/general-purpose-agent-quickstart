@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+const BOTTOM_SNAP_PX = 100;
+const JUMP_DISTANCE_PX = 200;
+
 export function useScrollToBottom() {
   const containerRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const isAtBottomRef = useRef(true);
   const isUserScrollingRef = useRef(false);
 
@@ -11,12 +15,17 @@ export function useScrollToBottom() {
     isAtBottomRef.current = isAtBottom;
   }, [isAtBottom]);
 
-  const checkIfAtBottom = useCallback(() => {
-    if (!containerRef.current) {
-      return true;
+  const measure = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) {
+      return;
     }
-    const { scrollTop, scrollHeight, clientHeight } = containerRef.current;
-    return scrollTop + clientHeight >= scrollHeight - 100;
+    const distance =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    const atBottom = distance <= BOTTOM_SNAP_PX;
+    setIsAtBottom(atBottom);
+    isAtBottomRef.current = atBottom;
+    setShowJumpToLatest(distance > JUMP_DISTANCE_PX);
   }, []);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
@@ -40,22 +49,23 @@ export function useScrollToBottom() {
     const handleScroll = () => {
       isUserScrollingRef.current = true;
       clearTimeout(scrollTimeout);
-
-      const atBottom = checkIfAtBottom();
-      setIsAtBottom(atBottom);
-      isAtBottomRef.current = atBottom;
+      measure();
 
       scrollTimeout = setTimeout(() => {
         isUserScrollingRef.current = false;
       }, 150);
     };
 
+    measure();
+    const resizeObserver = new ResizeObserver(measure);
+    resizeObserver.observe(container);
     container.addEventListener("scroll", handleScroll, { passive: true });
     return () => {
       container.removeEventListener("scroll", handleScroll);
+      resizeObserver.disconnect();
       clearTimeout(scrollTimeout);
     };
-  }, [checkIfAtBottom]);
+  }, [measure]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -72,8 +82,11 @@ export function useScrollToBottom() {
           });
           setIsAtBottom(true);
           isAtBottomRef.current = true;
+          setShowJumpToLatest(false);
         });
+        return;
       }
+      measure();
     };
 
     const mutationObserver = new MutationObserver(scrollIfNeeded);
@@ -94,11 +107,12 @@ export function useScrollToBottom() {
       mutationObserver.disconnect();
       resizeObserver.disconnect();
     };
-  }, []);
+  }, [measure]);
 
   function onViewportEnter() {
     setIsAtBottom(true);
     isAtBottomRef.current = true;
+    setShowJumpToLatest(false);
   }
 
   function onViewportLeave() {
@@ -110,12 +124,14 @@ export function useScrollToBottom() {
     setIsAtBottom(true);
     isAtBottomRef.current = true;
     isUserScrollingRef.current = false;
+    setShowJumpToLatest(false);
   }, []);
 
   return {
     containerRef,
     endRef,
     isAtBottom,
+    showJumpToLatest,
     scrollToBottom,
     onViewportEnter,
     onViewportLeave,

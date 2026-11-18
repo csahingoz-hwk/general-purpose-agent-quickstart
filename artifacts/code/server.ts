@@ -1,4 +1,5 @@
 import { streamText } from "ai";
+import { artifactSettings } from "@/lib/ai/artifact-settings";
 import { codePrompt, updateDocumentPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
 import { createDocumentHandler } from "@/lib/artifacts/server";
@@ -12,16 +13,25 @@ function stripFences(code: string): string {
 
 export const codeDocumentHandler = createDocumentHandler<"code">({
   kind: "code",
-  onCreateDocument: async ({ title, dataStream, modelId }) => {
+  onCreateDocument: async ({ title, dataStream, modelId, abortSignal }) => {
     let draftContent = "";
 
-    const { fullStream } = streamText({
+    const { stream } = streamText({
       model: getLanguageModel(modelId),
-      system: `${codePrompt}\n\nOutput ONLY the code. No explanations, no markdown fences, no wrapping.`,
-      prompt: title,
+      ...artifactSettings(
+        `${codePrompt}\n\nOutput ONLY the code. No explanations, no markdown fences, no wrapping.`,
+        title,
+        abortSignal
+      ),
     });
 
-    for await (const delta of fullStream) {
+    for await (const delta of stream) {
+      if (delta.type === "error") {
+        throw delta.error;
+      }
+      if (delta.type === "abort") {
+        throw new Error("Artifact generation interrupted");
+      }
       if (delta.type === "text-delta") {
         draftContent += delta.text;
         dataStream.write({
@@ -32,18 +42,36 @@ export const codeDocumentHandler = createDocumentHandler<"code">({
       }
     }
 
+    if (!stripFences(draftContent)) {
+      throw new Error("Empty artifact response");
+    }
     return stripFences(draftContent);
   },
-  onUpdateDocument: async ({ document, description, dataStream, modelId }) => {
+  onUpdateDocument: async ({
+    document,
+    description,
+    dataStream,
+    modelId,
+    abortSignal,
+  }) => {
     let draftContent = "";
 
-    const { fullStream } = streamText({
+    const { stream } = streamText({
       model: getLanguageModel(modelId),
-      system: `${updateDocumentPrompt(document.content, "code")}\n\nOutput ONLY the complete updated code. No explanations, no markdown fences, no wrapping.`,
-      prompt: description,
+      ...artifactSettings(
+        `${updateDocumentPrompt(document.content, "code")}\n\nOutput ONLY the complete updated code. No explanations, no markdown fences, no wrapping.`,
+        description,
+        abortSignal
+      ),
     });
 
-    for await (const delta of fullStream) {
+    for await (const delta of stream) {
+      if (delta.type === "error") {
+        throw delta.error;
+      }
+      if (delta.type === "abort") {
+        throw new Error("Artifact generation interrupted");
+      }
       if (delta.type === "text-delta") {
         draftContent += delta.text;
         dataStream.write({
@@ -54,6 +82,9 @@ export const codeDocumentHandler = createDocumentHandler<"code">({
       }
     }
 
+    if (!stripFences(draftContent)) {
+      throw new Error("Empty artifact response");
+    }
     return stripFences(draftContent);
   },
 });
