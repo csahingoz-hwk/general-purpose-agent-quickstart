@@ -2,16 +2,31 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 import type { LanguageModelV4 } from "@ai-sdk/provider";
+import { tool } from "ai";
+import { z } from "zod";
 import { resolveCloudFileUrls } from "@/components/chat/cloud-computer-card";
 import { isExcalidrawPayload } from "@/components/chat/excalidraw-card";
 import { isInfographicPayload } from "@/components/chat/infographic-card";
-import { selectToolsWithRanking } from "@/lib/ai/context/select-tools";
+import {
+  budgetModelMessages,
+  DEFAULT_REPLY_TOKENS,
+  estimateToolSchemaTokens,
+  GROQ_TOOL_TURN_BUDGET,
+} from "@/lib/ai/context/budget";
+import {
+  needsArtifactInstructions,
+  selectToolsWithRanking,
+} from "@/lib/ai/context/select-tools";
 import {
   isVisualCreationTurn,
   resolveTurnModelAndEffort,
 } from "@/lib/ai/escalation";
-import { fetchGroundedNewsBriefing } from "@/lib/ai/grounded-news";
+import {
+  fetchGroundedNewsBriefing,
+  isNewsPageOrBriefingTarget,
+} from "@/lib/ai/grounded-news";
 import { REGISTERED_APP_MODEL_IDS } from "@/lib/ai/models";
+import { systemPrompt } from "@/lib/ai/prompts";
 import { ARGON, COPILOT_HAIKU, HYDROGEN } from "@/lib/ai/routing/catalog";
 import {
   createUsageLedger,
@@ -895,4 +910,47 @@ test("Visual Routing: dashboard, diagram, infographic, and HTML page intents (EN
     generated.content[0]?.type === "text" ? generated.content[0].text : "",
     "Rendered via Copilot Haiku fallback"
   );
+
+  // Verify synthetic SDK 7 artifact turn ("Create a document about a synthetic test.") fits comfortably
+  // under GROQ_TOOL_TURN_BUDGET while news prompts still inject GROUNDED_NEWS_PAGE_RULES
+  const synthText = "Create a document about a synthetic test.";
+  const synthSelected = selectToolsWithRanking([mkUserMsg(synthText)], true);
+  assert.deepEqual(synthSelected.activeTools, ["createDocument"]);
+  const synthSys = systemPrompt({
+    supportsTools: true,
+    includeArtifacts: needsArtifactInstructions(synthSelected.activeTools),
+    includeGroundedNews: isNewsPageOrBriefingTarget({ userText: synthText }),
+    context: "Current date: Wednesday, 18 November 2026, 22:00 UTC.",
+  });
+  const createDocStubTools = {
+    createDocument: tool({
+      description:
+        "Create a document for a writing or content creation activities.",
+      inputSchema: z.object({
+        title: z.string(),
+        kind: z.enum(["text", "code", "sheet"]),
+      }),
+    }),
+  };
+  const schemaTokens = await estimateToolSchemaTokens(
+    createDocStubTools as never,
+    ["createDocument"]
+  );
+  const budgeted = budgetModelMessages({
+    messages: [{ role: "user", content: synthText }],
+    system: synthSys,
+    toolCount: 1,
+    toolSchemaTokens: schemaTokens,
+    maxOutputTokens: DEFAULT_REPLY_TOKENS,
+    requestBudget: GROQ_TOOL_TURN_BUDGET,
+  });
+  assert.equal(budgeted.tooLarge, false);
+
+  const newsSys = systemPrompt({
+    supportsTools: true,
+    includeGroundedNews: isNewsPageOrBriefingTarget({
+      userText: "Build a latest AI news HTML page",
+    }),
+  });
+  assert.match(newsSys, /News Pages & Current-Events Briefings/);
 });

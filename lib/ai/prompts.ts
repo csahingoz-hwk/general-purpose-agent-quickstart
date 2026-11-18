@@ -6,9 +6,8 @@ import {
 } from "./capability-manifest";
 import { GROUNDED_NEWS_PAGE_RULES } from "./grounded-news";
 
-export const artifactsPrompt = `Artifacts appear in the existing side panel. Use an artifact tool only for an explicit file/document request, not ordinary questions or inline answers. Use createDocument for a new artifact: code for scripts, text for writing, sheet for CSV. Supply a concise title that describes the requested content; generation happens inside the tool. For an existing artifact use editDocument for exact-string edits, updateDocument for a requested full rewrite, or requestSuggestions for requested writing advice. Make at most one artifact change per turn. After a successful tool result, give a short confirmation without repeating the entire artifact. Never claim a failed tool created or saved content.
-
-${GROUNDED_NEWS_PAGE_RULES}`;
+export const artifactsPrompt =
+  "Artifacts appear in the existing side panel. Use an artifact tool only for an explicit file/document request, not ordinary questions or inline answers. Use createDocument for a new artifact: code for scripts, text for writing, sheet for CSV. Supply a concise title that describes the requested content; generation happens inside the tool. For an existing artifact use editDocument for exact-string edits, updateDocument for a requested full rewrite, or requestSuggestions for requested writing advice. Make at most one artifact change per turn. After a successful tool result, give a short confirmation without repeating the entire artifact. Never claim a failed tool created or saved content.";
 
 export const DEFAULT_SOUL = `## Who You Are
 
@@ -140,6 +139,7 @@ export const systemPrompt = ({
   soul,
   needsOnboarding = false,
   includeArtifacts = true,
+  includeGroundedNews = false,
   includeWebSearch = false,
   includeFixtures = false,
   includeVisual = false,
@@ -151,6 +151,7 @@ export const systemPrompt = ({
 }: {
   context?: string;
   includeFixtures?: boolean;
+  includeGroundedNews?: boolean;
   includeVisual?: boolean;
   includeWebSearch?: boolean;
   includeOperatorTools?: boolean;
@@ -180,7 +181,7 @@ export const systemPrompt = ({
     return `${onboardingBlock}${soulBlock}\n\n${effectiveRegularPrompt}${manifestBlock}\n\n${timeLocationPrompt}${contextBlock}`;
   }
 
-  return `${onboardingBlock}${soulBlock}\n\n${effectiveRegularPrompt}${manifestBlock}\n\n${timeLocationPrompt}${activeOperatorConnectors ? `\n\n${operatorToolsPrompt}` : ""}${includeArtifacts ? `\n\n${artifactsPrompt}` : ""}${includeWebSearch ? `\n\n${webSearchPrompt}` : ""}${includeFixtures ? `\n\n${fixturesPrompt}` : ""}${includeVisual ? `\n\n${visualPrompt}` : ""}${contextBlock}`;
+  return `${onboardingBlock}${soulBlock}\n\n${effectiveRegularPrompt}${manifestBlock}\n\n${timeLocationPrompt}${activeOperatorConnectors ? `\n\n${operatorToolsPrompt}` : ""}${includeArtifacts ? `\n\n${artifactsPrompt}` : ""}${includeGroundedNews ? `\n\n${GROUNDED_NEWS_PAGE_RULES}` : ""}${includeWebSearch ? `\n\n${webSearchPrompt}` : ""}${includeFixtures ? `\n\n${fixturesPrompt}` : ""}${includeVisual ? `\n\n${visualPrompt}` : ""}${contextBlock}`;
 };
 
 export const codePrompt = `

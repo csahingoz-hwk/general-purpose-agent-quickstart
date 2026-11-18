@@ -42,6 +42,7 @@ import {
   safeUIStream,
 } from "@/lib/ai/conversation-state";
 import { resolveTurnModelAndEffort } from "@/lib/ai/escalation";
+import { isNewsPageOrBriefingTarget } from "@/lib/ai/grounded-news";
 import { getRequestModelAvailability } from "@/lib/ai/model-runtime";
 import {
   chatModels,
@@ -699,6 +700,9 @@ export async function POST(request: Request) {
         intentMatchedTools.length === 0 &&
         !hasPriorAssistantTurn,
       includeArtifacts: needsArtifactInstructions(requestedTools),
+      includeGroundedNews: isNewsPageOrBriefingTarget({
+        userText: finalUserText,
+      }),
       includeWebSearch: searchLane && requestedTools.includes("webSearch"),
       includeFixtures: intentMatchedTools.includes("getFixtures"),
       includeOperatorTools: hasOperatorToolOnTurn || googleConnectedAndHealthy,
