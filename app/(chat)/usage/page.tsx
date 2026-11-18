@@ -31,14 +31,87 @@ type UsageCall = {
   outcome: string;
 };
 
+type PerModelUsageRow = {
+  model: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  referenceCostUsd: number;
+};
+
+type GcpBillingPayload = {
+  reachable: boolean;
+  source: "gcp_bigquery_and_budgets" | "gcp_budgets_only" | "app_token_logs";
+  projectId: string | null;
+  billingAccountId: string;
+  currency: string;
+  monthlyCreditLimitUsd: number;
+  mtdGrossCostUsd: number | null;
+  mtdCreditsUsedUsd: number | null;
+  creditsRemainingUsd: number | null;
+  missingReason: string | null;
+  setupActionUrl: string;
+  setupActionLabel: string;
+  checkedAt: string;
+};
+
 type UsageResponse = {
   totalInputTokens?: number;
   totalOutputTokens?: number;
   requests: number;
   invocations: number;
   fallbackInvocations: number;
+  byModel?: PerModelUsageRow[];
+  gcpBilling?: GcpBillingPayload;
   calls: UsageCall[];
 };
+
+const MODEL_FRIENDLY_LABELS: Record<string, string> = {
+  "gemini-4-hydrogen": "Gemini 4 Hydrogen (Vertex)",
+  "gemini-4-argon": "Gemini 4 Argon (Vertex)",
+  "claude-haiku-5.5": "Claude Haiku 5.5 (Copilot)",
+};
+
+function deriveRowsFromCalls(calls: UsageCall[]): PerModelUsageRow[] {
+  const map = new Map<
+    string,
+    { calls: number; inputTokens: number; outputTokens: number }
+  >([
+    ["gemini-4-hydrogen", { calls: 0, inputTokens: 0, outputTokens: 0 }],
+    ["gemini-4-argon", { calls: 0, inputTokens: 0, outputTokens: 0 }],
+    ["claude-haiku-5.5", { calls: 0, inputTokens: 0, outputTokens: 0 }],
+  ]);
+  for (const c of calls) {
+    const cur = map.get(c.model) ?? {
+      calls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    };
+    cur.calls += 1;
+    cur.inputTokens += Number(c.inputTokens ?? 0);
+    cur.outputTokens += Number(c.outputTokens ?? 0);
+    map.set(c.model, cur);
+  }
+  return [...map.entries()].map(([model, agg]) => {
+    const refRate =
+      model === "gemini-4-argon"
+        ? (agg.inputTokens / 1_000_000) * 1.25 +
+          (agg.outputTokens / 1_000_000) * 5
+        : model === "gemini-4-hydrogen"
+          ? (agg.inputTokens / 1_000_000) * 0.15 +
+            (agg.outputTokens / 1_000_000) * 0.6
+          : 0;
+    return {
+      model,
+      calls: agg.calls,
+      inputTokens: agg.inputTokens,
+      outputTokens: agg.outputTokens,
+      totalTokens: agg.inputTokens + agg.outputTokens,
+      referenceCostUsd: Math.round(refRate * 10_000) / 10_000,
+    };
+  });
+}
 
 type ConnectorStatusResponse = {
   gmailReady?: boolean;
@@ -407,125 +480,207 @@ function UsagePageContent() {
           </ul>
         </section>
 
-        <section className="space-y-3">
+        <section className="space-y-3" data-testid="vertex-usage-section">
           <div>
-            <h1 className="font-semibold text-xl tracking-tight">
-              Conversation usage
+            <h1
+              aria-label="Conversation usage"
+              className="font-semibold text-xl tracking-tight"
+            >
+              Vertex AI &amp; Aylık Kredi Özeti
             </h1>
             <p className="mt-1 text-muted-foreground text-sm">
-              Informational activity stats for this UTC month. All active models
-              are covered by your subscriptions &amp; Google AI Ultra credit —
-              no pay-per-use models or internal spend caps are active.
+              Harcama ve bütçe uyarıları doğrudan Google Cloud üzerinde
+              yönetilir; uygulama içinde hiçbir yanıt engeli veya yapay kota
+              yoktur.
             </p>
           </div>
 
-          {error ? (
-            <div className="rounded-2xl border border-[color:var(--hairline)] bg-card p-4 text-muted-foreground text-sm">
-              Usage statistics are temporarily unavailable. Chat continues
-              normally.
-            </div>
-          ) : data ? (
-            <div className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card">
-              <div className="space-y-2 p-4">
-                <p
-                  className="font-medium text-[15px] text-foreground tabular-nums"
-                  data-testid="usage-summary"
-                >
-                  {data.requests} requests · {data.invocations} model calls ·{" "}
-                  {data.fallbackInvocations} Copilot fallback calls
-                </p>
+          {(() => {
+            const rows = data
+              ? (data.byModel ?? deriveRowsFromCalls(data.calls))
+              : null;
+            const gcp = data?.gcpBilling;
+            const monthlyPool = gcp?.monthlyCreditLimitUsd ?? 40;
+            const totalRefUsd = (rows ?? []).reduce(
+              (sum, r) => sum + r.referenceCostUsd,
+              0
+            );
+            const effectiveUsedUsd =
+              gcp?.reachable && gcp.mtdCreditsUsedUsd !== null
+                ? gcp.mtdCreditsUsedUsd
+                : totalRefUsd;
+            const effectiveRemainingUsd =
+              gcp?.reachable && gcp.creditsRemainingUsd !== null
+                ? gcp.creditsRemainingUsd
+                : Math.max(0, monthlyPool - totalRefUsd);
+            const fmtUsd = (val: number) => `$${val.toFixed(2)}`;
 
-                <p className="text-muted-foreground text-xs tabular-nums">
-                  {(data.totalInputTokens ?? 0).toLocaleString()} input tokens ·{" "}
-                  {(data.totalOutputTokens ?? 0).toLocaleString()} output tokens
-                </p>
+            return (
+              <div className="divide-y divide-[color:var(--hairline)] overflow-hidden rounded-2xl border border-[color:var(--hairline)] bg-card">
+                <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
+                  <div className="min-w-0">
+                    <p className="text-muted-foreground text-xs">
+                      Ay İçi Kredi Kullanımı
+                    </p>
+                    <p
+                      className="mt-0.5 font-semibold text-base text-foreground tabular-nums"
+                      data-testid="usage-summary"
+                    >
+                      {rows ? fmtUsd(effectiveUsedUsd) : "—"}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {gcp?.reachable
+                        ? "Google Cloud gerçek veri"
+                        : "Token referans tahmini"}
+                    </p>
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="text-muted-foreground text-xs">Kalan Kredi</p>
+                    <p className="mt-0.5 font-semibold text-base text-emerald-700 tabular-nums dark:text-emerald-300">
+                      {rows
+                        ? `${gcp?.reachable ? "" : "~"}${fmtUsd(effectiveRemainingUsd)}`
+                        : "—"}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      /${monthlyPool.toFixed(2)} Ultra kredi
+                    </p>
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="text-muted-foreground text-xs">
+                      Toplam Token (Ay)
+                    </p>
+                    <p className="mt-0.5 font-semibold text-base text-foreground tabular-nums">
+                      {data
+                        ? (
+                            (data.totalInputTokens ?? 0) +
+                            (data.totalOutputTokens ?? 0)
+                          ).toLocaleString()
+                        : "—"}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {data ? `${data.invocations} model çağrısı` : "Bu ay"}
+                    </p>
+                  </div>
+
+                  <div className="min-w-0">
+                    <p className="text-muted-foreground text-xs">
+                      Net Nakit Maliyet
+                    </p>
+                    <p className="mt-0.5 font-semibold text-base text-foreground tabular-nums">
+                      $0.00
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Ultra kredi + Copilot aboneliği
+                    </p>
+                  </div>
+                </div>
+
+                {gcp && !gcp.reachable && gcp.missingReason && (
+                  <div
+                    className="flex flex-wrap items-center justify-between gap-2 bg-muted/35 px-4 py-3 text-xs"
+                    data-testid="gcp-billing-setup-banner"
+                  >
+                    <p className="min-w-0 flex-1 text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        Canlı Google Cloud fatura verisi bekleniyor:{" "}
+                      </span>
+                      {gcp.missingReason} Aşağıda uygulama içi aylık token
+                      kayıtları gösteriliyor.
+                    </p>
+                    <Link
+                      className="inline-flex min-h-9 shrink-0 items-center rounded-full border border-[color:var(--hairline)] bg-background px-3 font-medium text-foreground text-xs hover:bg-muted"
+                      href="/setup#setup-gcp_billing"
+                    >
+                      Kurulumda aç
+                    </Link>
+                  </div>
+                )}
+
+                {error && !data && (
+                  <div className="px-4 py-3 text-muted-foreground text-xs">
+                    Kullanım tablosu şu an yenilenemedi; sohbet kesintisiz devam
+                    eder.
+                  </div>
+                )}
+
+                <div className="w-full overflow-x-auto">
+                  <table
+                    className="w-full text-left text-xs tabular-nums"
+                    data-testid="vertex-finance-table"
+                  >
+                    <thead className="border-[color:var(--hairline)] border-b bg-muted/25 text-muted-foreground">
+                      <tr>
+                        <th className="px-4 py-2.5 font-medium">Model</th>
+                        <th className="px-3 py-2.5 text-right font-medium">
+                          Token (Giriş / Çıkış)
+                        </th>
+                        <th className="px-3 py-2.5 text-right font-medium">
+                          Tahmini Maliyet
+                        </th>
+                        <th className="px-4 py-2.5 text-right font-medium">
+                          Kalan Kredi
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[color:var(--hairline)]">
+                      {rows
+                        ? rows.map((row) => {
+                            const isCopilot = row.model === "claude-haiku-5.5";
+                            return (
+                              <tr key={row.model}>
+                                <td className="max-w-[140px] break-words px-4 py-2.5 sm:max-w-none">
+                                  <span className="font-medium text-foreground">
+                                    {MODEL_FRIENDLY_LABELS[row.model] ??
+                                      row.model}
+                                  </span>
+                                  <span className="block text-[11px] text-muted-foreground">
+                                    {row.calls} çağrı
+                                  </span>
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-2.5 text-right text-foreground">
+                                  {row.totalTokens.toLocaleString()}
+                                  <span className="block text-[11px] text-muted-foreground">
+                                    {row.inputTokens.toLocaleString()} G /{" "}
+                                    {row.outputTokens.toLocaleString()} Ç
+                                  </span>
+                                </td>
+                                <td className="whitespace-nowrap px-3 py-2.5 text-right text-foreground">
+                                  {isCopilot
+                                    ? "$0.00 (Abonelik)"
+                                    : `$${row.referenceCostUsd.toFixed(4)}`}
+                                </td>
+                                <td className="whitespace-nowrap px-4 py-2.5 text-right text-muted-foreground">
+                                  {isCopilot
+                                    ? "Copilot dahil"
+                                    : `${gcp?.reachable ? "" : "~"}${fmtUsd(effectiveRemainingUsd)}`}
+                                </td>
+                              </tr>
+                            );
+                          })
+                        : ["r1", "r2", "r3"].map((sk) => (
+                            <tr key={sk}>
+                              <td className="px-4 py-3">
+                                <div className="h-3.5 w-32 animate-pulse rounded bg-muted" />
+                              </td>
+                              <td className="px-3 py-3 text-right">
+                                <div className="ml-auto h-3.5 w-16 animate-pulse rounded bg-muted" />
+                              </td>
+                              <td className="px-3 py-3 text-right">
+                                <div className="ml-auto h-3.5 w-14 animate-pulse rounded bg-muted" />
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <div className="ml-auto h-3.5 w-16 animate-pulse rounded bg-muted" />
+                              </td>
+                            </tr>
+                          ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-
-              {data.calls.length > 0 && (
-                <details className="group">
-                  <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between px-4 py-3 font-medium text-foreground text-sm hover:bg-muted/40">
-                    <span>Detailed call records ({data.calls.length})</span>
-                    <span className="text-muted-foreground text-xs group-open:hidden">
-                      Show
-                    </span>
-                    <span className="hidden text-muted-foreground text-xs group-open:inline">
-                      Hide
-                    </span>
-                  </summary>
-
-                  <div className="divide-y divide-[color:var(--hairline)] border-[color:var(--hairline)] border-t sm:hidden">
-                    {data.calls.map((call, index) => (
-                      <div
-                        className="space-y-1 px-4 py-3 text-xs tabular-nums"
-                        key={`m-${call.requestId}-${index}`}
-                      >
-                        <div className="flex items-center justify-between font-medium text-foreground">
-                          <span>{call.model}</span>
-                          <span>{call.outcome}</span>
-                        </div>
-                        <div className="flex items-center justify-between text-muted-foreground">
-                          <time>
-                            {new Date(call.createdAt).toLocaleString()}
-                          </time>
-                        </div>
-                        <div className="text-muted-foreground">
-                          In {call.inputTokens ?? "—"} · Cached{" "}
-                          {call.cachedInputTokens ?? "—"} · Out{" "}
-                          {call.outputTokens ?? "—"}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="hidden max-w-full overflow-x-auto border-[color:var(--hairline)] border-t px-4 py-2 sm:block">
-                    <table className="w-full text-left text-xs tabular-nums">
-                      <thead className="text-muted-foreground">
-                        <tr>
-                          <th className="py-2 font-medium">Model</th>
-                          <th className="py-2 font-medium">
-                            Input / cached / written
-                          </th>
-                          <th className="py-2 font-medium">
-                            Output / reasoning
-                          </th>
-                          <th className="py-2 font-medium">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[color:var(--hairline)]">
-                        {data.calls.map((call, index) => (
-                          <tr key={`${call.requestId}-${index}`}>
-                            <td className="py-2.5 pr-3">
-                              <span className="font-medium text-foreground">
-                                {call.model}
-                              </span>
-                              <br />
-                              <time className="text-muted-foreground">
-                                {new Date(call.createdAt).toLocaleString()}
-                              </time>
-                            </td>
-                            <td className="py-2.5 pr-3">
-                              {call.inputTokens ?? "—"} /{" "}
-                              {call.cachedInputTokens ?? "—"} /{" "}
-                              {call.cacheWriteTokens ?? "—"}
-                            </td>
-                            <td className="py-2.5 pr-3">
-                              {call.outputTokens ?? "—"} /{" "}
-                              {call.reasoningTokens ?? "—"}
-                            </td>
-                            <td className="py-2.5">{call.outcome}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </details>
-              )}
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-[color:var(--hairline)] bg-card p-4 text-muted-foreground text-sm">
-              Loading…
-            </div>
-          )}
+            );
+          })()}
         </section>
       </div>
     </main>

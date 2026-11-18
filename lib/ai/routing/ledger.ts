@@ -1,6 +1,10 @@
 import type { LanguageModelV4Usage } from "@ai-sdk/provider";
 import postgres from "postgres";
+import { estimateReferenceModelUsd } from "@/lib/billing/vertex-cloud-usage";
 import {
+  ARGON,
+  COPILOT_HAIKU,
+  HYDROGEN,
   isCopilotFallbackModel,
   isVertexModel,
   type PremiumModelId,
@@ -93,6 +97,54 @@ export function createUsageLedger(
   };
 }
 
+export type PerModelUsageRow = {
+  model: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  referenceCostUsd: number;
+};
+
+export function summarizeCallsByModel(
+  rows: ReadonlyArray<{
+    model: string;
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+  }>
+): PerModelUsageRow[] {
+  const bucket = new Map<
+    string,
+    { calls: number; inputTokens: number; outputTokens: number }
+  >();
+  for (const baseModel of [HYDROGEN, ARGON, COPILOT_HAIKU]) {
+    bucket.set(baseModel, { calls: 0, inputTokens: 0, outputTokens: 0 });
+  }
+  for (const row of rows) {
+    const cur = bucket.get(row.model) ?? {
+      calls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    };
+    cur.calls += 1;
+    cur.inputTokens += Number(row.inputTokens ?? 0);
+    cur.outputTokens += Number(row.outputTokens ?? 0);
+    bucket.set(row.model, cur);
+  }
+  return [...bucket.entries()].map(([model, agg]) => ({
+    model,
+    calls: agg.calls,
+    inputTokens: agg.inputTokens,
+    outputTokens: agg.outputTokens,
+    totalTokens: agg.inputTokens + agg.outputTokens,
+    referenceCostUsd:
+      Math.round(
+        estimateReferenceModelUsd(model, agg.inputTokens, agg.outputTokens) *
+          10_000
+      ) / 10_000,
+  }));
+}
+
 export async function usageSummary(userId: string) {
   const db = sql();
   if (!db) {
@@ -103,16 +155,31 @@ export async function usageSummary(userId: string) {
       invocations: 0,
       requests: 0,
       fallbackInvocations: 0,
+      byModel: summarizeCallsByModel([]),
       calls: [],
     };
   }
-  const rows = await db`
+  const rows = await db<
+    {
+      model: string;
+      requestId: string;
+      fallbackReason: string | null;
+      createdAt: Date;
+      inputTokens: number | null;
+      cachedInputTokens: number | null;
+      cacheWriteTokens: number | null;
+      outputTokens: number | null;
+      reasoningTokens: number | null;
+      usageReported: boolean;
+      outcome: string;
+    }[]
+  >`
     SELECT "model", "requestId", "fallbackReason", "createdAt", "inputTokens", "cachedInputTokens", "cacheWriteTokens", "outputTokens", "reasoningTokens", "usageReported", "outcome"
     FROM "ModelUsage"
     WHERE "userId" = ${userId}
       AND "createdAt" >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
     ORDER BY "createdAt" DESC
-    LIMIT 200
+    LIMIT 500
   `;
   const totalInputTokens = rows.reduce(
     (sum, r) => sum + Number(r.inputTokens ?? 0),
@@ -129,6 +196,7 @@ export async function usageSummary(userId: string) {
     invocations: rows.length,
     requests: new Set(rows.map((r) => r.requestId)).size,
     fallbackInvocations: rows.filter((r) => r.fallbackReason).length,
+    byModel: summarizeCallsByModel(rows),
     calls: rows,
   };
 }

@@ -3,6 +3,7 @@ import { auth } from "@/app/(auth)/auth";
 import { clearLiveCapabilityManifestCache } from "@/lib/ai/capability-manifest";
 import { isCopilotTokenConfigured } from "@/lib/ai/copilot-vm-model";
 import { vertexEnabled } from "@/lib/ai/routing/catalog";
+import { getVertexCloudBillingStatus } from "@/lib/billing/vertex-cloud-usage";
 import { isCloudComputerConfigured } from "@/lib/cloud-computer/client";
 import {
   GITHUB_VAULT_SECRET_NAME,
@@ -82,7 +83,7 @@ export async function GET(request: Request) {
   const vaultStore =
     vaultReady && dbReady ? createPostgresVaultStore() : undefined;
 
-  const [redisReady, secretsResult] = await Promise.all([
+  const [redisReady, secretsResult, gcpBilling] = await Promise.all([
     redisConfigured
       ? Promise.race([
           pingRedis(),
@@ -94,6 +95,10 @@ export async function GET(request: Request) {
     vaultStore
       ? vaultStore.listSecrets(session.user.id).catch(() => [])
       : Promise.resolve([]),
+    Promise.race([
+      getVertexCloudBillingStatus({ forceRefresh }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500)),
+    ]).catch(() => null),
   ]);
 
   for (const s of secretsResult) {
@@ -144,6 +149,20 @@ export async function GET(request: Request) {
       actionKind: aiReady ? "none" : "external_link",
       externalUrl: aiReady ? undefined : "https://vercel.com/dashboard",
       externalLabel: aiReady ? undefined : "Open Vercel",
+    },
+    {
+      id: "gcp_billing",
+      label: "Google Cloud Billing & Ultra credit telemetry (Vertex)",
+      summary: gcpBilling?.reachable
+        ? `Canlı Google Cloud fatura akışı aktif — bu ay $${(gcpBilling.mtdCreditsUsedUsd ?? 0).toFixed(2)} kredi kullanıldı, $${(gcpBilling.creditsRemainingUsd ?? gcpBilling.monthlyCreditLimitUsd).toFixed(2)} kredi kaldı (1 saat önbellekli).`
+        : (gcpBilling?.missingReason ??
+          "Canlı Vertex fatura ve kalan Ultra kredi bakiyesi için Cloud Billing + Budgets API, BigQuery Billing Export ve 'roles/billing.viewer' yetkisini açın."),
+      status: gcpBilling?.reachable ? "ready" : "action_needed",
+      actionKind: "external_link",
+      externalUrl:
+        gcpBilling?.setupActionUrl ??
+        "https://console.cloud.google.com/flows/enableapi?apiid=cloudbilling.googleapis.com,billingbudgets.googleapis.com,bigquery.googleapis.com",
+      externalLabel: gcpBilling?.setupActionLabel ?? "Enable Billing APIs",
     },
     {
       id: "copilot_fallback",

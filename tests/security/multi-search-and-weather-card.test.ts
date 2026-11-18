@@ -635,7 +635,7 @@ test("Vertex AI Ultra zero pay-per-use routing: ONLY Hydrogen & Argon in chatMod
   assert.equal(preparedRetry.replaceId, emptyTurnStatusStub.id);
   assert.match(
     safeModelError(new Error("model_transient"), "Hello"),
-    /Retry response.*No paid fallback was used/
+    /Retry response/
   );
 });
 

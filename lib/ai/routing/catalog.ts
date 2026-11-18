@@ -94,11 +94,6 @@ export function isOpenAIPremiumModel(
 ): id is "gpt-6.1-terra" | "gpt-6-luna" {
   return id === TERRA || id === LUNA;
 }
-export function isFloorCompliantModel(id: string): boolean {
-  return (
-    id === HYDROGEN || id === ARGON || id === COPILOT_HAIKU || id === TERRA
-  );
-}
 /**
  * True ONLY inside the hermetic CI wire-fixture harness (`scripts/test-sdk7-integration.sh`
  * + `tests/sdk7/provider-fixture.ts`), which intercepts `fetch` in-process and rejects

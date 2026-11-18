@@ -14,9 +14,19 @@ import {
   selectToolsWithRanking,
 } from "../../lib/ai/context/select-tools";
 import { resolveTurnModelAndEffort } from "../../lib/ai/escalation";
+import {
+  chatModels,
+  FALLBACK_CHAT_MODEL,
+  REGISTERED_APP_MODEL_IDS,
+} from "../../lib/ai/models";
 import { systemPrompt } from "../../lib/ai/prompts";
 import { ARGON, HYDROGEN } from "../../lib/ai/routing/catalog";
+import { summarizeCallsByModel } from "../../lib/ai/routing/ledger";
 import { createVertexGeminiAdapter } from "../../lib/ai/vertex-model";
+import {
+  clearVertexCloudBillingCacheForTests,
+  getVertexCloudBillingStatus,
+} from "../../lib/billing/vertex-cloud-usage";
 import { clearGoogleWorkspaceHealthCache } from "../../lib/connectors/google-health";
 import type { ChatMessage } from "../../lib/types";
 import type { SecretVaultStore } from "../../lib/vault/secret-vault";
@@ -465,4 +475,143 @@ test("Erroring -> records exact technical cause + retry/reconnect action + Setup
     clearGoogleWorkspaceHealthCache();
     clearLiveCapabilityManifestCache();
   }
+});
+
+test("Model registry contains only Vertex (Hydrogen/Argon) and Copilot Haiku", () => {
+  assert.deepEqual(
+    chatModels.map((m) => m.id),
+    ["gemini-4-hydrogen", "gemini-4-argon"]
+  );
+  assert.equal(FALLBACK_CHAT_MODEL, "claude-haiku-5.5");
+  assert.deepEqual(REGISTERED_APP_MODEL_IDS, [
+    "gemini-4-hydrogen",
+    "gemini-4-argon",
+    "claude-haiku-5.5",
+  ]);
+});
+
+test("Google Cloud Vertex billing reports MTD cost vs remaining credit (1h cached) or falls back cleanly to per-model token logs + exact Setup diagnostic", async () => {
+  clearVertexCloudBillingCacheForTests();
+
+  // 1. Live Google Cloud Billing + Budgets + BigQuery Export path
+  const liveBilling = await getVertexCloudBillingStatus({
+    projectId: "project-cd0bc64c-0025-446c-b41",
+    getAccessToken: () => Promise.resolve("ya29.wif-test"),
+    fetchImpl: ((input: string | URL | Request) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("cloudbilling.googleapis.com/v1/projects/")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              billingAccountName: "billingAccounts/0140A2-72DEB2-62EDCD",
+              billingEnabled: true,
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      if (url.includes("billingbudgets.googleapis.com")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              budgets: [
+                {
+                  displayName: "Ultra Monthly Credit",
+                  amount: {
+                    specifiedAmount: { currencyCode: "USD", units: "40" },
+                  },
+                },
+              ],
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      if (url.endsWith("/datasets?maxResults=25")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              datasets: [{ datasetReference: { datasetId: "billing_export" } }],
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      if (url.includes("/datasets/billing_export/tables")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              tables: [
+                {
+                  tableReference: {
+                    tableId: "gcp_billing_export_v1_0140A2_72DEB2_62EDCD",
+                  },
+                },
+              ],
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      if (url.endsWith("/queries")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              rows: [
+                {
+                  f: [{ v: "3.25" }, { v: "-3.25" }, { v: "USD" }],
+                },
+              ],
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      return Promise.resolve(new Response("Not found", { status: 404 }));
+    }) as typeof fetch,
+  });
+
+  assert.equal(liveBilling.reachable, true);
+  assert.equal(liveBilling.mtdGrossCostUsd, 3.25);
+  assert.equal(liveBilling.mtdCreditsUsedUsd, 3.25);
+  assert.equal(liveBilling.creditsRemainingUsd, 36.75);
+  assert.equal(liveBilling.monthlyCreditLimitUsd, 40);
+
+  // 2. Unreachable (403 missing roles/billing.viewer) -> exact Turkish diagnostic + one-click link + per-model token table
+  const missingRoleBilling = await getVertexCloudBillingStatus({
+    projectId: "project-cd0bc64c-0025-446c-b41",
+    getAccessToken: () => Promise.resolve("ya29.wif-test"),
+    fetchImpl: (() =>
+      Promise.resolve(
+        new Response("Permission denied", { status: 403 })
+      )) as typeof fetch,
+  });
+  assert.equal(missingRoleBilling.reachable, false);
+  assert.match(
+    missingRoleBilling.missingReason ?? "",
+    /roles\/billing\.viewer/
+  );
+  assert.match(
+    missingRoleBilling.setupActionUrl,
+    /https:\/\/console\.cloud\.google\.com\/billing\//
+  );
+
+  const perModel = summarizeCallsByModel([
+    { model: "gemini-4-hydrogen", inputTokens: 100_000, outputTokens: 20_000 },
+    { model: "gemini-4-argon", inputTokens: 40_000, outputTokens: 10_000 },
+    { model: "claude-haiku-5.5", inputTokens: 15_000, outputTokens: 5000 },
+  ]);
+  assert.equal(perModel.length, 3);
+  assert.equal(perModel[0]?.model, "gemini-4-hydrogen");
+  assert.equal(perModel[0]?.totalTokens, 120_000);
+  assert.ok((perModel[0]?.referenceCostUsd ?? 0) > 0);
+  assert.equal(perModel[2]?.model, "claude-haiku-5.5");
+  assert.equal(perModel[2]?.referenceCostUsd, 0);
+
+  // Verify Setup checklist exposes `gcp_billing` anchor and Usage page never renders raw stuck "Loading…"
+  const setupSrc = readFileSync("app/api/setup-status/route.ts", "utf8");
+  assert.match(setupSrc, /id:\s*"gcp_billing"/);
+  const usageSrc = readFileSync("app/(chat)/usage/page.tsx", "utf8");
+  assert.doesNotMatch(usageSrc, /Loading…/);
+  assert.match(usageSrc, /data-testid="vertex-finance-table"/);
 });

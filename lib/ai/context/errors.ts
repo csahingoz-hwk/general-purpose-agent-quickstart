@@ -90,15 +90,15 @@ export function safeModelError(error: unknown, userText: string): string {
   const code = classifyModelError(error);
   if (code === "size") {
     return tr
-      ? "Sohbet bu modelin geçerli istek sınırını aştı. Daha kısa bir istek deneyebilir veya mevcut sohbetten devam edebilirsiniz. Ücretli modele geçilmedi."
-      : "This request exceeded the model's size limit. Try a shorter request or continue in this chat. No paid model was used.";
+      ? "Sohbet bu modelin geçerli istek sınırını aştı. Daha kısa bir istek deneyebilir veya mevcut sohbetten devam edebilirsiniz."
+      : "This request exceeded the model's size limit. Try a shorter request or continue in this chat.";
   }
   if (code === "rate") {
     return tr
-      ? "Modelin kullanım sınırına ulaşıldı. Biraz sonra yeniden deneyebilirsiniz. Ücretli modele geçilmedi."
-      : "The model's current usage limit was reached. Please retry shortly. No paid fallback was used.";
+      ? "Modelin kullanım sınırına ulaşıldı. Biraz sonra yeniden deneyebilirsiniz."
+      : "The model's current usage limit was reached. Please retry shortly.";
   }
   return tr
-    ? "Yanıt şu anda tamamlanamadı. Mesajın kayıtlı — yeniden denemek için aşağıdaki düğmeye dokun. Ücretli modele geçilmedi."
-    : "Couldn't finish this reply right now. Your message is saved — tap Retry response below to try again. No paid fallback was used.";
+    ? "Yanıt şu anda tamamlanamadı. Mesajın kayıtlı — yeniden denemek için aşağıdaki düğmeye dokun."
+    : "Couldn't finish this reply right now. Your message is saved — tap Retry response below to try again.";
 }
