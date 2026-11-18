@@ -9,17 +9,8 @@ import {
   mascotById,
   mascotFrameSrc,
 } from "@/lib/mascot";
-import { getCopy } from "@/lib/ui-copy";
+import { getCopy, type UiLocale } from "@/lib/ui-copy";
 import { cn } from "@/lib/utils";
-
-const copy = getCopy();
-
-const STATE_LABEL: Record<MascotState, string> = {
-  idle: copy.mascotStateIdle,
-  thinking: copy.mascotStateThinking,
-  working: copy.mascotStateWorking,
-  done: copy.mascotStateDone,
-};
 
 type AgentMascotProps = {
   variant?: MascotVariant;
@@ -31,6 +22,7 @@ type AgentMascotProps = {
   /** Hide the accessible name when a parent control already names it. */
   decorative?: boolean;
   priority?: boolean;
+  locale?: UiLocale;
   className?: string;
 };
 
@@ -41,11 +33,19 @@ export function AgentMascot({
   animated = true,
   decorative = false,
   priority = false,
+  locale = "en",
   className,
 }: AgentMascotProps) {
   const rootRef = useRef<HTMLDivElement>(null);
   const mascot = mascotById(variant);
-  const label = `${mascot.label} assistant, ${STATE_LABEL[state]}`;
+  const copy = getCopy(locale);
+  const stateLabel: Record<MascotState, string> = {
+    idle: copy.mascotStateIdle,
+    thinking: copy.mascotStateThinking,
+    working: copy.mascotStateWorking,
+    done: copy.mascotStateDone,
+  };
+  const label = `${mascot.label} ${copy.assistant.toLowerCase()}, ${stateLabel[state]}`;
 
   useEffect(() => {
     const node = rootRef.current;

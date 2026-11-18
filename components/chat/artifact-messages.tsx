@@ -3,6 +3,8 @@ import equal from "fast-deep-equal";
 import { AnimatePresence, motion } from "framer-motion";
 import { memo } from "react";
 import { useMessages } from "@/hooks/use-messages";
+import { useUiLocale } from "@/hooks/use-ui-locale";
+import { resolveEffectiveChatLocale } from "@/lib/ai/chat-status-indicator";
 import type { Vote } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
 import type { UIArtifact } from "./artifact";
@@ -40,6 +42,20 @@ function PureArtifactMessages({
     status,
   });
 
+  const { preference: uiLocalePref, locale: detectedUiLocale } = useUiLocale();
+  const lastUserText =
+    [...messages]
+      .reverse()
+      .find((item) => item.role === "user")
+      ?.parts.filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join(" ") ?? "";
+  const activeLocale = resolveEffectiveChatLocale({
+    preference: uiLocalePref,
+    detectedUiLocale,
+    userText: lastUserText,
+  });
+
   return (
     <div
       className="flex h-full flex-col items-center gap-4 overflow-y-scroll px-4 pt-20"
@@ -52,6 +68,7 @@ function PureArtifactMessages({
           isLoading={status === "streaming" && index === messages.length - 1}
           isReadonly={isReadonly}
           key={message.id}
+          locale={activeLocale}
           message={message}
           regenerate={regenerate}
           requiresScrollPadding={
@@ -72,7 +89,7 @@ function PureArtifactMessages({
             msg.parts?.some(
               (part) => "state" in part && part.state === "approval-responded"
             )
-          ) && <ThinkingMessage key="thinking" />}
+          ) && <ThinkingMessage key="thinking" locale={activeLocale} />}
       </AnimatePresence>
 
       <motion.div

@@ -59,7 +59,7 @@ export type CustomUIDataTypes = {
   "chat-title": string;
   openui: OpenUiPayload;
   "turn-status": {
-    phase: "searching" | "weather" | "fixtures" | "tool" | "thinking";
+    phase: "searching" | "weather" | "fixtures" | "tool" | "thinking" | "done";
     model: string;
   };
   "task-step": {

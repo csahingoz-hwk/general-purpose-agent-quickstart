@@ -1,7 +1,7 @@
 "use client";
 
 import type { UseChatHelpers } from "@ai-sdk/react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useDataStream } from "@/components/chat/data-stream-provider";
 import type { ChatMessage } from "@/lib/types";
 
@@ -12,6 +12,8 @@ export type UseAutoResumeParams = {
   setMessages: UseChatHelpers<ChatMessage>["setMessages"];
 };
 
+const MAX_AUTO_RESUME_AGE_MS = 60_000;
+
 export function useAutoResume({
   autoResume,
   initialMessages,
@@ -19,6 +21,7 @@ export function useAutoResume({
   setMessages,
 }: UseAutoResumeParams) {
   const { dataStream } = useDataStream();
+  const attemptedMessageIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!autoResume) {
@@ -26,17 +29,26 @@ export function useAutoResume({
     }
 
     const mostRecentMessage = initialMessages.at(-1);
-
-    if (mostRecentMessage?.role === "user") {
-      resumeStream();
-    }
-  }, [autoResume, initialMessages.at, resumeStream]);
-
-  useEffect(() => {
-    if (!dataStream) {
+    if (mostRecentMessage?.role !== "user") {
       return;
     }
-    if (dataStream.length === 0) {
+    if (attemptedMessageIdRef.current === mostRecentMessage.id) {
+      return;
+    }
+    const createdAtIso = mostRecentMessage.metadata?.createdAt;
+    if (createdAtIso) {
+      const ageMs = Date.now() - new Date(createdAtIso).getTime();
+      if (Number.isFinite(ageMs) && ageMs > MAX_AUTO_RESUME_AGE_MS) {
+        return;
+      }
+    }
+
+    attemptedMessageIdRef.current = mostRecentMessage.id;
+    resumeStream();
+  }, [autoResume, initialMessages, resumeStream]);
+
+  useEffect(() => {
+    if (!dataStream || dataStream.length === 0) {
       return;
     }
 

@@ -80,7 +80,10 @@ import { getWeather } from "@/lib/ai/tools/get-weather";
 import { createGoogleConnectorTools } from "@/lib/ai/tools/google-connectors";
 import { listMySchedules } from "@/lib/ai/tools/list-my-schedules";
 import { createMacBridgeTools } from "@/lib/ai/tools/mac-bridge";
-import { createMemoryTools } from "@/lib/ai/tools/memory-tools";
+import {
+  createMemoryTools,
+  dedupeAssistantMemoryParts,
+} from "@/lib/ai/tools/memory-tools";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
 import { scheduleTask } from "@/lib/ai/tools/schedule-task";
 import { setHomeLocation } from "@/lib/ai/tools/set-home-location";
@@ -831,7 +834,9 @@ export async function POST(request: Request) {
                     ...(isMemoryToolsEnabled()
                       ? createMemoryTools({
                           userId: session.user.id,
-                          store: createPostgresMemoryStore(),
+                          store: memoryStore ?? createPostgresMemoryStore(),
+                          alreadySavedFact: explicitSavedFact,
+                          dedupePerTurn: true,
                         })
                       : {}),
                     ...(isGoogleConnectorsEnabled()
@@ -896,14 +901,14 @@ export async function POST(request: Request) {
                 })
               : localTools;
           // If explicit "remember this: ..." was already handled deterministically above,
-          // remove saveProfileFact from activeTools on this turn so we don't render two cards.
+          // remove saveProfileFact and addJournalEntry from activeTools on this turn so we don't render two cards.
           const activeTools = requestedTools.filter(
             (name) =>
               name in tools &&
               !(
                 (explicitSavedFact ||
                   explicitRemember?.kind === "sensitive_blocked") &&
-                name === "saveProfileFact"
+                (name === "saveProfileFact" || name === "addJournalEntry")
               )
           ) as Array<keyof typeof tools>;
           const toolSchemaTokens = await estimateToolSchemaTokens(
@@ -1119,8 +1124,9 @@ export async function POST(request: Request) {
             return;
           }
           const resolvedModelId = execution.activeModelId ?? chatModel;
+          const dedupedParts = dedupeAssistantMemoryParts(reply.parts);
           const ensuredModelParts = [
-            ...reply.parts.filter((p) => p.type !== "data-model-used"),
+            ...dedupedParts.filter((p) => p.type !== "data-model-used"),
             {
               type: "data-model-used" as const,
               data: {
@@ -1166,26 +1172,30 @@ export async function POST(request: Request) {
     });
 
     streamOwnsLock = true;
+    const hasRedisStreamResume = Boolean(process.env.REDIS_URL?.trim());
     return createUIMessageStreamResponse({
       stream,
-      async consumeSseStream({ stream: sseStream }) {
-        if (!process.env.REDIS_URL) {
-          return;
-        }
-        try {
-          const streamContext = getStreamContext();
-          if (streamContext) {
-            const streamId = generateId();
-            await createStreamId({ streamId, chatId: id });
-            await streamContext.createNewResumableStream(
-              streamId,
-              () => sseStream
-            );
+      ...(hasRedisStreamResume
+        ? {
+            async consumeSseStream({ stream: sseStream }) {
+              try {
+                const streamContext = getStreamContext();
+                if (!streamContext) {
+                  await sseStream.cancel().catch(() => undefined);
+                  return;
+                }
+                const streamId = generateId();
+                await createStreamId({ streamId, chatId: id });
+                await streamContext.createNewResumableStream(
+                  streamId,
+                  () => sseStream
+                );
+              } catch (_) {
+                await sseStream.cancel().catch(() => undefined);
+              }
+            },
           }
-        } catch (_) {
-          /* non-critical */
-        }
-      },
+        : {}),
     });
   } catch (error) {
     const vercelId = request.headers.get("x-vercel-id");

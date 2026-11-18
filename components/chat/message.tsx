@@ -6,7 +6,7 @@ import { readFixturePayload } from "@/lib/fixtures";
 import type { MascotState } from "@/lib/mascot";
 import { visualPayload } from "@/lib/openui/attach";
 import type { ChatMessage } from "@/lib/types";
-import { getCopy } from "@/lib/ui-copy";
+import { getCopy, type UiLocale } from "@/lib/ui-copy";
 import { cn, sanitizeText } from "@/lib/utils";
 import { MessageContent, MessageResponse } from "../ai-elements/message";
 import { Shimmer } from "../ai-elements/shimmer";
@@ -52,8 +52,6 @@ import {
 import { Weather } from "./weather";
 import { WebSearchCard } from "./web-search-card";
 
-const copy = getCopy();
-
 const PurePreviewMessage = ({
   addToolApprovalResponse,
   animateMascot = false,
@@ -92,6 +90,7 @@ const PurePreviewMessage = ({
   useDataStream();
 
   const { variant } = useMascotPreference();
+  const copy = getCopy(locale);
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
   const fixture = isAssistant ? fixtureFromParts(message.parts) : null;
@@ -195,6 +194,7 @@ const PurePreviewMessage = ({
       );
     });
 
+  let renderedMemoryCardInTurn = false;
   const parts = message.parts?.map((part, index) => {
     const { type } = part;
     const key = `message-${message.id}-part-${index}`;
@@ -206,6 +206,7 @@ const PurePreviewMessage = ({
           <MessageReasoning
             isLoading={isLoading || mergedReasoning.isStreaming}
             key={key}
+            locale={locale}
             reasoning={mergedReasoning.text}
           />
         );
@@ -763,6 +764,14 @@ const PurePreviewMessage = ({
       }
 
       if (toolName === "saveProfileFact" || toolName === "addJournalEntry") {
+        const isDeduplicated =
+          Boolean(output) &&
+          typeof output === "object" &&
+          (output as { deduplicated?: boolean }).deduplicated === true;
+        if (isDeduplicated || renderedMemoryCardInTurn) {
+          return null;
+        }
+        renderedMemoryCardInTurn = true;
         return (
           <SavedMemoryCard
             input={input}
@@ -940,6 +949,7 @@ const PurePreviewMessage = ({
           <AgentMascot
             animated={animateMascot}
             className="mt-1"
+            locale={locale}
             size={32}
             state={animateMascot ? mascotState : "idle"}
             variant={variant}
@@ -982,10 +992,13 @@ export const PreviewMessage = PurePreviewMessage;
 
 export const ThinkingMessage = ({
   state = "thinking",
+  locale = "en",
 }: {
   state?: MascotState;
+  locale?: UiLocale;
 }) => {
   const { variant } = useMascotPreference();
+  const copy = getCopy(locale);
 
   return (
     <div
@@ -994,7 +1007,13 @@ export const ThinkingMessage = ({
       data-testid="message-assistant-loading"
     >
       <div className="flex items-start gap-2">
-        <AgentMascot animated size={32} state={state} variant={variant} />
+        <AgentMascot
+          animated
+          locale={locale}
+          size={32}
+          state={state}
+          variant={variant}
+        />
         <div className="w-fit rounded-[22px] bg-bubble-assistant px-4 py-2.5 text-[17px] leading-[1.45]">
           <Shimmer className="font-medium" duration={1}>
             {copy.statusThinking}

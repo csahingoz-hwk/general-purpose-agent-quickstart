@@ -397,6 +397,7 @@ export function LiveVoiceButton({
   const [level, setLevel] = useState(0);
   const engineRef = useRef<LiveVoiceEngine | null>(null);
   const toolPlaceholderIdsRef = useRef<Map<string, string>>(new Map());
+  const lastVoiceMemoryToolAtRef = useRef<number>(0);
   const urlPushedRef = useRef(false);
   const persistChainRef = useRef<Promise<void>>(Promise.resolve());
 
@@ -460,6 +461,8 @@ export function LiveVoiceButton({
       ]);
       persistChainRef.current = persistChainRef.current
         .then(async () => {
+          const skipAutoMemorySave =
+            Date.now() - lastVoiceMemoryToolAtRef.current < 35_000;
           const res = await fetch(`${basePath}/api/voice/live-transcript`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -470,6 +473,7 @@ export function LiveVoiceButton({
               userText: turn.user,
               assistantText: turn.assistant,
               interrupted: turn.interrupted,
+              skipAutoMemorySave,
             }),
           });
           const data = (await res.json().catch(() => ({}))) as {
@@ -530,6 +534,9 @@ export function LiveVoiceButton({
 
   const handleToolStart = useCallback(
     (ev: LiveToolStartEvent) => {
+      if (ev.name === "saveProfileFact" || ev.name === "addJournalEntry") {
+        lastVoiceMemoryToolAtRef.current = Date.now();
+      }
       const placeholderId = generateUUID();
       const safeCallId = ev.callId.replace(/[^a-zA-Z0-9_-]/g, "_");
       toolPlaceholderIdsRef.current.set(ev.callId, placeholderId);
@@ -559,6 +566,17 @@ export function LiveVoiceButton({
 
   const handleToolDone = useCallback(
     (ev: LiveToolDoneEvent) => {
+      if (
+        ev.name === "saveProfileFact" ||
+        ev.name === "addJournalEntry" ||
+        ev.parts?.some(
+          (p) =>
+            p.type === "tool-saveProfileFact" ||
+            p.type === "tool-addJournalEntry"
+        )
+      ) {
+        lastVoiceMemoryToolAtRef.current = Date.now();
+      }
       if (ev.blocked) {
         toast.error(
           "Voice mode stopped: employer work material can't go to the personal voice service."

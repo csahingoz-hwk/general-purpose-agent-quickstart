@@ -275,14 +275,36 @@ export function markMidFlightToolsInterrupted(savedMessages: ChatMessage[]): {
   return { messages, interruptedMessages };
 }
 
-/** Sanitize tool failures too, and emit at most one fatal `error` chunk per turn. */
+/** Sanitize tool failures too, emit at most one fatal `error` chunk per turn, and emit a terminal `data-turn-status` (`done`) so the client clears `"Replying…"` immediately on finish or error. */
 export function safeUIStream(userText: string) {
   let fatalErrorEmitted = false;
+  let sawTurnStatus = false;
+  let latestModel = "";
+  let doneEmitted = false;
   return new TransformStream<
     InferUIMessageChunk<ChatMessage>,
     InferUIMessageChunk<ChatMessage>
   >({
     transform(chunk, controller) {
+      if (chunk.type === "data-turn-status") {
+        sawTurnStatus = true;
+        if (
+          chunk.data &&
+          typeof chunk.data === "object" &&
+          "model" in chunk.data &&
+          typeof chunk.data.model === "string"
+        ) {
+          latestModel = chunk.data.model;
+        }
+        if (
+          chunk.data &&
+          typeof chunk.data === "object" &&
+          "phase" in chunk.data &&
+          chunk.data.phase === "done"
+        ) {
+          doneEmitted = true;
+        }
+      }
       if (chunk.type === "error") {
         if (fatalErrorEmitted) {
           return;
@@ -292,6 +314,13 @@ export function safeUIStream(userText: string) {
           ...chunk,
           errorText: safeModelError(chunk.errorText, userText),
         });
+        if (sawTurnStatus && !doneEmitted) {
+          doneEmitted = true;
+          controller.enqueue({
+            type: "data-turn-status",
+            data: { phase: "done", model: latestModel },
+          });
+        }
         return;
       }
       controller.enqueue(
@@ -299,6 +328,15 @@ export function safeUIStream(userText: string) {
           ? { ...chunk, errorText: safeModelError(chunk.errorText, userText) }
           : chunk
       );
+    },
+    flush(controller) {
+      if (sawTurnStatus && !doneEmitted) {
+        doneEmitted = true;
+        controller.enqueue({
+          type: "data-turn-status",
+          data: { phase: "done", model: latestModel },
+        });
+      }
     },
   });
 }

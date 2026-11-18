@@ -2,7 +2,11 @@ import type { UseChatHelpers } from "@ai-sdk/react";
 import { ArrowDownIcon, HistoryIcon, RotateCcwIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMessages } from "@/hooks/use-messages";
-import { safeModelError } from "@/lib/ai/context/errors";
+import { useUiLocale } from "@/hooks/use-ui-locale";
+import {
+  resolveChatReplyIndicatorState,
+  resolveEffectiveChatLocale,
+} from "@/lib/ai/chat-status-indicator";
 import { buildEarlierInChatSummary } from "@/lib/ai/context/thread-summary-shared";
 import {
   canRetryReply,
@@ -10,7 +14,6 @@ import {
   interruptedReply,
 } from "@/lib/ai/conversation-state";
 import type { Vote } from "@/lib/db/schema";
-import { textLocale } from "@/lib/fixtures";
 import type { MascotState } from "@/lib/mascot";
 import type { ChatMessage } from "@/lib/types";
 import { getCopy } from "@/lib/ui-copy";
@@ -20,8 +23,6 @@ import { Greeting } from "./greeting";
 import { PreviewMessage, ThinkingMessage } from "./message";
 import { SuggestedActions } from "./suggested-actions";
 import type { VisibilityType } from "./visibility-selector";
-
-const copy = getCopy();
 
 type MessagesProps = {
   activity: MascotState;
@@ -88,22 +89,18 @@ function PureMessages({
     return buildEarlierInChatSummary(messages)?.summaryText ?? null;
   }, [dataStream, earlierSummary, messages]);
 
+  const { preference: uiLocalePref, locale: detectedUiLocale } = useUiLocale();
   const lastMessage = messages.at(-1);
-  const lastUserText =
-    [...messages]
-      .reverse()
-      .find((item) => item.role === "user")
-      ?.parts.filter((part) => part.type === "text")
-      .map((part) => part.text)
-      .join(" ") ?? "";
-  const activeLocale = textLocale(lastUserText);
+  const indicator = resolveChatReplyIndicatorState({
+    status,
+    messages,
+    preference: uiLocalePref,
+    detectedUiLocale,
+    error,
+  });
+  const activeLocale = indicator.locale;
   const localCopy = getCopy(activeLocale);
   const interrupted = interruptedReply(lastMessage);
-  const hasPartialAssistantText =
-    lastMessage?.role === "assistant" &&
-    lastMessage.parts.some(
-      (p) => p.type === "text" && p.text.trim().length > 0
-    );
   const hasBlockingTool = hasNonRetryableToolExecution(lastMessage);
   const showRetry =
     !isReadonly &&
@@ -113,45 +110,7 @@ function PureMessages({
       (status === "error" &&
         lastMessage?.role === "assistant" &&
         !hasBlockingTool));
-  // Existing state only: a tool part that has input but no output yet.
-  const toolRunning =
-    status === "streaming" &&
-    lastMessage?.role === "assistant" &&
-    lastMessage.parts.some(
-      (p) =>
-        p.type.startsWith("tool-") &&
-        "state" in p &&
-        (p.state === "input-streaming" || p.state === "input-available")
-    );
-  // `visible` text is shown; the rest is only announced to screen readers
-  // (the pending "Thinking…" indicator is already drawn by ThinkingMessage).
-  let replyStatus: { text: string; visible: boolean } | null = null;
-  if (status === "submitted") {
-    replyStatus = { text: localCopy.statusThinking, visible: false };
-  } else if (toolRunning) {
-    replyStatus = { text: localCopy.statusWorking, visible: true };
-  } else if (status === "streaming") {
-    replyStatus = { text: localCopy.statusReplying, visible: false };
-  } else if (interrupted?.status === "interrupted") {
-    replyStatus = {
-      text: interrupted.retryable
-        ? localCopy.statusInterrupted
-        : localCopy.interruptedAfterTool,
-      visible: true,
-    };
-  } else if (status === "error" && hasPartialAssistantText) {
-    replyStatus = {
-      text: hasBlockingTool
-        ? localCopy.interruptedAfterTool
-        : localCopy.statusInterrupted,
-      visible: true,
-    };
-  } else if (status === "error") {
-    replyStatus = {
-      text: error ? safeModelError(error, lastUserText) : localCopy.statusError,
-      visible: true,
-    };
-  }
+  const replyStatus = indicator.replyStatus;
 
   const prevChatIdRef = useRef(chatId);
   useEffect(() => {
@@ -254,15 +213,18 @@ function PureMessages({
               }
               isReadonly={isReadonly}
               key={message.id}
-              locale={textLocale(
-                messages
-                  .slice(0, index)
-                  .reverse()
-                  .find((item) => item.role === "user")
-                  ?.parts.filter((part) => part.type === "text")
-                  .map((part) => part.text)
-                  .join(" ") ?? ""
-              )}
+              locale={resolveEffectiveChatLocale({
+                preference: uiLocalePref,
+                detectedUiLocale,
+                userText:
+                  messages
+                    .slice(0, index + 1)
+                    .reverse()
+                    .find((item) => item.role === "user")
+                    ?.parts.filter((part) => part.type === "text")
+                    .map((part) => part.text)
+                    .join(" ") ?? "",
+              })}
               mascotState={message.id === animatedMessageId ? activity : "idle"}
               message={message}
               onEdit={onEditMessage}
@@ -316,8 +278,8 @@ function PureMessages({
             </div>
           )}
 
-          {status === "submitted" && messages.at(-1)?.role !== "assistant" && (
-            <ThinkingMessage state={activity} />
+          {indicator.showStandaloneThinkingBubble && (
+            <ThinkingMessage locale={activeLocale} state={activity} />
           )}
 
           <output
@@ -325,7 +287,7 @@ function PureMessages({
             className="sr-only"
             data-testid="reply-status"
           >
-            {replyStatus?.text}
+            {indicator.liveRegionText}
           </output>
 
           <div
@@ -354,7 +316,7 @@ function PureMessages({
           type="button"
         >
           <ArrowDownIcon className="size-4" />
-          {copy.jumpToLatest}
+          {localCopy.jumpToLatest}
         </button>
       </div>
     </div>

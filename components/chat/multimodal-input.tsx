@@ -796,7 +796,25 @@ function PureStopButton({
       onClick={(event) => {
         event.preventDefault();
         stop();
-        setMessages((messages) => messages);
+        setMessages((messages) => {
+          const last = messages.at(-1);
+          if (last?.role !== "assistant") {
+            return messages;
+          }
+          return [
+            ...messages.slice(0, -1),
+            {
+              ...last,
+              parts: [
+                ...last.parts.filter((p) => p.type !== "data-turn-status"),
+                {
+                  type: "data-turn-status" as const,
+                  data: { phase: "done" as const, model: "" },
+                },
+              ],
+            },
+          ];
+        });
       }}
       type="button"
     >
