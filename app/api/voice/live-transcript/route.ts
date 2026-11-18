@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
-import { getChatById, saveChat, saveMessages } from "@/lib/db/queries";
+import {
+  getChatById,
+  getMessagesByChatId,
+  saveChat,
+  saveMessages,
+} from "@/lib/db/queries";
 import { extractExplicitRememberFact } from "@/lib/memory/bulk-import";
 import {
   createPostgresMemoryStore,
@@ -16,6 +21,7 @@ const turnSchema = z.object({
   userText: z.string().max(8000).default(""),
   assistantText: z.string().max(16_000).default(""),
   interrupted: z.boolean().default(false),
+  skipAutoMemorySave: z.boolean().default(false),
 });
 
 /** Persists one committed live-voice turn into the chat history. */
@@ -64,8 +70,30 @@ export async function POST(request: Request) {
     if (existing && existing.userId !== session.user.id) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
+    let recentVoiceMemoryAlreadySaved = body.skipAutoMemorySave;
+    if (!recentVoiceMemoryAlreadySaved && isMemoryToolsEnabled() && userText) {
+      const existingMsgs = await getMessagesByChatId({
+        id: body.chatId,
+      }).catch(() => []);
+      const cutoffMs = Date.now() - 45_000;
+      recentVoiceMemoryAlreadySaved = existingMsgs.slice(-4).some((m) => {
+        const createdMs = new Date(m.createdAt).getTime();
+        if (Number.isFinite(createdMs) && createdMs < cutoffMs) {
+          return false;
+        }
+        const parts = Array.isArray(m.parts)
+          ? (m.parts as Record<string, unknown>[])
+          : [];
+        return parts.some(
+          (p) =>
+            p?.type === "tool-saveProfileFact" ||
+            p?.type === "tool-addJournalEntry"
+        );
+      });
+    }
+
     const explicitRemember =
-      isMemoryToolsEnabled() && userText
+      !recentVoiceMemoryAlreadySaved && isMemoryToolsEnabled() && userText
         ? extractExplicitRememberFact(userText)
         : null;
     const savedFact =

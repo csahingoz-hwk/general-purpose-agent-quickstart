@@ -862,7 +862,7 @@ export function createVertexGeminiAdapter(
                     },
                   ],
                 });
-                const subRes = await fetcher(endpointFor(projectId, false), {
+                const subRes = await fetcher(endpointFor(projectId, true), {
                   method: "POST",
                   headers: {
                     Authorization: `Bearer ${accessToken}`,
@@ -873,13 +873,133 @@ export function createVertexGeminiAdapter(
                 }).catch((err) =>
                   normalizeUpstreamError(err, params.abortSignal)
                 );
-                if (subRes.ok) {
-                  const subPayload =
-                    (await subRes.json()) as VertexResponsePayload;
-                  const subCand = subPayload.candidates?.[0];
-                  const subGrounding = buildGroundingSearchResults(
-                    subCand?.groundingMetadata
+                if (subRes.ok && subRes.body) {
+                  const hasFileOrDocWriteTool = (params.tools ?? []).some(
+                    (t) =>
+                      t.type === "function" &&
+                      (t.name === "cloudWriteFile" ||
+                        t.name === "createDocument")
                   );
+                  const wantsGroundedFileOrDoc =
+                    hasFileOrDocWriteTool &&
+                    (/\b(?:html|page|file|artifact|document|markdown|\.html|\.md|write\s+file|export\s+file)\b|(?<![\p{L}])(?:sayfa\p{L}*|dosya\p{L}*|belge\p{L}*|html|oluştur\p{L}*|hazırla\p{L}*)(?![\p{L}])/iu.test(
+                      latestUserQuery
+                    ) ||
+                      (deferredGroundedQueries.some((q) =>
+                        /\b(?:html|page|digest|news)\b/i.test(q)
+                      ) &&
+                        /\.html|\bhtml\b|\bpage\b|sayfa/iu.test(
+                          latestUserQuery
+                        )));
+
+                  const subReader = subRes.body
+                    .pipeThrough(new TextDecoderStream())
+                    .getReader();
+                  let subSseBuf = "";
+                  let rawSubText = "";
+                  let sawSubSseFrame = false;
+                  let subTextAcc = "";
+                  const subTextId = `vtxt-split-${Math.random().toString(36).slice(2, 8)}`;
+                  let subTextOpen = false;
+                  const subQueriesAcc: string[] = [];
+                  const subChunksAcc: NonNullable<
+                    VertexCandidate["groundingMetadata"]
+                  >["groundingChunks"] = [];
+
+                  const handleSubPayload = (
+                    subPayload: VertexResponsePayload
+                  ) => {
+                    if (subPayload.usageMetadata) {
+                      lastUsage = mapUsage(subPayload.usageMetadata);
+                    }
+                    const subCand = subPayload.candidates?.[0];
+                    if (!subCand) {
+                      return;
+                    }
+                    if (subCand.groundingMetadata?.webSearchQueries) {
+                      for (const q of subCand.groundingMetadata
+                        .webSearchQueries) {
+                        if (q && !subQueriesAcc.includes(q)) {
+                          subQueriesAcc.push(q);
+                        }
+                      }
+                    }
+                    if (subCand.groundingMetadata?.groundingChunks) {
+                      subChunksAcc.push(
+                        ...subCand.groundingMetadata.groundingChunks
+                      );
+                    }
+                    for (const p of subCand.content?.parts ?? []) {
+                      if (!p.thought && typeof p.text === "string" && p.text) {
+                        subTextAcc += p.text;
+                        if (!wantsGroundedFileOrDoc) {
+                          if (!subTextOpen) {
+                            controller.enqueue({
+                              type: "text-start",
+                              id: subTextId,
+                            });
+                            subTextOpen = true;
+                          }
+                          controller.enqueue({
+                            type: "text-delta",
+                            id: subTextId,
+                            delta: p.text,
+                          });
+                        }
+                      }
+                    }
+                  };
+
+                  for (;;) {
+                    const { done: subDone, value: subChunk } =
+                      await subReader.read();
+                    if (subDone) {
+                      break;
+                    }
+                    rawSubText += subChunk;
+                    subSseBuf += subChunk;
+                    const subLines = subSseBuf.split(/\r?\n/);
+                    subSseBuf = subLines.pop() ?? "";
+                    for (const line of subLines) {
+                      const trimmed = line.trim();
+                      if (!trimmed.startsWith("data:")) {
+                        continue;
+                      }
+                      const dataStr = trimmed.slice(5).trim();
+                      if (!dataStr || dataStr === "[DONE]") {
+                        continue;
+                      }
+                      sawSubSseFrame = true;
+                      handleSubPayload(
+                        JSON.parse(dataStr) as VertexResponsePayload
+                      );
+                    }
+                  }
+                  if (subSseBuf.trim().startsWith("data:")) {
+                    const dataStr = subSseBuf.trim().slice(5).trim();
+                    if (dataStr && dataStr !== "[DONE]") {
+                      sawSubSseFrame = true;
+                      handleSubPayload(
+                        JSON.parse(dataStr) as VertexResponsePayload
+                      );
+                    }
+                  }
+                  if (!sawSubSseFrame && rawSubText.trim()) {
+                    try {
+                      handleSubPayload(
+                        JSON.parse(rawSubText) as VertexResponsePayload
+                      );
+                    } catch {
+                      /* non-JSON empty fallback */
+                    }
+                  }
+                  if (subTextOpen) {
+                    controller.enqueue({ type: "text-end", id: subTextId });
+                  }
+                  const subGrounding = buildGroundingSearchResults({
+                    webSearchQueries: subQueriesAcc,
+                    groundingChunks: subChunksAcc,
+                  });
                   controller.enqueue({
                     type: "tool-result",
                     toolCallId: subCallId,
@@ -889,19 +1009,92 @@ export function createVertexGeminiAdapter(
                     },
                     providerExecuted: true,
                   } as unknown as LanguageModelV4StreamPart);
-                  const subText = (subCand?.content?.parts ?? [])
-                    .filter((p) => !p.thought && typeof p.text === "string")
-                    .map((p) => p.text)
-                    .join("");
-                  if (subText) {
-                    const subTextId = `vtxt-split-${Math.random().toString(36).slice(2, 8)}`;
-                    controller.enqueue({ type: "text-start", id: subTextId });
-                    controller.enqueue({
-                      type: "text-delta",
-                      id: subTextId,
-                      delta: subText,
+
+                  if (wantsGroundedFileOrDoc) {
+                    const sourceLines = (subGrounding?.results ?? [])
+                      .map((r) => `- ${r.title}: ${r.url}`)
+                      .join("\n");
+                    const groundedBrief = [
+                      `Verified Google Search date: ${new Date().toISOString().slice(0, 10)}`,
+                      subTextAcc.trim(),
+                      sourceLines
+                        ? `Verified source URLs:\n${sourceLines}`
+                        : "",
+                      "Now call the appropriate file/document tool (e.g. cloudWriteFile then cloudExportFileToChat, or createDocument) using ONLY the real items, publication dates, and clickable https:// source links above — never invent items.",
+                    ]
+                      .filter(Boolean)
+                      .join("\n\n");
+                    const nonSearchTools = (params.tools ?? []).filter(
+                      (t) =>
+                        !(
+                          t.type === "provider" && t.id === WEB_SEARCH_TOOL_ID
+                        ) && !(t.type === "function" && t.name === "webSearch")
+                    );
+                    const followBody = buildVertexRequestBody(modelId, {
+                      ...params,
+                      prompt: [
+                        ...params.prompt,
+                        {
+                          role: "user",
+                          content: [{ type: "text", text: groundedBrief }],
+                        },
+                      ],
+                      tools: nonSearchTools,
                     });
-                    controller.enqueue({ type: "text-end", id: subTextId });
+                    const followRes = await fetcher(
+                      endpointFor(projectId, true),
+                      {
+                        method: "POST",
+                        headers: {
+                          Authorization: `Bearer ${accessToken}`,
+                          "Content-Type": "application/json",
+                        },
+                        body: JSON.stringify(followBody),
+                        signal: withUpstreamTimeout(params.abortSignal),
+                      }
+                    ).catch(() => null);
+                    if (followRes?.ok && followRes.body) {
+                      const followReader = followRes.body
+                        .pipeThrough(new TextDecoderStream())
+                        .getReader();
+                      let followBuf = "";
+                      for (;;) {
+                        const { done: fDone, value: fChunk } =
+                          await followReader.read();
+                        if (fDone) {
+                          break;
+                        }
+                        followBuf += fChunk;
+                        const fLines = followBuf.split(/\r?\n/);
+                        followBuf = fLines.pop() ?? "";
+                        for (const fl of fLines) {
+                          const ft = fl.trim();
+                          if (!ft.startsWith("data:")) {
+                            continue;
+                          }
+                          const fd = ft.slice(5).trim();
+                          if (!fd || fd === "[DONE]") {
+                            continue;
+                          }
+                          processPayload(
+                            JSON.parse(fd) as VertexResponsePayload,
+                            controller
+                          );
+                        }
+                      }
+                      if (textOpen) {
+                        controller.enqueue({ type: "text-end", id: textId });
+                        textOpen = false;
+                      }
+                    } else if (subTextAcc) {
+                      controller.enqueue({ type: "text-start", id: subTextId });
+                      controller.enqueue({
+                        type: "text-delta",
+                        id: subTextId,
+                        delta: subTextAcc,
+                      });
+                      controller.enqueue({ type: "text-end", id: subTextId });
+                    }
                   }
                 } else {
                   controller.enqueue({

@@ -1,5 +1,5 @@
-import postgres from "postgres";
 import { ensureParitySchema } from "@/lib/db/ensure-parity-schema";
+import { getSharedPostgresClient } from "@/lib/db/shared-pool";
 import type { ChatMessage } from "@/lib/types";
 import {
   buildEarlierInChatSummary,
@@ -69,17 +69,11 @@ export function createInMemoryThreadSummaryStore(): ThreadSummaryStore {
   };
 }
 
-let pgClient: ReturnType<typeof postgres> | undefined;
 function getSql() {
   if (!process.env.POSTGRES_URL) {
     throw new Error("POSTGRES_URL is not configured");
   }
-  pgClient ??= postgres(process.env.POSTGRES_URL, {
-    max: 3,
-    prepare: false,
-    idle_timeout: 0,
-  });
-  return pgClient;
+  return getSharedPostgresClient(process.env.POSTGRES_URL);
 }
 
 async function readySql() {
@@ -170,17 +164,27 @@ export async function syncThreadSummary(opts: {
   messages: readonly ChatMessage[];
   store?: ThreadSummaryStore;
   threshold?: number;
+  isNewChat?: boolean;
+  prefetchedExisting?: ThreadSummaryRecord | null;
+  hasPrefetchedExisting?: boolean;
 }): Promise<{
   record: ThreadSummaryRecord | null;
   promptBlock: string;
 }> {
+  const threshold = opts.threshold ?? LONG_CHAT_MESSAGE_THRESHOLD;
+  if (opts.isNewChat && opts.messages.length < threshold) {
+    return { record: null, promptBlock: "" };
+  }
+
   const store = resolveThreadSummaryStore(opts.store);
-  const existing = await store
-    .getSummary({ chatId: opts.chatId, userId: opts.userId })
-    .catch(() => null);
+  const existing = opts.hasPrefetchedExisting
+    ? (opts.prefetchedExisting ?? null)
+    : await store
+        .getSummary({ chatId: opts.chatId, userId: opts.userId })
+        .catch(() => null);
 
   const built = buildEarlierInChatSummary(opts.messages, {
-    threshold: opts.threshold ?? LONG_CHAT_MESSAGE_THRESHOLD,
+    threshold,
   });
 
   if (!built) {

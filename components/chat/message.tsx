@@ -6,7 +6,7 @@ import { readFixturePayload } from "@/lib/fixtures";
 import type { MascotState } from "@/lib/mascot";
 import { visualPayload } from "@/lib/openui/attach";
 import type { ChatMessage } from "@/lib/types";
-import { getCopy } from "@/lib/ui-copy";
+import { getCopy, type UiLocale } from "@/lib/ui-copy";
 import { cn, sanitizeText } from "@/lib/utils";
 import { MessageContent, MessageResponse } from "../ai-elements/message";
 import { Shimmer } from "../ai-elements/shimmer";
@@ -30,8 +30,11 @@ import {
 import { useDataStream } from "./data-stream-provider";
 import { DocumentToolResult } from "./document";
 import { DocumentPreview } from "./document-preview";
+import { ExcalidrawCard, isExcalidrawPayload } from "./excalidraw-card";
 import { FictionalInboxCard } from "./fictional-inbox-card";
+import { FirecrawlCard } from "./firecrawl-card";
 import { FixtureCard } from "./fixture-card";
+import { InfographicCard, isInfographicPayload } from "./infographic-card";
 import { MacBridgeCard } from "./mac-bridge-card";
 import { useMascotPreference } from "./mascot-preference";
 import { isMediaPreviewPayload, MediaPreviewCard } from "./media-preview-card";
@@ -51,8 +54,6 @@ import {
 } from "./task-card";
 import { Weather } from "./weather";
 import { WebSearchCard } from "./web-search-card";
-
-const copy = getCopy();
 
 const PurePreviewMessage = ({
   addToolApprovalResponse,
@@ -92,6 +93,7 @@ const PurePreviewMessage = ({
   useDataStream();
 
   const { variant } = useMascotPreference();
+  const copy = getCopy(locale);
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
   const fixture = isAssistant ? fixtureFromParts(message.parts) : null;
@@ -195,6 +197,7 @@ const PurePreviewMessage = ({
       );
     });
 
+  let renderedMemoryCardInTurn = false;
   const parts = message.parts?.map((part, index) => {
     const { type } = part;
     const key = `message-${message.id}-part-${index}`;
@@ -206,6 +209,7 @@ const PurePreviewMessage = ({
           <MessageReasoning
             isLoading={isLoading || mergedReasoning.isStreaming}
             key={key}
+            locale={locale}
             reasoning={mergedReasoning.text}
           />
         );
@@ -750,7 +754,8 @@ const PurePreviewMessage = ({
           toolName === "cloudWriteFile" ||
           toolName === "cloudReadFile" ||
           toolName === "cloudExportFileToChat" ||
-          toolName === "cloudBrowseUrl")
+          toolName === "cloudBrowseUrl" ||
+          toolName === "buildHtmlPageOrDashboard")
       ) {
         return (
           <CloudComputerCard
@@ -762,7 +767,53 @@ const PurePreviewMessage = ({
         );
       }
 
+      if (
+        state === "output-available" &&
+        output &&
+        typeof output === "object" &&
+        (toolName === "firecrawlSearch" ||
+          toolName === "firecrawlScrape" ||
+          toolName === "firecrawlCrawlMap")
+      ) {
+        return (
+          <FirecrawlCard
+            key={toolCallId}
+            locale={locale}
+            output={output as Record<string, unknown>}
+            toolName={toolName}
+          />
+        );
+      }
+
+      if (
+        toolName === "createExcalidrawDiagram" &&
+        state === "output-available" &&
+        isExcalidrawPayload(output)
+      ) {
+        return (
+          <ExcalidrawCard key={toolCallId} locale={locale} payload={output} />
+        );
+      }
+
+      if (
+        toolName === "generateInfographic" &&
+        state === "output-available" &&
+        isInfographicPayload(output)
+      ) {
+        return (
+          <InfographicCard key={toolCallId} locale={locale} payload={output} />
+        );
+      }
+
       if (toolName === "saveProfileFact" || toolName === "addJournalEntry") {
+        const isDeduplicated =
+          Boolean(output) &&
+          typeof output === "object" &&
+          (output as { deduplicated?: boolean }).deduplicated === true;
+        if (isDeduplicated || renderedMemoryCardInTurn) {
+          return null;
+        }
+        renderedMemoryCardInTurn = true;
         return (
           <SavedMemoryCard
             input={input}
@@ -940,6 +991,7 @@ const PurePreviewMessage = ({
           <AgentMascot
             animated={animateMascot}
             className="mt-1"
+            locale={locale}
             size={32}
             state={animateMascot ? mascotState : "idle"}
             variant={variant}
@@ -982,10 +1034,13 @@ export const PreviewMessage = PurePreviewMessage;
 
 export const ThinkingMessage = ({
   state = "thinking",
+  locale = "en",
 }: {
   state?: MascotState;
+  locale?: UiLocale;
 }) => {
   const { variant } = useMascotPreference();
+  const copy = getCopy(locale);
 
   return (
     <div
@@ -994,7 +1049,13 @@ export const ThinkingMessage = ({
       data-testid="message-assistant-loading"
     >
       <div className="flex items-start gap-2">
-        <AgentMascot animated size={32} state={state} variant={variant} />
+        <AgentMascot
+          animated
+          locale={locale}
+          size={32}
+          state={state}
+          variant={variant}
+        />
         <div className="w-fit rounded-[22px] bg-bubble-assistant px-4 py-2.5 text-[17px] leading-[1.45]">
           <Shimmer className="font-medium" duration={1}>
             {copy.statusThinking}

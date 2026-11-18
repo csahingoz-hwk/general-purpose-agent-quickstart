@@ -9,6 +9,28 @@ type CachedStsToken = {
 };
 
 let cachedStsToken: CachedStsToken | null = null;
+let inflightStsExchange: {
+  subjectHash: string;
+  promise: Promise<string>;
+} | null = null;
+
+function extractStableJwtPrincipal(oidcJwt: string): string {
+  const parts = oidcJwt.split(".");
+  if (parts.length !== 3 || !parts[1]) {
+    return oidcJwt;
+  }
+  try {
+    const claims = JSON.parse(
+      Buffer.from(parts[1], "base64url").toString("utf8")
+    ) as { iss?: string; sub?: string };
+    if (typeof claims.sub === "string" && claims.sub.trim()) {
+      return `${claims.iss ?? ""}:${claims.sub.trim()}`;
+    }
+  } catch {
+    /* non-JSON test token; fall back to raw token string */
+  }
+  return oidcJwt;
+}
 
 export function getVertexProjectId(): string | null {
   return process.env.GOOGLE_VERTEX_PROJECT_ID?.trim() || null;
@@ -106,8 +128,13 @@ export async function getVertexWifAccessToken(
     });
   }
 
+  const audience = resolveEffectiveWorkloadAudience(
+    oidcJwt,
+    configuredAudience
+  );
+  const principal = extractStableJwtPrincipal(oidcJwt);
   const subjectHash = createHash("sha256")
-    .update(`${configuredAudience}:${oidcJwt}`)
+    .update(`${projectId}:${audience}:${principal}`)
     .digest("hex")
     .slice(0, 16);
 
@@ -120,51 +147,71 @@ export async function getVertexWifAccessToken(
     return cachedStsToken.accessToken;
   }
 
-  const audience = resolveEffectiveWorkloadAudience(
-    oidcJwt,
-    configuredAudience
-  );
-  const body = new URLSearchParams({
-    grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
-    audience,
-    scope: "https://www.googleapis.com/auth/cloud-platform",
-    requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
-    subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
-    subject_token: oidcJwt,
-  });
-
-  const res = await fetcher("https://sts.googleapis.com/v1/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body.toString(),
-    signal: AbortSignal.timeout(8000),
-  });
-
-  if (!res.ok) {
-    throw Object.assign(new Error(`vertex_sts_rejected_${res.status}`), {
-      statusCode: res.status,
-    });
+  if (
+    fetcher === fetch &&
+    inflightStsExchange &&
+    inflightStsExchange.subjectHash === subjectHash
+  ) {
+    return inflightStsExchange.promise;
   }
 
-  const json = (await res.json()) as {
-    access_token?: string;
-    expires_in?: number;
-  };
-  if (!json.access_token) {
-    throw Object.assign(new Error("vertex_sts_empty_token"), {
-      statusCode: 401,
+  const exchange = (async () => {
+    const body = new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
+      audience,
+      scope: "https://www.googleapis.com/auth/cloud-platform",
+      requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
+      subject_token_type: "urn:ietf:params:oauth:token-type:jwt",
+      subject_token: oidcJwt,
     });
+
+    const res = await fetcher("https://sts.googleapis.com/v1/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!res.ok) {
+      throw Object.assign(new Error(`vertex_sts_rejected_${res.status}`), {
+        statusCode: res.status,
+      });
+    }
+
+    const json = (await res.json()) as {
+      access_token?: string;
+      expires_in?: number;
+    };
+    if (!json.access_token) {
+      throw Object.assign(new Error("vertex_sts_empty_token"), {
+        statusCode: 401,
+      });
+    }
+
+    const ttlSec = typeof json.expires_in === "number" ? json.expires_in : 3600;
+    cachedStsToken = {
+      accessToken: json.access_token,
+      expiresAtMs: Date.now() + ttlSec * 1000,
+      subjectHash,
+    };
+    return json.access_token;
+  })();
+
+  if (fetcher === fetch) {
+    inflightStsExchange = { subjectHash, promise: exchange };
+    try {
+      return await exchange;
+    } finally {
+      if (inflightStsExchange?.promise === exchange) {
+        inflightStsExchange = null;
+      }
+    }
   }
 
-  const ttlSec = typeof json.expires_in === "number" ? json.expires_in : 3600;
-  cachedStsToken = {
-    accessToken: json.access_token,
-    expiresAtMs: now + ttlSec * 1000,
-    subjectHash,
-  };
-  return json.access_token;
+  return exchange;
 }
 
 export function clearVertexTokenCacheForTests() {
   cachedStsToken = null;
+  inflightStsExchange = null;
 }

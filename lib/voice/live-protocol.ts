@@ -970,6 +970,44 @@ export type CommittedLiveTurn = {
   interrupted: boolean;
 };
 
+const UTTERANCE_PAUSE_GAP_MS = 850;
+
+/**
+ * Joins streaming transcription chunks while ensuring separate sentences and
+ * paused utterances never glue together (`"Tamam.Tamam."` -> `"Tamam. Tamam."`,
+ * `"paylaş...Ne oldu?"` -> `"paylaş... Ne oldu?"`).
+ */
+export function appendTranscriptSegment(
+  existing: string,
+  incoming: string,
+  gapMs = 0
+): string {
+  if (!incoming) {
+    return existing;
+  }
+  if (!existing) {
+    return incoming;
+  }
+  if (gapMs >= UTTERANCE_PAUSE_GAP_MS) {
+    const trimmedPrev = existing.trimEnd();
+    const trimmedNext = incoming.trimStart();
+    if (!trimmedPrev || !trimmedNext) {
+      return `${existing}${incoming}`;
+    }
+    const endsWithPunct = /[.!?:…,;]$/.test(trimmedPrev);
+    const startsWithUpper = /^\p{Lu}/u.test(trimmedNext);
+    if (!endsWithPunct && startsWithUpper) {
+      return `${trimmedPrev}. ${trimmedNext}`;
+    }
+    return `${trimmedPrev} ${trimmedNext}`;
+  }
+
+  if (/[.!?:…]$/.test(existing) && /^[\p{L}\p{N}]/u.test(incoming)) {
+    return `${existing} ${incoming}`;
+  }
+  return `${existing}${incoming}`;
+}
+
 /**
  * Turns streamed input/output transcription chunks into committed chat turns.
  * Late input transcription chunks for the current turn still attach to `input`
@@ -982,30 +1020,40 @@ export class LiveTurnAssembler {
   private output = "";
   private outputStarted = false;
   private bargedIn = false;
+  private lastInputAtMs = 0;
+  private lastNextInputAtMs = 0;
 
   get userCaption() {
-    return (this.bargedIn ? this.nextInput : this.input).trim();
+    return normalizeTranscript(this.bargedIn ? this.nextInput : this.input);
   }
 
   get assistantCaption() {
-    return this.output.trim();
+    return normalizeTranscript(this.output);
   }
 
   get hasPendingUser() {
     return (this.bargedIn ? this.nextInput : this.input).trim().length > 0;
   }
 
-  addInput(text: string) {
+  addInput(text: string, nowMs = Date.now()) {
     if (this.bargedIn) {
-      this.nextInput += text;
+      const gap =
+        this.lastNextInputAtMs > 0
+          ? Math.max(0, nowMs - this.lastNextInputAtMs)
+          : 0;
+      this.nextInput = appendTranscriptSegment(this.nextInput, text, gap);
+      this.lastNextInputAtMs = nowMs;
     } else {
-      this.input += text;
+      const gap =
+        this.lastInputAtMs > 0 ? Math.max(0, nowMs - this.lastInputAtMs) : 0;
+      this.input = appendTranscriptSegment(this.input, text, gap);
+      this.lastInputAtMs = nowMs;
     }
   }
 
   addOutput(text: string) {
     this.outputStarted = true;
-    this.output += text;
+    this.output = appendTranscriptSegment(this.output, text, 0);
   }
 
   markOutputStarted() {
@@ -1025,7 +1073,9 @@ export class LiveTurnAssembler {
       interrupted,
     };
     this.input = this.nextInput;
+    this.lastInputAtMs = this.lastNextInputAtMs;
     this.nextInput = "";
+    this.lastNextInputAtMs = 0;
     this.output = "";
     this.outputStarted = false;
     this.bargedIn = false;
@@ -1037,14 +1087,26 @@ export class LiveTurnAssembler {
 }
 
 export function normalizeTranscript(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
+  return text
+    .replace(/\.{2,}(?=[\p{L}\p{N}])/gu, "... ")
+    .replace(/([.!?:…])(?=[\p{L}\p{N}])/gu, "$1 ")
+    .replace(/([,;])(?=[\p{L}])/gu, "$1 ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeLettersAndSpaces(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\.{2,}|…/gu, " ")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function wordSet(text: string): Set<string> {
   return new Set(
-    text
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    normalizeLettersAndSpaces(text)
       .split(/\s+/)
       .filter((w) => w.length > 1)
   );
@@ -1052,7 +1114,7 @@ function wordSet(text: string): Set<string> {
 
 /**
  * Share of the user's words that also appear in the assistant's last reply.
- * A high score on a short "user" turn means the speaker leaked into the mic.
+ * A high score on a "user" turn means the speaker leaked into the mic.
  */
 export function echoSimilarity(userText: string, assistantText: string) {
   const user = wordSet(userText);
@@ -1067,6 +1129,92 @@ export function echoSimilarity(userText: string, assistantText: string) {
     }
   }
   return shared / user.size;
+}
+
+function isSegmentEchoOfAssistant(
+  segment: string,
+  normalizedRefs: readonly string[],
+  combinedRef: string
+): boolean {
+  const segNorm = normalizeLettersAndSpaces(segment);
+  if (!segNorm) {
+    return false;
+  }
+  const words = segNorm.split(" ").filter((w) => w.length > 1);
+  // Short single-word acknowledgements like "Tamam." or "Evet." are genuine user speech unless the entire turn was only that echo.
+  if (words.length < 2) {
+    return false;
+  }
+  if (segNorm.length >= 10) {
+    for (const refNorm of normalizedRefs) {
+      if (refNorm.includes(segNorm)) {
+        return true;
+      }
+    }
+  }
+  if (words.length >= 3 && echoSimilarity(segment, combinedRef) >= 0.65) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Strips assistant loudspeaker echo from a user voice transcript — both when the
+ * entire user turn is speaker echo AND when leading/embedded sentences in a
+ * merged turn echoed the bot's own speech (e.g. `"Son gelişmelere hemen bakıyorum.
+ * Sonra bu chat'te paylaş... Ne oldu? Tamam. Tamam."` -> `"Ne oldu? Tamam. Tamam."`).
+ */
+export function stripAssistantEchoFromUserTranscript(
+  userText: string,
+  assistantTexts: readonly string[]
+): { cleaned: string; strippedEcho: boolean } {
+  const normalizedUser = normalizeTranscript(userText);
+  if (!normalizedUser) {
+    return { cleaned: "", strippedEcho: false };
+  }
+  const refs = assistantTexts.map((t) => t.trim()).filter(Boolean);
+  if (refs.length === 0) {
+    return { cleaned: normalizedUser, strippedEcho: false };
+  }
+
+  const normalizedRefs = refs.map(normalizeLettersAndSpaces).filter(Boolean);
+  const combinedRef = refs.join(" ");
+  const userNorm = normalizeLettersAndSpaces(normalizedUser);
+  const userWords = userNorm.split(" ").filter((w) => w.length > 1);
+
+  if (
+    userWords.length >= 2 &&
+    ((userNorm.length >= 10 &&
+      normalizedRefs.some((ref) => ref.includes(userNorm))) ||
+      (userWords.length >= 3 &&
+        refs.some((ref) => echoSimilarity(normalizedUser, ref) >= 0.72)))
+  ) {
+    return { cleaned: "", strippedEcho: true };
+  }
+
+  const segments = normalizedUser
+    .split(/(?<=[.!?…]|\.{2,})\s+/u)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  if (segments.length <= 1) {
+    return { cleaned: normalizedUser, strippedEcho: false };
+  }
+
+  let strippedEcho = false;
+  const kept: string[] = [];
+  for (const segment of segments) {
+    if (isSegmentEchoOfAssistant(segment, normalizedRefs, combinedRef)) {
+      strippedEcho = true;
+      continue;
+    }
+    kept.push(segment);
+  }
+
+  return {
+    cleaned: normalizeTranscript(kept.join(" ")),
+    strippedEcho,
+  };
 }
 
 // ---------------------------------------------------------------------------

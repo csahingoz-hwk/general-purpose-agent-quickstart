@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/app/(auth)/auth";
+import {
+  buildPrivateFileHttpResponse,
+  resolveFileDisposition,
+} from "@/lib/files/http-response";
 import { verifySignedFileToken } from "@/lib/files/signed-url";
 import { getDefaultPrivateFileStore } from "@/lib/files/store";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ token: string }> }
 ) {
   const session = await auth();
@@ -44,20 +48,13 @@ export async function GET(
     return NextResponse.json({ error: "File not found" }, { status: 404 });
   }
 
-  const dispositionType = payload.ct.startsWith("image/")
-    ? "inline"
-    : "attachment";
-  const safeFilename = payload.name.replace(/["\\\r\n]/g, "_");
+  const dispositionParam = new URL(request.url).searchParams.get("disposition");
+  const disposition = resolveFileDisposition(dispositionParam, payload.ct);
 
-  return new Response(Buffer.from(bytes), {
-    status: 200,
-    headers: {
-      "Content-Type": payload.ct,
-      "Content-Length": String(bytes.byteLength),
-      "Content-Disposition": `${dispositionType}; filename="${safeFilename}"`,
-      "Cache-Control": "private, no-store, max-age=0",
-      "X-Content-Type-Options": "nosniff",
-      "Content-Security-Policy": "default-src 'none'",
-    },
+  return buildPrivateFileHttpResponse({
+    bytes,
+    filename: payload.name,
+    contentType: payload.ct,
+    disposition,
   });
 }

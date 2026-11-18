@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
 import { ensureParitySchema } from "@/lib/db/ensure-parity-schema";
+import { getSharedPostgresClient } from "@/lib/db/shared-pool";
 import {
   type AtomicMemorySource,
   defaultPinnedForCategory,
@@ -446,17 +446,11 @@ export function createInMemoryMemoryStore(): MemoryStore {
   };
 }
 
-let pgClient: ReturnType<typeof postgres> | undefined;
 function getSql() {
   if (!process.env.POSTGRES_URL) {
     throw new MemoryStoreUnavailableError("POSTGRES_URL is not configured");
   }
-  pgClient ??= postgres(process.env.POSTGRES_URL, {
-    max: 3,
-    prepare: false,
-    idle_timeout: 0,
-  });
-  return pgClient;
+  return getSharedPostgresClient(process.env.POSTGRES_URL);
 }
 
 function isMissingTable(error: unknown): boolean {

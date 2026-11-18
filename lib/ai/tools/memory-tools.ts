@@ -5,23 +5,56 @@ import {
   toSelfContainedSentence,
 } from "@/lib/memory/bulk-import";
 import {
+  type JournalEntry,
   type MemorySource,
   type MemoryStore,
+  type ProfileFact,
   SensitiveMemoryBlockedError,
 } from "@/lib/memory/store";
+
+export function dedupeAssistantMemoryParts<
+  T extends { type: string; output?: unknown },
+>(parts: readonly T[]): T[] {
+  let keptMemoryCard = false;
+  return parts.filter((part) => {
+    const isMemoryCardPart =
+      part.type === "tool-saveProfileFact" ||
+      part.type === "tool-addJournalEntry";
+    if (!isMemoryCardPart) {
+      return true;
+    }
+    const isMarkedDuplicate =
+      Boolean(part.output) &&
+      typeof part.output === "object" &&
+      (part.output as { deduplicated?: boolean }).deduplicated === true;
+    if (isMarkedDuplicate || keptMemoryCard) {
+      return false;
+    }
+    keptMemoryCard = true;
+    return true;
+  });
+}
 
 export function createMemoryTools({
   userId,
   store,
   defaultSource = "chat",
+  alreadySavedFact = null,
+  dedupePerTurn = false,
 }: {
   userId: string;
   store: MemoryStore;
   defaultSource?: MemorySource;
+  alreadySavedFact?: ProfileFact | null;
+  dedupePerTurn?: boolean;
 }) {
+  let turnSavedFact: ProfileFact | null = alreadySavedFact;
+  let turnSavedJournal: JournalEntry | null = null;
+  let inFlightSavePromise: Promise<ProfileFact> | null = null;
+
   const saveProfileFact = tool({
     description:
-      "Save or update one self-contained durable sentence about the user in their memory (categories: rules, preferences, about_me, family, work, projects). Never store passwords, payment card numbers, or physical street addresses.",
+      "Save or update one self-contained durable sentence about the user in their memory (categories: rules, preferences, about_me, family, work, projects). Call at most once per turn. Never store passwords, payment card numbers, or physical street addresses.",
     inputSchema: z.object({
       category: z
         .enum([
@@ -45,8 +78,54 @@ export function createMemoryTools({
     }),
     execute: async ({ category, key, value, pinned, sharedAcrossBots }) => {
       try {
+        if (inFlightSavePromise) {
+          const firstSaved = await inFlightSavePromise;
+          return {
+            saved: true as const,
+            deduplicated: true as const,
+            fact: firstSaved,
+          };
+        }
+
         const sentence = toSelfContainedSentence(value);
-        const saved = await store.upsertProfileFact({
+        if (turnSavedFact) {
+          const existingLower = turnSavedFact.value.toLowerCase();
+          const incomingLower = sentence.toLowerCase();
+          const sameFact =
+            existingLower.includes(incomingLower) ||
+            incomingLower.includes(existingLower) ||
+            turnSavedFact.key === key.trim();
+          if (dedupePerTurn || sameFact) {
+            if (!sameFact) {
+              const combined = `${turnSavedFact.value.replace(/[.!?]+$/, "")}. ${sentence}`;
+              turnSavedFact = await store.upsertProfileFact({
+                userId,
+                category: turnSavedFact.category,
+                key: turnSavedFact.key,
+                value: combined.slice(0, 1500),
+                source: defaultSource,
+                pinned: pinned ?? turnSavedFact.pinned,
+                sharedAcrossBots,
+              });
+            }
+            return {
+              saved: true as const,
+              deduplicated: true as const,
+              fact: turnSavedFact,
+            };
+          }
+        }
+
+        if (dedupePerTurn && turnSavedJournal) {
+          return {
+            saved: false as const,
+            deduplicated: true as const,
+            skippedSensitive: false as const,
+            warning: "Memory note already saved on this turn.",
+          };
+        }
+
+        const writePromise = store.upsertProfileFact({
           userId,
           category,
           key: key.trim().length >= 2 ? key : deriveFactKey(sentence),
@@ -55,10 +134,17 @@ export function createMemoryTools({
           pinned,
           sharedAcrossBots,
         });
-        return {
-          saved: true as const,
-          fact: saved,
-        };
+        inFlightSavePromise = writePromise;
+        try {
+          const saved = await writePromise;
+          turnSavedFact = saved;
+          return {
+            saved: true as const,
+            fact: saved,
+          };
+        } finally {
+          inFlightSavePromise = null;
+        }
       } catch (err) {
         if (err instanceof SensitiveMemoryBlockedError) {
           return {
@@ -84,8 +170,8 @@ export function createMemoryTools({
           }
         : {
             saved: false,
-            skippedSensitive: true,
-            reason: output.reason,
+            skippedSensitive: output.skippedSensitive,
+            reason: "reason" in output ? output.reason : undefined,
             warning: output.warning,
           },
     }),
@@ -101,13 +187,36 @@ export function createMemoryTools({
     }),
     execute: async ({ title, body, tags }) => {
       try {
+        if (turnSavedJournal) {
+          const sameEntry =
+            turnSavedJournal.title.trim().toLowerCase() ===
+              title.trim().toLowerCase() ||
+            turnSavedJournal.body.trim().toLowerCase() ===
+              body.trim().toLowerCase();
+          if (dedupePerTurn || sameEntry) {
+            return {
+              logged: true as const,
+              deduplicated: true as const,
+              entry: turnSavedJournal,
+            };
+          }
+        }
+        if (dedupePerTurn && turnSavedFact) {
+          return {
+            logged: false as const,
+            deduplicated: true as const,
+            skippedSensitive: false as const,
+            warning: "Profile memory was already saved on this turn.",
+          };
+        }
         const entry = await store.addJournalEntry({
           userId,
           title,
           body,
           tags,
-          source: defaultSource === "voice" ? "chat" : "chat",
+          source: "chat",
         });
+        turnSavedJournal = entry;
         return {
           logged: true as const,
           entry,
@@ -136,8 +245,8 @@ export function createMemoryTools({
           }
         : {
             logged: false,
-            skippedSensitive: true,
-            reason: output.reason,
+            skippedSensitive: output.skippedSensitive,
+            reason: "reason" in output ? output.reason : undefined,
           },
     }),
   });

@@ -27,10 +27,12 @@ import {
 import { safeModelError } from "@/lib/ai/context/errors";
 import {
   needsArtifactInstructions,
-  selectActiveTools,
   selectToolsWithRanking,
 } from "@/lib/ai/context/select-tools";
-import { syncThreadSummary } from "@/lib/ai/context/thread-summary";
+import {
+  resolveThreadSummaryStore,
+  syncThreadSummary,
+} from "@/lib/ai/context/thread-summary";
 import {
   applyApprovalResponses,
   expirePendingApprovalsOnNewUserTurn,
@@ -40,6 +42,7 @@ import {
   safeUIStream,
 } from "@/lib/ai/conversation-state";
 import { resolveTurnModelAndEffort } from "@/lib/ai/escalation";
+import { isNewsPageOrBriefingTarget } from "@/lib/ai/grounded-news";
 import { getRequestModelAvailability } from "@/lib/ai/model-runtime";
 import {
   chatModels,
@@ -73,6 +76,8 @@ import { createDelegateTaskTool } from "@/lib/ai/tools/delegate-task";
 import { demoInbox } from "@/lib/ai/tools/demo-inbox";
 import { draftOutboundMessage } from "@/lib/ai/tools/draft-outbound";
 import { editDocument } from "@/lib/ai/tools/edit-document";
+import { createExcalidrawDiagramTool } from "@/lib/ai/tools/excalidraw-diagram";
+import { createFirecrawlTools } from "@/lib/ai/tools/firecrawl";
 import { createMediaTools } from "@/lib/ai/tools/generate-media";
 import { getCurrentTime } from "@/lib/ai/tools/get-current-time";
 import { getFixtures } from "@/lib/ai/tools/get-fixtures";
@@ -80,12 +85,16 @@ import { getWeather } from "@/lib/ai/tools/get-weather";
 import { createGoogleConnectorTools } from "@/lib/ai/tools/google-connectors";
 import { listMySchedules } from "@/lib/ai/tools/list-my-schedules";
 import { createMacBridgeTools } from "@/lib/ai/tools/mac-bridge";
-import { createMemoryTools } from "@/lib/ai/tools/memory-tools";
+import {
+  createMemoryTools,
+  dedupeAssistantMemoryParts,
+} from "@/lib/ai/tools/memory-tools";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
 import { scheduleTask } from "@/lib/ai/tools/schedule-task";
 import { setHomeLocation } from "@/lib/ai/tools/set-home-location";
 import { setSoul } from "@/lib/ai/tools/set-soul";
 import { updateDocument } from "@/lib/ai/tools/update-document";
+import { createVisualStudioTools } from "@/lib/ai/tools/visual-studio";
 import { webSearch } from "@/lib/ai/tools/web-search";
 import {
   composeTeammateSoul,
@@ -95,6 +104,7 @@ import {
 } from "@/lib/bots/roster";
 import { isCloudComputerConfigured } from "@/lib/cloud-computer/client";
 import { isGithubConnectorEnabled } from "@/lib/connectors/calendar-and-github";
+import { isFirecrawlConfigured } from "@/lib/connectors/firecrawl";
 import { isGoogleConnectorsEnabled } from "@/lib/connectors/google-vault-auth";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import { isProductionEnvironment } from "@/lib/constants";
@@ -109,7 +119,6 @@ import {
   getUserSoul,
   saveChat,
   saveMessages,
-  updateChatTitleById,
   updateMessage,
 } from "@/lib/db/queries";
 import type { DBMessage } from "@/lib/db/schema";
@@ -135,14 +144,18 @@ import {
   resolveApprovalPreferencesStore,
 } from "@/lib/safety/approval-preferences";
 import {
+  BUILT_IN_SKILLS,
   createPostgresSkillStore,
   extractRequestedSkillSlug,
   formatSkillPromptBlock,
 } from "@/lib/skills/library";
 import { contextBlock, validTimeZone } from "@/lib/temporal";
 import type { ChatMessage } from "@/lib/types";
-import { convertToUIMessages, generateUUID } from "@/lib/utils";
-import { generateTitleFromUserMessage } from "../../actions";
+import {
+  convertToUIMessages,
+  generateUUID,
+  getTextFromMessage,
+} from "@/lib/utils";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
 export const maxDuration = 180;
@@ -261,16 +274,38 @@ export async function POST(request: Request) {
     }
     let chatModel = selectedChatModel;
 
+    const isOwnerUser = session.user.type !== "guest";
     const memoryStore =
-      session.user.type !== "guest" && isMemoryToolsEnabled()
+      isOwnerUser && isMemoryToolsEnabled()
         ? createPostgresMemoryStore()
         : null;
-    const approvalPrefsStore =
-      session.user.type !== "guest" ? resolveApprovalPreferencesStore() : null;
+    const approvalPrefsStore = isOwnerUser
+      ? resolveApprovalPreferencesStore()
+      : null;
+
+    const incomingMessageText =
+      message?.role === "user" ? getTextFromMessage(message) : "";
+    const preliminaryBotSlug =
+      (incomingMessageText
+        ? extractRequestedBotSlug(incomingMessageText)
+        : null) ??
+      (selectedBotSlug?.trim() || null);
+    const preliminarySkillSlug = incomingMessageText
+      ? extractRequestedSkillSlug(incomingMessageText)
+      : null;
+    const preliminaryRemember =
+      isOwnerUser &&
+      isMemoryToolsEnabled() &&
+      incomingMessageText &&
+      !containsRestrictedWorkData(incomingMessageText)
+        ? extractExplicitRememberFact(incomingMessageText)
+        : null;
+
     const [
       ,
       acquiredLock,
       chat,
+      prefetchedMessages,
       soul,
       homeLocation,
       storedFacts,
@@ -278,10 +313,15 @@ export async function POST(request: Request) {
       capabilityManifest,
       ownerApprovalSettings,
       ownerToolRules,
+      prefetchedThreadSummary,
+      prefetchedTeammate,
+      prefetchedExplicitSavedFact,
+      prefetchedSkills,
     ] = await Promise.all([
       checkIpRateLimit(ipAddress(request)),
       acquireChatLock(id),
       getChatById({ id }),
+      getMessagesByChatId({ id }).catch(() => [] as DBMessage[]),
       getUserSoul({ userId: session.user.id }),
       getUserHomeLocation({ userId: session.user.id }),
       memoryStore
@@ -298,8 +338,9 @@ export async function POST(request: Request) {
         ? Promise.resolve(undefined)
         : resolveLiveCapabilityManifest({
             userId: session.user.id,
-            isGuest: session.user.type === "guest",
+            isGuest: !isOwnerUser,
             webSearchAvailable: webSearchLane(chatModel),
+            skipLiveProbe: true,
           }),
       approvalPrefsStore
         ? approvalPrefsStore.getSettings(session.user.id).catch(() => ({
@@ -317,6 +358,34 @@ export async function POST(request: Request) {
       approvalPrefsStore
         ? approvalPrefsStore.listToolRules(session.user.id).catch(() => [])
         : Promise.resolve([]),
+      isOwnerUser && !isSyntheticSdk7FixtureMode()
+        ? resolveThreadSummaryStore()
+            .getSummary({ chatId: id, userId: session.user.id })
+            .catch(() => null)
+        : Promise.resolve(null),
+      preliminaryBotSlug && isOwnerUser
+        ? createPostgresBotRosterStore()
+            .getBotBySlug(session.user.id, preliminaryBotSlug)
+            .catch(() => null)
+        : Promise.resolve(null),
+      preliminaryRemember?.kind === "ok" && memoryStore && !retry
+        ? memoryStore
+            .upsertProfileFact({
+              userId: session.user.id,
+              category: preliminaryRemember.category,
+              key: preliminaryRemember.key,
+              value: preliminaryRemember.value,
+              source: "chat",
+              pinned: preliminaryRemember.pinned,
+              sharedAcrossBots: true,
+            })
+            .catch((): ProfileFact | null => null)
+        : Promise.resolve(null),
+      isOwnerUser && (preliminarySkillSlug || preliminaryBotSlug)
+        ? createPostgresSkillStore()
+            .listSkills(session.user.id)
+            .catch(() => [])
+        : Promise.resolve(null),
     ]);
     const googleConnectedAndHealthy =
       capabilityManifest?.entries.find((e) => e.id === "gmail")?.state ===
@@ -330,22 +399,24 @@ export async function POST(request: Request) {
     const isToolApprovalFlow = Boolean(messages);
 
     let messagesFromDb: DBMessage[] = [];
-    let titlePromise: Promise<string> | null = null;
+    let newChatTitle: string | null = null;
     let replacementReplyId: string | undefined;
 
     if (chat) {
       if (chat.userId !== session.user.id) {
         return new ChatbotError("forbidden:chat").toResponse();
       }
-      messagesFromDb = await getMessagesByChatId({ id });
+      messagesFromDb = prefetchedMessages;
     } else if (message?.role === "user") {
+      newChatTitle =
+        incomingMessageText.replace(/\s+/g, " ").trim().slice(0, 70) ||
+        "New chat";
       await saveChat({
         id,
         userId: session.user.id,
-        title: "New chat",
+        title: newChatTitle,
         visibility: selectedVisibilityType,
       });
-      titlePromise = generateTitleFromUserMessage({ message });
     }
 
     // Retry can happen before or after the server accepted the original turn.
@@ -363,14 +434,8 @@ export async function POST(request: Request) {
     const midFlightSweep = markMidFlightToolsInterrupted(
       convertToUIMessages(messagesFromDb)
     );
-    if (midFlightSweep.interruptedMessages.length > 0) {
-      await Promise.all(
-        midFlightSweep.interruptedMessages.map((msg) =>
-          updateMessage({ id: msg.id, parts: msg.parts }).catch(() => null)
-        )
-      );
-    }
     const baseSavedUiMessages = midFlightSweep.messages;
+    let expiredMessagesToPersist: ChatMessage[] = [];
 
     if (isToolApprovalFlow && messages) {
       try {
@@ -397,15 +462,43 @@ export async function POST(request: Request) {
       }
       const expiredSweep =
         expirePendingApprovalsOnNewUserTurn(baseSavedUiMessages);
-      if (expiredSweep.expiredMessages.length > 0) {
+      expiredMessagesToPersist = expiredSweep.expiredMessages;
+      uiMessages = [...expiredSweep.messages, message as ChatMessage];
+    }
+
+    // Persist message sweeps + new user message concurrently while model streaming starts;
+    // awaited before onEnd saves the assistant turn and releases the advisory chat lock.
+    const persistUserTurnPromise = (async () => {
+      if (midFlightSweep.interruptedMessages.length > 0) {
         await Promise.all(
-          expiredSweep.expiredMessages.map((msg) =>
+          midFlightSweep.interruptedMessages.map((msg) =>
             updateMessage({ id: msg.id, parts: msg.parts }).catch(() => null)
           )
         );
       }
-      uiMessages = [...expiredSweep.messages, message as ChatMessage];
-    }
+      if (expiredMessagesToPersist.length > 0) {
+        await Promise.all(
+          expiredMessagesToPersist.map((msg) =>
+            updateMessage({ id: msg.id, parts: msg.parts }).catch(() => null)
+          )
+        );
+      }
+      if (message?.role === "user" && !retryAlreadyPersisted) {
+        await saveMessages({
+          messages: [
+            {
+              chatId: id,
+              id: message.id,
+              role: "user",
+              parts: message.parts,
+              attachments: [],
+              createdAt: new Date(),
+            },
+          ],
+        });
+      }
+    })();
+    persistUserTurnPromise.catch(() => null);
 
     const modelConfig =
       chatModels.find((m) => m.id === chatModel) ??
@@ -420,26 +513,25 @@ export async function POST(request: Request) {
     const toolSelectOptions = {
       googleConnectedAndHealthy,
       capabilityManifest:
-        isPremiumModel(chatModel) && session.user.type !== "guest"
+        isPremiumModel(chatModel) && isOwnerUser
           ? capabilityManifest
           : undefined,
     };
-    const requestedTools = supportsTools
-      ? selectActiveTools(
-          uiMessages,
-          session.user.type !== "guest",
-          searchLane,
-          toolSelectOptions
-        )
-      : [];
-    const { intentMatchedTools } = supportsTools
+    const { activeTools: requestedTools, intentMatchedTools } = supportsTools
       ? selectToolsWithRanking(
           uiMessages,
-          session.user.type !== "guest",
+          isOwnerUser,
           searchLane,
           toolSelectOptions
         )
-      : { intentMatchedTools: [] as typeof requestedTools };
+      : {
+          activeTools: [] as ReturnType<
+            typeof selectToolsWithRanking
+          >["activeTools"],
+          intentMatchedTools: [] as ReturnType<
+            typeof selectToolsWithRanking
+          >["intentMatchedTools"],
+        };
     const finalUserText =
       [...uiMessages]
         .reverse()
@@ -461,51 +553,44 @@ export async function POST(request: Request) {
       (selectedBotSlug?.trim() || null);
 
     const explicitRemember =
-      session.user.type !== "guest" &&
+      isOwnerUser &&
       isMemoryToolsEnabled() &&
       !containsRestrictedWorkData(finalUserText)
         ? extractExplicitRememberFact(finalUserText)
         : null;
 
-    const [, activeTeammate, explicitSavedFact, threadSummary] =
+    const [activeTeammate, explicitSavedFact, threadSummary] =
       await Promise.all([
-        message?.role === "user" && !retryAlreadyPersisted
-          ? saveMessages({
-              messages: [
-                {
-                  chatId: id,
-                  id: message.id,
-                  role: "user",
-                  parts: message.parts,
-                  attachments: [],
-                  createdAt: new Date(),
-                },
-              ],
-            })
-          : Promise.resolve(),
         requestedBotSlug
-          ? createPostgresBotRosterStore()
-              .getBotBySlug(session.user.id, requestedBotSlug)
-              .catch(() => null)
+          ? requestedBotSlug === preliminaryBotSlug
+            ? Promise.resolve(prefetchedTeammate)
+            : createPostgresBotRosterStore()
+                .getBotBySlug(session.user.id, requestedBotSlug)
+                .catch(() => null)
           : Promise.resolve(null),
         explicitRemember?.kind === "ok"
-          ? createPostgresMemoryStore()
-              .upsertProfileFact({
-                userId: session.user.id,
-                category: explicitRemember.category,
-                key: explicitRemember.key,
-                value: explicitRemember.value,
-                source: "chat",
-                pinned: explicitRemember.pinned,
-                sharedAcrossBots: true,
-              })
-              .catch((): ProfileFact | null => null)
+          ? prefetchedExplicitSavedFact
+            ? Promise.resolve(prefetchedExplicitSavedFact)
+            : (memoryStore ?? createPostgresMemoryStore())
+                .upsertProfileFact({
+                  userId: session.user.id,
+                  category: explicitRemember.category,
+                  key: explicitRemember.key,
+                  value: explicitRemember.value,
+                  source: "chat",
+                  pinned: explicitRemember.pinned,
+                  sharedAcrossBots: true,
+                })
+                .catch((): ProfileFact | null => null)
           : Promise.resolve(null),
-        session.user.type !== "guest" && !isSyntheticSdk7FixtureMode()
+        isOwnerUser && !isSyntheticSdk7FixtureMode()
           ? syncThreadSummary({
               chatId: id,
               userId: session.user.id,
               messages: uiMessages,
+              isNewChat: !chat,
+              prefetchedExisting: prefetchedThreadSummary,
+              hasPrefetchedExisting: true,
             }).catch(() => ({ record: null, promptBlock: "" }))
           : Promise.resolve({ record: null, promptBlock: "" }),
       ]);
@@ -518,17 +603,23 @@ export async function POST(request: Request) {
       : storedFacts;
 
     const effectiveSoul = composeTeammateSoul(soul, activeTeammate);
+    const hasFirecrawlIntent = intentMatchedTools.some((name) =>
+      name.startsWith("firecrawl")
+    );
     const requestedSkillSlug =
       extractRequestedSkillSlug(finalUserText) ??
       activeTeammate?.skillSlugs[0] ??
       null;
     const activeSkill = requestedSkillSlug
       ? ((
-          await createPostgresSkillStore()
+          prefetchedSkills ??
+          (await createPostgresSkillStore()
             .listSkills(session.user.id)
-            .catch(() => [])
+            .catch(() => []))
         ).find((s) => s.slug === requestedSkillSlug) ?? null)
-      : null;
+      : hasFirecrawlIntent
+        ? (BUILT_IN_SKILLS.find((s) => s.slug === "firecrawl") ?? null)
+        : null;
     const rawBaseContext = contextBlock({
       now: requestNow,
       timeZone: requestTimeZone ?? homeLocation?.timeZone ?? null,
@@ -589,6 +680,12 @@ export async function POST(request: Request) {
         "cloudBrowseUrl",
         "macExec",
         "macRunAgentCli",
+        "firecrawlSearch",
+        "firecrawlScrape",
+        "firecrawlCrawlMap",
+        "buildHtmlPageOrDashboard",
+        "createExcalidrawDiagram",
+        "generateInfographic",
       ].includes(name)
     );
     const hasPriorAssistantTurn = uiMessages.some(
@@ -603,6 +700,9 @@ export async function POST(request: Request) {
         intentMatchedTools.length === 0 &&
         !hasPriorAssistantTurn,
       includeArtifacts: needsArtifactInstructions(requestedTools),
+      includeGroundedNews: isNewsPageOrBriefingTarget({
+        userText: finalUserText,
+      }),
       includeWebSearch: searchLane && requestedTools.includes("webSearch"),
       includeFixtures: intentMatchedTools.includes("getFixtures"),
       includeOperatorTools: hasOperatorToolOnTurn || googleConnectedAndHealthy,
@@ -617,6 +717,7 @@ export async function POST(request: Request) {
                   ?.state === "connected_and_healthy" ||
                 (isGithubConnectorEnabled() &&
                   Boolean(process.env.GITHUB_CONNECTOR_PAT?.trim())),
+              firecrawlConnected: isFirecrawlConfigured(),
               memoryEnabled: isMemoryToolsEnabled(),
               routinesEnabled: isRoutinesEnabled(),
               cloudComputerConnected: isCloudComputerConfigured(),
@@ -787,11 +888,17 @@ export async function POST(request: Request) {
                         (p.type as string) === "tool-driveReadFiles" ||
                         (p.type as string) === "tool-calendarReadEvents" ||
                         (p.type as string) === "tool-githubReadPullRequests" ||
-                        (p.type as string) === "tool-cloudBrowseUrl"
+                        (p.type as string) === "tool-cloudBrowseUrl" ||
+                        (p.type as string) === "tool-firecrawlSearch" ||
+                        (p.type as string) === "tool-firecrawlScrape" ||
+                        (p.type as string) === "tool-firecrawlCrawlMap"
                     )
                   );
                   const hasUntrusted =
                     intentMatchedTools.includes("webSearch") ||
+                    intentMatchedTools.includes("firecrawlSearch") ||
+                    intentMatchedTools.includes("firecrawlScrape") ||
+                    intentMatchedTools.includes("firecrawlCrawlMap") ||
                     intentMatchedTools.includes("gmailReadMessages") ||
                     intentMatchedTools.includes("driveReadFiles") ||
                     intentMatchedTools.includes("calendarReadEvents") ||
@@ -825,13 +932,21 @@ export async function POST(request: Request) {
                       userId: session.user.id,
                       hasUntrustedContext: hasUntrusted,
                     }),
+                    ...createFirecrawlTools(),
+                    ...createVisualStudioTools({
+                      userId: session.user.id,
+                      ledger: execution.ledger,
+                    }),
+                    createExcalidrawDiagram: createExcalidrawDiagramTool(),
                     ...(isRoutinesEnabled()
                       ? { scheduleTask: scheduleTask({ session }) }
                       : {}),
                     ...(isMemoryToolsEnabled()
                       ? createMemoryTools({
                           userId: session.user.id,
-                          store: createPostgresMemoryStore(),
+                          store: memoryStore ?? createPostgresMemoryStore(),
+                          alreadySavedFact: explicitSavedFact,
+                          dedupePerTurn: true,
                         })
                       : {}),
                     ...(isGoogleConnectorsEnabled()
@@ -869,6 +984,9 @@ export async function POST(request: Request) {
           // Only reviewed local tools are available. External integrations stay disconnected.
           const turnHasUntrustedContext =
             intentMatchedTools.includes("webSearch") ||
+            intentMatchedTools.includes("firecrawlSearch") ||
+            intentMatchedTools.includes("firecrawlScrape") ||
+            intentMatchedTools.includes("firecrawlCrawlMap") ||
             intentMatchedTools.includes("gmailReadMessages") ||
             intentMatchedTools.includes("driveReadFiles") ||
             intentMatchedTools.includes("calendarReadEvents") ||
@@ -882,7 +1000,10 @@ export async function POST(request: Request) {
                   (p.type as string) === "tool-driveReadFiles" ||
                   (p.type as string) === "tool-calendarReadEvents" ||
                   (p.type as string) === "tool-githubReadPullRequests" ||
-                  (p.type as string) === "tool-cloudBrowseUrl"
+                  (p.type as string) === "tool-cloudBrowseUrl" ||
+                  (p.type as string) === "tool-firecrawlSearch" ||
+                  (p.type as string) === "tool-firecrawlScrape" ||
+                  (p.type as string) === "tool-firecrawlCrawlMap"
               )
             );
           const tools =
@@ -896,14 +1017,14 @@ export async function POST(request: Request) {
                 })
               : localTools;
           // If explicit "remember this: ..." was already handled deterministically above,
-          // remove saveProfileFact from activeTools on this turn so we don't render two cards.
+          // remove saveProfileFact and addJournalEntry from activeTools on this turn so we don't render two cards.
           const activeTools = requestedTools.filter(
             (name) =>
               name in tools &&
               !(
                 (explicitSavedFact ||
                   explicitRemember?.kind === "sensitive_blocked") &&
-                name === "saveProfileFact"
+                (name === "saveProfileFact" || name === "addJournalEntry")
               )
           ) as Array<keyof typeof tools>;
           const toolSchemaTokens = await estimateToolSchemaTokens(
@@ -953,6 +1074,12 @@ export async function POST(request: Request) {
             cancelSchedule: "Cancelled routine",
             getWeather: "Fetched weather forecast",
             getFixtures: "Checked match fixtures",
+            firecrawlSearch: "Searched web via Firecrawl",
+            firecrawlScrape: "Scraped page to Markdown via Firecrawl",
+            firecrawlCrawlMap: "Mapped/crawled site via Firecrawl",
+            buildHtmlPageOrDashboard: "Built HTML page / ECharts dashboard",
+            createExcalidrawDiagram: "Created interactive Excalidraw diagram",
+            generateInfographic: "Rendered infographic PNG on Cloud Computer",
           };
           const result = streamText({
             model: getLanguageModel(chatModel),
@@ -1102,15 +1229,14 @@ export async function POST(request: Request) {
               .pipeThrough(safeUIStream(finalUserText))
           );
 
-          if (titlePromise) {
-            const title = await titlePromise;
-            dataStream.write({ type: "data-chat-title", data: title });
-            await updateChatTitleById({ chatId: id, title });
+          if (newChatTitle) {
+            dataStream.write({ type: "data-chat-title", data: newChatTitle });
           }
         }),
       generateId: () => replacementReplyId ?? generateUUID(),
       onEnd: async ({ responseMessage, outcome, isAborted, isCancelled }) => {
         try {
+          await persistUserTurnPromise;
           const reply = replyForStorage(
             responseMessage,
             outcome.status === "completed" && !isAborted && !isCancelled
@@ -1119,8 +1245,9 @@ export async function POST(request: Request) {
             return;
           }
           const resolvedModelId = execution.activeModelId ?? chatModel;
+          const dedupedParts = dedupeAssistantMemoryParts(reply.parts);
           const ensuredModelParts = [
-            ...reply.parts.filter((p) => p.type !== "data-model-used"),
+            ...dedupedParts.filter((p) => p.type !== "data-model-used"),
             {
               type: "data-model-used" as const,
               data: {
@@ -1166,26 +1293,30 @@ export async function POST(request: Request) {
     });
 
     streamOwnsLock = true;
+    const hasRedisStreamResume = Boolean(process.env.REDIS_URL?.trim());
     return createUIMessageStreamResponse({
       stream,
-      async consumeSseStream({ stream: sseStream }) {
-        if (!process.env.REDIS_URL) {
-          return;
-        }
-        try {
-          const streamContext = getStreamContext();
-          if (streamContext) {
-            const streamId = generateId();
-            await createStreamId({ streamId, chatId: id });
-            await streamContext.createNewResumableStream(
-              streamId,
-              () => sseStream
-            );
+      ...(hasRedisStreamResume
+        ? {
+            async consumeSseStream({ stream: sseStream }) {
+              try {
+                const streamContext = getStreamContext();
+                if (!streamContext) {
+                  await sseStream.cancel().catch(() => undefined);
+                  return;
+                }
+                const streamId = generateId();
+                await createStreamId({ streamId, chatId: id });
+                await streamContext.createNewResumableStream(
+                  streamId,
+                  () => sseStream
+                );
+              } catch (_) {
+                await sseStream.cancel().catch(() => undefined);
+              }
+            },
           }
-        } catch (_) {
-          /* non-critical */
-        }
-      },
+        : {}),
     });
   } catch (error) {
     const vercelId = request.headers.get("x-vercel-id");

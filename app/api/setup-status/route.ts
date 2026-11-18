@@ -10,6 +10,10 @@ import {
   isGithubConnectorEnabled,
 } from "@/lib/connectors/calendar-and-github";
 import {
+  FIRECRAWL_KEY_CREATE_URL,
+  isFirecrawlConfigured,
+} from "@/lib/connectors/firecrawl";
+import {
   type GoogleWorkspaceHealthResult,
   probeGoogleWorkspaceApiHealth,
 } from "@/lib/connectors/google-health";
@@ -78,6 +82,7 @@ export async function GET(request: Request) {
   const copilotTokenReady = isCopilotTokenConfigured();
   const copilotFallbackReady = cloudComputerReady && copilotTokenReady;
   const macBridgeReady = isMacBridgeConfigured();
+  const firecrawlReady = isFirecrawlConfigured();
 
   const storedNames = new Set<string>();
   const vaultStore =
@@ -250,6 +255,17 @@ export async function GET(request: Request) {
           ? "Create GitHub token"
           : undefined,
       connectedProvider: githubConnected ? "github" : undefined,
+    },
+    {
+      id: "firecrawl",
+      label: "Firecrawl web search, scrape & site map",
+      summary: firecrawlReady
+        ? "Active via FIRECRAWL_API_KEY in Vercel env — server-side search, clean URL-to-Markdown scrape, and bounded site crawl/map."
+        : "Optional — add FIRECRAWL_API_KEY in Vercel project environment variables for deep URL-to-Markdown scraping, site mapping, and dated news extraction.",
+      status: firecrawlReady ? "ready" : "optional",
+      actionKind: "external_link",
+      externalUrl: FIRECRAWL_KEY_CREATE_URL,
+      externalLabel: firecrawlReady ? "Manage key" : "Get Firecrawl key",
     },
     {
       id: "gemini_live",

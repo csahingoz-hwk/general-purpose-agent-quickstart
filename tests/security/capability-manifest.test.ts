@@ -60,6 +60,7 @@ test("Capability manifest lists all 14 wired capabilities, injects into chat & v
     "calendar",
     "drive",
     "github",
+    "firecrawl",
     "mac_bridge",
     "cloud_computer",
     "voice",

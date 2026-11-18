@@ -8,6 +8,95 @@ export const ALLOWED_ATTACHMENT_TYPES = [
 export type AllowedAttachmentMediaType =
   (typeof ALLOWED_ATTACHMENT_TYPES)[number];
 
+export const EXPORTED_PRIVATE_FILE_TYPES = [
+  ...ALLOWED_ATTACHMENT_TYPES,
+  "image/webp",
+  "image/svg+xml",
+  "text/html",
+  "text/css",
+  "text/javascript",
+  "text/markdown",
+  "text/plain",
+  "application/json",
+  "application/xml",
+  "application/zip",
+  "application/gzip",
+  "application/octet-stream",
+] as const;
+
+export type ExportedPrivateFileMediaType =
+  (typeof EXPORTED_PRIVATE_FILE_TYPES)[number];
+
+export function inferPrivateFileMediaType(
+  filename: string
+): ExportedPrivateFileMediaType {
+  const lower = filename.trim().toLowerCase();
+  if (lower.endsWith(".png")) {
+    return "image/png";
+  }
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
+    return "image/jpeg";
+  }
+  if (lower.endsWith(".webp")) {
+    return "image/webp";
+  }
+  if (lower.endsWith(".svg")) {
+    return "image/svg+xml";
+  }
+  if (lower.endsWith(".pdf")) {
+    return "application/pdf";
+  }
+  if (lower.endsWith(".csv")) {
+    return "text/csv";
+  }
+  if (lower.endsWith(".html") || lower.endsWith(".htm")) {
+    return "text/html";
+  }
+  if (lower.endsWith(".css")) {
+    return "text/css";
+  }
+  if (
+    lower.endsWith(".js") ||
+    lower.endsWith(".mjs") ||
+    lower.endsWith(".cjs")
+  ) {
+    return "text/javascript";
+  }
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
+    return "text/markdown";
+  }
+  if (lower.endsWith(".json") || lower.endsWith(".jsonl")) {
+    return "application/json";
+  }
+  if (lower.endsWith(".xml")) {
+    return "application/xml";
+  }
+  if (lower.endsWith(".zip")) {
+    return "application/zip";
+  }
+  if (
+    lower.endsWith(".gz") ||
+    lower.endsWith(".tgz") ||
+    lower.endsWith(".tar.gz")
+  ) {
+    return "application/gzip";
+  }
+  if (
+    lower.endsWith(".txt") ||
+    lower.endsWith(".log") ||
+    lower.endsWith(".py") ||
+    lower.endsWith(".ts") ||
+    lower.endsWith(".tsx") ||
+    lower.endsWith(".sh") ||
+    lower.endsWith(".yaml") ||
+    lower.endsWith(".yml") ||
+    lower.endsWith(".sql")
+  ) {
+    return "text/plain";
+  }
+  return "application/octet-stream";
+}
+
 export const MAX_IMAGE_OR_CSV_BYTES = 5 * 1024 * 1024; // 5 MB
 export const MAX_PDF_BYTES = 10 * 1024 * 1024; // 10 MB
 

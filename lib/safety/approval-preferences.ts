@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
 import { ensureParitySchema } from "@/lib/db/ensure-parity-schema";
+import { getSharedPostgresClient } from "@/lib/db/shared-pool";
 import { computeActionDigest } from "./action-review";
 import { detectPromptInjection } from "./untrusted-content";
 
@@ -344,17 +344,11 @@ export function createInMemoryExecutionJournalStore(): ToolExecutionJournalStore
   };
 }
 
-let pgClient: ReturnType<typeof postgres> | undefined;
 function getSql() {
   if (!process.env.POSTGRES_URL) {
     throw new Error("POSTGRES_URL is not configured");
   }
-  pgClient ??= postgres(process.env.POSTGRES_URL, {
-    max: 3,
-    prepare: false,
-    idle_timeout: 0,
-  });
-  return pgClient;
+  return getSharedPostgresClient(process.env.POSTGRES_URL);
 }
 
 async function readySql() {

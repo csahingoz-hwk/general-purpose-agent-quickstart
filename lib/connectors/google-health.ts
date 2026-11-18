@@ -47,6 +47,16 @@ export function clearGoogleWorkspaceHealthCache(userId?: string): void {
   healthCache.clear();
 }
 
+export function getCachedGoogleWorkspaceHealth(
+  userId: string
+): GoogleWorkspaceHealthResult | null {
+  const cached = healthCache.get(userId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.result;
+  }
+  return null;
+}
+
 export async function probeGoogleWorkspaceApiHealth(opts: {
   userId: string;
   vaultStore?: SecretVaultStore;

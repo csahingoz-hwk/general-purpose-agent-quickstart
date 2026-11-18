@@ -4,7 +4,13 @@ import {
   isGithubConnectorEnabled,
 } from "@/lib/connectors/calendar-and-github";
 import {
+  FIRECRAWL_KEY_CREATE_URL,
+  FIRECRAWL_SETUP_HREF,
+  isFirecrawlConfigured,
+} from "@/lib/connectors/firecrawl";
+import {
   type GoogleWorkspaceHealthResult,
+  getCachedGoogleWorkspaceHealth,
   probeGoogleWorkspaceApiHealth,
 } from "@/lib/connectors/google-health";
 import {
@@ -33,6 +39,7 @@ export type CapabilityId =
   | "calendar"
   | "drive"
   | "github"
+  | "firecrawl"
   | "mac_bridge"
   | "cloud_computer"
   | "voice"
@@ -78,6 +85,8 @@ export type BuildCapabilityManifestInput = {
   githubConnectorEnabled?: boolean;
   githubConnected: boolean;
   githubErrorReason?: string;
+  firecrawlConnected?: boolean;
+  firecrawlErrorReason?: string;
   macBridgeConnected: boolean;
   macBridgeErrorReason?: string;
   cloudComputerConnected: boolean;
@@ -268,6 +277,38 @@ export function buildCapabilityManifestFromStatus(
               : "GitHub connector is disabled in server settings",
             setupHref: "/setup#setup-github",
             tools: ["githubReadPullRequests", "githubCreateDraftReview"],
+          },
+    input.firecrawlErrorReason
+      ? {
+          id: "firecrawl",
+          label: "Firecrawl Web Search, Scrape & Site Map",
+          category: "connector",
+          state: "error",
+          reason: input.firecrawlErrorReason,
+          setupHref: FIRECRAWL_SETUP_HREF,
+          connectHref: FIRECRAWL_KEY_CREATE_URL,
+          retryable: true,
+          tools: ["firecrawlSearch", "firecrawlScrape", "firecrawlCrawlMap"],
+        }
+      : input.firecrawlConnected
+        ? {
+            id: "firecrawl",
+            label: "Firecrawl Web Search, Scrape & Site Map",
+            category: "connector",
+            state: "connected_and_healthy",
+            setupHref: FIRECRAWL_SETUP_HREF,
+            tools: ["firecrawlSearch", "firecrawlScrape", "firecrawlCrawlMap"],
+          }
+        : {
+            id: "firecrawl",
+            label: "Firecrawl Web Search, Scrape & Site Map",
+            category: "connector",
+            state: "not_connected",
+            reason:
+              "FIRECRAWL_API_KEY is not configured in Vercel environment variables yet",
+            setupHref: FIRECRAWL_SETUP_HREF,
+            connectHref: FIRECRAWL_KEY_CREATE_URL,
+            tools: ["firecrawlSearch", "firecrawlScrape", "firecrawlCrawlMap"],
           },
     input.macBridgeErrorReason
       ? {
@@ -637,11 +678,15 @@ const manifestCache = new Map<
   string,
   { manifest: CapabilityManifest; expiresAtMs: number }
 >();
-const MANIFEST_CACHE_TTL_MS = 60_000;
+const MANIFEST_CACHE_TTL_MS = 5 * 60_000;
 
 export function clearLiveCapabilityManifestCache(userId?: string): void {
   if (userId) {
-    manifestCache.delete(userId);
+    for (const key of manifestCache.keys()) {
+      if (key === userId || key.startsWith(`${userId}:`)) {
+        manifestCache.delete(key);
+      }
+    }
     return;
   }
   manifestCache.clear();
@@ -653,6 +698,13 @@ export async function resolveLiveCapabilityManifest(opts: {
   webSearchAvailable: boolean;
   vaultStore?: SecretVaultStore;
   forceRefresh?: boolean;
+  /**
+   * When true (used on latency-sensitive `/api/chat` & Live Voice session start),
+   * uses cached Google health (`0ms` external HTTP latency) and triggers a
+   * non-blocking background health refresh when uncached instead of blocking
+   * first-token generation on 4 live Google API probes.
+   */
+  skipLiveProbe?: boolean;
 }): Promise<CapabilityManifest> {
   const vertexReady = vertexEnabled();
   const dbReady = Boolean(process.env.POSTGRES_URL?.trim());
@@ -663,6 +715,7 @@ export async function resolveLiveCapabilityManifest(opts: {
   const cloudComputerConnected = isCloudComputerConfigured();
   const copilotTokenReady = isCopilotTokenConfigured();
   const macBridgeConnected = isMacBridgeConfigured();
+  const firecrawlConnected = isFirecrawlConfigured();
 
   if (opts.isGuest) {
     return buildCapabilityManifestFromStatus({
@@ -671,6 +724,7 @@ export async function resolveLiveCapabilityManifest(opts: {
       googleConnected: false,
       githubConnectorEnabled: false,
       githubConnected: false,
+      firecrawlConnected: false,
       macBridgeConnected: false,
       cloudComputerConnected: false,
       voiceReady: false,
@@ -711,14 +765,30 @@ export async function resolveLiveCapabilityManifest(opts: {
   );
   let googleHealth: GoogleWorkspaceHealthResult | null = null;
   if (googleConnected && store) {
-    googleHealth = await Promise.race([
-      probeGoogleWorkspaceApiHealth({
-        userId: opts.userId,
-        vaultStore: store,
-        forceRefresh: opts.forceRefresh,
-      }).catch(() => null),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 1800)),
-    ]);
+    if (opts.skipLiveProbe) {
+      googleHealth = getCachedGoogleWorkspaceHealth(opts.userId);
+      if (!googleHealth) {
+        probeGoogleWorkspaceApiHealth({
+          userId: opts.userId,
+          vaultStore: store,
+        })
+          .then((result) => {
+            if (result.status !== "ready") {
+              clearLiveCapabilityManifestCache(opts.userId);
+            }
+          })
+          .catch(() => null);
+      }
+    } else {
+      googleHealth = await Promise.race([
+        probeGoogleWorkspaceApiHealth({
+          userId: opts.userId,
+          vaultStore: store,
+          forceRefresh: opts.forceRefresh,
+        }).catch(() => null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 1800)),
+      ]);
+    }
   }
 
   const githubConnected =
@@ -740,6 +810,7 @@ export async function resolveLiveCapabilityManifest(opts: {
     googleHealth,
     githubConnectorEnabled,
     githubConnected,
+    firecrawlConnected,
     macBridgeConnected,
     cloudComputerConnected,
     voiceReady:
