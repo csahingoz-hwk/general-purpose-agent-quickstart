@@ -450,7 +450,9 @@ export async function POST(request: Request) {
           process.env.APP_OWNER_NAME?.trim() ||
           "Çağlar"
         : null;
-    const ownerHeader = ownerDisplayName ? `Owner: ${ownerDisplayName}` : "";
+    const premium = isPremiumModel(chatModel) ? premiumModels[chatModel] : null;
+    const ownerHeader =
+      ownerDisplayName && premium ? `Owner: ${ownerDisplayName}` : "";
     const baseContext = [ownerHeader, rawBaseContext, memoryContextBlock]
       .filter(Boolean)
       .join("\n\n");
@@ -481,22 +483,30 @@ export async function POST(request: Request) {
         "macRunAgentCli",
       ].includes(name)
     );
+    const hasPriorAssistantTurn = uiMessages.some(
+      (m) => m.role === "assistant"
+    );
     const replySystemPrompt = systemPrompt({
       supportsTools,
       soul: effectiveSoul,
-      needsOnboarding: !effectiveSoul && session.user.type !== "guest",
+      needsOnboarding:
+        !effectiveSoul &&
+        session.user.type !== "guest" &&
+        requestedTools.length === 0 &&
+        !hasPriorAssistantTurn,
       includeArtifacts: needsArtifactInstructions(requestedTools),
       includeWebSearch: searchLane && requestedTools.includes("webSearch"),
       includeFixtures: requestedTools.includes("getFixtures"),
       includeOperatorTools: hasOperatorToolOnTurn,
-      includeVisual: isVisualCandidateTurn(finalUserText, requestedTools),
+      includeVisual:
+        Boolean(premium) &&
+        isVisualCandidateTurn(finalUserText, requestedTools),
       context: activeSkill
         ? `${baseContext}\n\n${formatSkillPromptBlock(activeSkill)}`
         : baseContext,
     });
     // A single text step may use most of the budget; a tool call and a
     // follow-up must share a minute on Groq's limited free account.
-    const premium = isPremiumModel(chatModel) ? premiumModels[chatModel] : null;
     const requestBudget =
       premium?.inferenceBudget ??
       (requestedTools.length > 0 ? GROQ_TOOL_TURN_BUDGET : 7000);
