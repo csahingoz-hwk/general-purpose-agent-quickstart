@@ -167,20 +167,17 @@ test("negative: legacy Groq mode never reports the Gateway lane as ready", async
   assert.equal(result.reason, "provider_opt_in_missing");
 });
 
-test("negative: invalid spend allowance is reported before any network call", async () => {
+test("AI_MONTHLY_ALLOWANCE_USD is ignored — no internal spend allowance gate blocks readiness", async () => {
   process.env.AI_GATEWAY_USAGE_ENABLED = "true";
   deployedWithOidc();
-  for (const bad of ["0", "-1", "10001", "abc"]) {
-    process.env.AI_MONTHLY_ALLOWANCE_USD = bad;
+  for (const legacyEnvVal of ["0", "-1", "40", "10001", "abc"]) {
+    process.env.AI_MONTHLY_ALLOWANCE_USD = legacyEnvVal;
     const result = await discoverGatewayReadiness({
-      provider: {
-        getAvailableModels() {
-          throw new Error("must not call the network");
-        },
-      },
+      provider: createGateway({
+        fetch: () => Promise.resolve(catalogResponse(terraEntry)),
+      }),
     });
-    assert.equal(result.reason, "spend_configuration_invalid", bad);
-    assert.equal(result.status, "setup_required");
+    assert.equal(result.status, "ready", legacyEnvVal);
   }
 });
 

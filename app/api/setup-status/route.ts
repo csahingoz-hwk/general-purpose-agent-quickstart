@@ -3,7 +3,6 @@ import { auth } from "@/app/(auth)/auth";
 import { clearLiveCapabilityManifestCache } from "@/lib/ai/capability-manifest";
 import { isCopilotTokenConfigured } from "@/lib/ai/copilot-vm-model";
 import { vertexEnabled } from "@/lib/ai/routing/catalog";
-import { resolveOwnerAllowanceUsd } from "@/lib/ai/routing/ledger";
 import { isCloudComputerConfigured } from "@/lib/cloud-computer/client";
 import {
   GITHUB_VAULT_SECRET_NAME,
@@ -83,7 +82,7 @@ export async function GET(request: Request) {
   const vaultStore =
     vaultReady && dbReady ? createPostgresVaultStore() : undefined;
 
-  const [redisReady, secretsResult, allowanceUsd] = await Promise.all([
+  const [redisReady, secretsResult] = await Promise.all([
     redisConfigured
       ? Promise.race([
           pingRedis(),
@@ -95,7 +94,6 @@ export async function GET(request: Request) {
     vaultStore
       ? vaultStore.listSecrets(session.user.id).catch(() => [])
       : Promise.resolve([]),
-    resolveOwnerAllowanceUsd(session.user.id),
   ]);
 
   for (const s of secretsResult) {
@@ -140,21 +138,12 @@ export async function GET(request: Request) {
       id: "core_ai",
       label: "Chat, web search, voice & images",
       summary: vertexReady
-        ? "Active via Google Cloud Vertex AI (Gemini 4 Hydrogen -> Argon escalation on Google AI Ultra credit — zero pay-per-use APIs)."
+        ? "Active via Google Cloud Vertex AI (Gemini 4 Hydrogen -> Argon escalation on Google AI Ultra credit — zero pay-per-use APIs, no internal spend cap)."
         : "Turn on Vertex AI WIF (GOOGLE_VERTEX_PROJECT_ID + GOOGLE_VERTEX_WORKLOAD_AUDIENCE) in your Vercel project settings.",
       status: aiReady ? "ready" : "action_needed",
       actionKind: aiReady ? "none" : "external_link",
       externalUrl: aiReady ? undefined : "https://vercel.com/dashboard",
       externalLabel: aiReady ? undefined : "Open Vercel",
-    },
-    {
-      id: "monthly_allowance",
-      label: "Monthly safety cap & Ultra credit",
-      summary: `Vertex AI runs on Google AI Ultra credit ($0 per-call charge). Internal monthly safety cap set to $${allowanceUsd.toFixed(2)} — configurable anytime in Usage & settings.`,
-      status: "ready",
-      actionKind: "external_link",
-      externalUrl: "/usage",
-      externalLabel: "Configure cap",
     },
     {
       id: "copilot_fallback",
@@ -299,7 +288,6 @@ export async function GET(request: Request) {
 
   const payload = {
     items,
-    allowanceUsd,
     googleConnected,
     githubConnected,
     googleSignInReady,

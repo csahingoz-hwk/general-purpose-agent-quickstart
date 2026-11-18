@@ -149,37 +149,3 @@ export function webSearchLane(modelId: string) {
 export function premiumLaneEnabled() {
   return vertexEnabled() || gatewayEnabled() || openAIEnabled();
 }
-
-export const DEFAULT_MONTHLY_ALLOWANCE_USD = 40;
-export const MAX_MONTHLY_ALLOWANCE_USD = 10_000;
-
-export function monthlyAllowance(overrideUsd?: number | null) {
-  if (overrideUsd !== undefined && overrideUsd !== null) {
-    if (
-      !Number.isFinite(overrideUsd) ||
-      overrideUsd <= 0 ||
-      overrideUsd > MAX_MONTHLY_ALLOWANCE_USD
-    ) {
-      throw new Error("spend_configuration");
-    }
-    return overrideUsd;
-  }
-  const raw = process.env.AI_MONTHLY_ALLOWANCE_USD?.trim();
-  const limit = Number(raw && raw.length > 0 ? raw : "40");
-  if (
-    !Number.isFinite(limit) ||
-    limit <= 0 ||
-    limit > MAX_MONTHLY_ALLOWANCE_USD
-  ) {
-    throw new Error("spend_configuration");
-  }
-  return limit;
-}
-
-export function safeMonthlyAllowance(overrideUsd?: number | null): number {
-  try {
-    return monthlyAllowance(overrideUsd);
-  } catch {
-    return DEFAULT_MONTHLY_ALLOWANCE_USD;
-  }
-}

@@ -25,7 +25,6 @@ import {
   ARGON,
   COPILOT_HAIKU,
   HYDROGEN,
-  monthlyAllowance,
   TERRA,
   WEB_SEARCH_TOOL_ID,
 } from "../../lib/ai/routing/catalog";
@@ -499,12 +498,118 @@ test("route onError logs failureKind only, Turkish partial break shows 'Yarıda 
   assert.equal(canRetryReply([uMsg, storedWrite]), false);
 });
 
-test("Browser Audit A: $40 Ultra allowance succeeds, Copilot fallback zero-reserve never throws model_spend, and error causes are distinct", async () => {
+test("Owner Decision (No Internal Spend Cap): 60 consecutive turns across Hydrogen, Argon, and Vertex-429 -> Copilot Haiku fallback never hit any internal cap, never select pay-per-use models, and show exact Turkish cause on double 429", async () => {
   const prevAllowance = process.env.AI_MONTHLY_ALLOWANCE_USD;
   try {
-    process.env.AI_MONTHLY_ALLOWANCE_USD = "40";
-    assert.equal(monthlyAllowance(), 40);
-    assert.equal(monthlyAllowance(100), 100);
+    // Even if a stale or invalid AI_MONTHLY_ALLOWANCE_USD=0 env var is left set, it has zero effect
+    process.env.AI_MONTHLY_ALLOWANCE_USD = "0";
+
+    const ledgerSrc = readFileSync("lib/ai/routing/ledger.ts", "utf8");
+    assert.doesNotMatch(ledgerSrc, /AI_MONTHLY_ALLOWANCE_USD/);
+    assert.doesNotMatch(ledgerSrc, /ModelFailure\("spend"\)/);
+
+    for (let turn = 1; turn <= 60; turn++) {
+      const ledger = createUsageLedger("owner-1", `req-turn-${turn}`);
+      const isArgonTurn = turn % 5 === 0;
+      const simulateVertex429 = turn % 8 === 0;
+      const initialModel = isArgonTurn ? ARGON : HYDROGEN;
+
+      const session: InferenceSession = {
+        available: [HYDROGEN, ARGON, COPILOT_HAIKU],
+        exposed: false,
+        toolBoundary: false,
+        fallbackUsed: false,
+        ledger,
+      };
+
+      const routed = createRoutedModel(
+        initialModel,
+        session,
+        (modelId) => {
+          assert.ok(
+            modelId === HYDROGEN ||
+              modelId === ARGON ||
+              modelId === COPILOT_HAIKU,
+            `Forbidden pay-per-use model selected on turn ${turn}: ${modelId}`
+          );
+          if (modelId === HYDROGEN || modelId === ARGON) {
+            return createVertexGeminiAdapter(modelId, {
+              projectId: "project-cd0bc64c-0025-446c-b41",
+              getAccessToken: () => Promise.resolve("ya29.test"),
+              fetcher: () => {
+                if (simulateVertex429) {
+                  return Promise.resolve(
+                    new Response("Resource exhausted", { status: 429 })
+                  );
+                }
+                const sse = `data: ${JSON.stringify({
+                  candidates: [
+                    {
+                      content: {
+                        role: "model",
+                        parts: [{ text: `Yanıt #${turn}` }],
+                      },
+                      finishReason: "STOP",
+                    },
+                  ],
+                  usageMetadata: {
+                    promptTokenCount: 5000,
+                    candidatesTokenCount: 2000,
+                  },
+                })}\n\ndata: [DONE]\n\n`;
+                return Promise.resolve(
+                  new Response(sse, {
+                    status: 200,
+                    headers: { "content-type": "text/event-stream" },
+                  })
+                );
+              },
+            });
+          }
+          return createCopilotHaikuVmAdapter({
+            relayUrl: "https://relay.example.run.app",
+            hmacSecret: "0123456789abcdef0123456789abcdef",
+            copilotToken: "synthetic-unit-test-copilot-token",
+            fetcher: () => {
+              const sse = [
+                `data: ${JSON.stringify({ type: "text-delta", delta: `Copilot yedek yanıt #${turn}` })}\n\n`,
+                `data: ${JSON.stringify({ type: "finish", finishReason: "stop" })}\n\n`,
+                "data: [DONE]\n\n",
+              ].join("");
+              return Promise.resolve(
+                new Response(sse, {
+                  status: 200,
+                  headers: { "content-type": "text/event-stream" },
+                })
+              );
+            },
+          });
+        },
+        { gateway: false, vertexSearch: true }
+      );
+
+      const res = streamText({
+        model: routed,
+        prompt: `Merhaba tur ${turn}`,
+        maxRetries: 0,
+      });
+      const text = await res.text;
+      if (simulateVertex429) {
+        assert.equal(text, `Copilot yedek yanıt #${turn}`);
+        assert.equal(session.fallbackUsed, true);
+        assert.equal(session.activeModelId, COPILOT_HAIKU);
+      } else {
+        assert.equal(text, `Yanıt #${turn}`);
+        assert.equal(session.fallbackUsed, false);
+      }
+    }
+
+    // When Vertex returns 429 AND Copilot is unavailable, show exact Turkish cause
+    const vertexRateMsg = safeModelError(
+      new ModelFailure("rate"),
+      "Merhaba nasılsın"
+    );
+    assert.match(vertexRateMsg, /Vertex AI.*429/i);
   } finally {
     if (prevAllowance === undefined) {
       Reflect.deleteProperty(process.env, "AI_MONTHLY_ALLOWANCE_USD");
@@ -512,33 +617,6 @@ test("Browser Audit A: $40 Ultra allowance succeeds, Copilot fallback zero-reser
       process.env.AI_MONTHLY_ALLOWANCE_USD = prevAllowance;
     }
   }
-
-  const ledger = createUsageLedger("owner-1", "req-1");
-  const vertexSub = await ledger.reserve({ model: HYDROGEN, reserveUsd: 0 });
-  assert.ok(vertexSub.startsWith("vertex:"));
-  const copilotSub = await ledger.reserve({
-    model: COPILOT_HAIKU,
-    reserveUsd: 0,
-    fallbackReason: "rate",
-  });
-  assert.ok(copilotSub.startsWith("copilot:"));
-
-  const internalCapMsg = safeModelError(
-    new ModelFailure("spend"),
-    "Merhaba nasılsın"
-  );
-  const vertexRateMsg = safeModelError(
-    new ModelFailure("rate"),
-    "Merhaba nasılsın"
-  );
-  const billingMsg = safeModelError(
-    new ModelFailure("billing"),
-    "Merhaba nasılsın"
-  );
-  assert.match(internalCapMsg, /uygulama içi limit/i);
-  assert.match(vertexRateMsg, /Vertex AI.*429/i);
-  assert.notEqual(internalCapMsg, vertexRateMsg);
-  assert.notEqual(internalCapMsg, billingMsg);
 });
 
 test("Browser Audit B & C: English inbox read, Turkish calendar read, and ordinal draft follow-up ('İlkine kısa bir cevap taslağı yaz') call Gmail/Calendar tools & accept RFC-5322 recipients", () => {

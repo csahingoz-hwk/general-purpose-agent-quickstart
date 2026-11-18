@@ -640,14 +640,12 @@ test("Vertex AI Ultra zero pay-per-use routing: ONLY Hydrogen & Argon in chatMod
 });
 
 test("Zero-wait Vertex ledger, immediate search progress, and all 6 generative UI cards (comparison, timeline, chart, table, map, source cards) validate cleanly", async () => {
-  // 1) Zero-wait Vertex ledger reservation ($0 Gateway allowance, 0 DB queries)
+  // 1) Zero-wait Vertex ledger reservation (0 DB queries, no internal spend cap)
   const ledger = createUsageLedger("owner-u1", "req-fast");
   const vertexResId = await ledger.reserve({ model: HYDROGEN, reserveUsd: 0 });
   assert.match(vertexResId, /^vertex:/);
-  await assert.rejects(
-    () => ledger.reserve({ model: TERRA, reserveUsd: 0 }),
-    /model_spend/
-  );
+  const statResId = await ledger.reserve({ model: TERRA, reserveUsd: 25 });
+  assert.match(statResId, /^stat:/);
 
   // 2) Immediate webSearch tool-call emitted BEFORE first text-delta in Vertex doStream
   const sseBody = [

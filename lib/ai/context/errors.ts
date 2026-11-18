@@ -53,18 +53,6 @@ export function safeModelError(error: unknown, userText: string): string {
       ? "Engellendi: Korn Ferry veya işveren gizli verileri kişisel Google AI modellerine gönderilemez."
       : "Blocked: Korn Ferry or employer confidential material cannot be sent to personal Google AI models.";
   }
-  if (/spend_configuration/i.test(raw)) {
-    return tr
-      ? "Aylık bütçe yapılandırması (AI_MONTHLY_ALLOWANCE_USD) geçersiz. Ayarlar > Kullanım sayfasından aylık üst sınırı güncelleyebilirsin."
-      : "Monthly allowance configuration (AI_MONTHLY_ALLOWANCE_USD) is invalid. Update your monthly cap in Usage & settings.";
-  }
-  if (
-    /model_spend|App's internal monthly allowance|Uygulama içi aylık/i.test(raw)
-  ) {
-    return tr
-      ? "Uygulama içi aylık harcama üst sınırına ulaşıldı (Vertex kredisi değil, uygulama içi limit). Ayarlar > Kullanım sayfasından bu sınırı artırabilirsin."
-      : "App's internal monthly allowance cap reached (internal app cap, not Vertex quota). You can raise this cap in Usage & settings.";
-  }
   if (
     /model_billing|spending allowance or account credit limit|Sağlayıcı kredi sınırına/.test(
       raw

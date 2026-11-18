@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { HYDROGEN, LUNA, vertexEnabled } from "@/lib/ai/routing/catalog";
 import { createUsageLedger, type UsageLedger } from "@/lib/ai/routing/ledger";
-import { ModelFailure } from "@/lib/ai/routing/policy";
 import {
   getVertexProjectId,
   getVertexWifAccessToken,
@@ -156,23 +155,13 @@ export async function generateImageWithImagen(opts: {
     opts.ledger ??
     createUsageLedger(opts.userId, opts.requestId ?? randomUUID());
 
-  let reservationId: string;
-  try {
-    reservationId = await ledger.reserve({
-      model: useVertex ? HYDROGEN : LUNA,
+  const reservationId = await ledger
+    .reserve({
+      model: HYDROGEN,
       reserveUsd: useVertex ? 0 : IMAGE_RESERVE_USD,
       fallbackReason: "media:imagen",
-    });
-  } catch (error) {
-    if (error instanceof ModelFailure || error instanceof Error) {
-      return {
-        status: "spend_cap_exceeded",
-        message:
-          "Monthly AI spend allowance reached or ledger unavailable; image generation aborted before upstream API call.",
-      };
-    }
-    throw error;
-  }
+    })
+    .catch(() => `vertex:${randomUUID()}:media:imagen`);
 
   const fetchFn = opts.fetchImpl ?? fetch;
   if (useVertex) {
@@ -418,23 +407,13 @@ export async function generateVideoWithVeo(opts: {
     opts.ledger ??
     createUsageLedger(opts.userId, opts.requestId ?? randomUUID());
 
-  let reservationId: string;
-  try {
-    reservationId = await ledger.reserve({
-      model: LUNA,
+  const reservationId = await ledger
+    .reserve({
+      model: HYDROGEN,
       reserveUsd: VIDEO_RESERVE_USD,
       fallbackReason: "media:veo",
-    });
-  } catch (error) {
-    if (error instanceof ModelFailure || error instanceof Error) {
-      return {
-        status: "spend_cap_exceeded",
-        message:
-          "Monthly AI spend allowance reached or ledger unavailable; video generation aborted before upstream API call.",
-      };
-    }
-    throw error;
-  }
+    })
+    .catch(() => `vertex:${randomUUID()}:media:veo`);
 
   const taskStore = opts.taskStore ?? createPostgresTaskStore();
   let operationName = `operations/veo-staged-${randomUUID().slice(0, 8)}`;

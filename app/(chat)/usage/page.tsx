@@ -28,22 +28,15 @@ type UsageCall = {
   cacheWriteTokens: number | null;
   outputTokens: number | null;
   reasoningTokens: number | null;
-  estimatedUsd: string | null;
-  reservedUsd: string;
   outcome: string;
 };
 
 type UsageResponse = {
-  dailyEstimatedUsd: number;
-  monthlyEstimatedUsd: number;
-  allowanceUsd: number;
   totalInputTokens?: number;
   totalOutputTokens?: number;
   requests: number;
   invocations: number;
   fallbackInvocations: number;
-  fallbackEstimatedUsd: number;
-  unreportedInvocations: number;
   calls: UsageCall[];
 };
 
@@ -78,8 +71,6 @@ function UsagePageContent() {
   const { theme, setTheme } = useTheme();
   const [hasSpeechApi, setHasSpeechApi] = useState(false);
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
-  const [capInput, setCapInput] = useState("");
-  const [savingCap, setSavingCap] = useState(false);
 
   useEffect(() => {
     if (searchParams.get("connected") === "google") {
@@ -100,16 +91,10 @@ function UsagePageContent() {
     );
   }, []);
 
-  const {
-    data,
-    error,
-    mutate: mutateUsage,
-  } = useSWR<UsageResponse>(`${basePath}/api/usage`, fetcher);
-  useEffect(() => {
-    if (data?.allowanceUsd !== undefined && capInput === "") {
-      setCapInput(String(data.allowanceUsd));
-    }
-  }, [data?.allowanceUsd, capInput]);
+  const { data, error } = useSWR<UsageResponse>(
+    `${basePath}/api/usage`,
+    fetcher
+  );
 
   const { data: connectors, mutate: mutateConnectors } =
     useSWR<ConnectorStatusResponse>(`${basePath}/api/connectors`, fetcher, {
@@ -172,54 +157,6 @@ function UsagePageContent() {
       setBusyProvider(null);
     }
   }
-
-  async function handleSaveCap(event: React.FormEvent) {
-    event.preventDefault();
-    const numeric = Number(capInput);
-    if (!Number.isFinite(numeric) || numeric <= 0 || numeric > 10_000) {
-      toast({
-        type: "error",
-        description: "Enter a monthly cap between $0.01 and $10,000.",
-      });
-      return;
-    }
-    setSavingCap(true);
-    try {
-      const res = await fetch(`${basePath}/api/usage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ allowanceUsd: numeric }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? "Could not save monthly cap.");
-      }
-      await Promise.all([
-        mutateUsage(),
-        globalMutate(`${basePath}/api/setup-status`),
-      ]);
-      toast({
-        type: "success",
-        description: `Monthly safety cap updated to $${numeric.toFixed(2)}.`,
-      });
-    } catch (err) {
-      toast({
-        type: "error",
-        description:
-          err instanceof Error ? err.message : "Could not save monthly cap.",
-      });
-    } finally {
-      setSavingCap(false);
-    }
-  }
-
-  const usd = (value: number) => `$${value.toFixed(4)}`;
-  const pct = data
-    ? Math.min(
-        100,
-        Math.max(0, (data.monthlyEstimatedUsd / data.allowanceUsd) * 100)
-      )
-    : 0;
 
   return (
     <main className="h-dvh w-full overflow-x-hidden overflow-y-auto bg-background">
@@ -476,89 +413,32 @@ function UsagePageContent() {
               Conversation usage
             </h1>
             <p className="mt-1 text-muted-foreground text-sm">
-              Vertex AI runs on Google AI Ultra credit ($0 per-call charge).
-              Real input/output tokens are recorded below, and you can set your
-              internal monthly safety cap anytime.
+              Informational activity stats for this UTC month. All active models
+              are covered by your subscriptions &amp; Google AI Ultra credit —
+              no pay-per-use models or internal spend caps are active.
             </p>
           </div>
 
           {error ? (
             <div className="rounded-2xl border border-[color:var(--hairline)] bg-card p-4 text-muted-foreground text-sm">
-              Usage tracking needs setup. Chat stays paused until it is ready.
+              Usage statistics are temporarily unavailable. Chat continues
+              normally.
             </div>
           ) : data ? (
             <div className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card">
-              <div className="space-y-3 p-4">
+              <div className="space-y-2 p-4">
                 <p
                   className="font-medium text-[15px] text-foreground tabular-nums"
                   data-testid="usage-summary"
                 >
-                  Today {usd(data.dailyEstimatedUsd)} · This month{" "}
-                  {usd(data.monthlyEstimatedUsd)} of $
-                  {data.allowanceUsd.toFixed(2)}
+                  {data.requests} requests · {data.invocations} model calls ·{" "}
+                  {data.fallbackInvocations} Copilot fallback calls
                 </p>
-
-                <div
-                  aria-hidden="true"
-                  className="h-2 w-full overflow-hidden rounded-full bg-muted"
-                >
-                  <div
-                    className="h-full rounded-full bg-primary transition-[width] duration-300"
-                    style={{
-                      width: `${Math.max(pct, data.monthlyEstimatedUsd > 0 ? 2 : 0)}%`,
-                    }}
-                  />
-                </div>
 
                 <p className="text-muted-foreground text-xs tabular-nums">
-                  {data.requests} requests · {data.invocations} model calls ·{" "}
-                  {data.fallbackInvocations} fallback calls (
-                  {usd(data.fallbackEstimatedUsd)}) ·{" "}
-                  {(data.totalInputTokens ?? 0).toLocaleString()} in /{" "}
-                  {(data.totalOutputTokens ?? 0).toLocaleString()} out tokens
+                  {(data.totalInputTokens ?? 0).toLocaleString()} input tokens ·{" "}
+                  {(data.totalOutputTokens ?? 0).toLocaleString()} output tokens
                 </p>
-
-                {data.unreportedInvocations > 0 && (
-                  <p className="text-muted-foreground text-xs">
-                    Some calls did not report final usage. Their full reserved
-                    estimate is included until reconciled.
-                  </p>
-                )}
-
-                <form
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[color:var(--hairline)] bg-background/70 px-3 py-2.5"
-                  data-testid="monthly-allowance-form"
-                  onSubmit={handleSaveCap}
-                >
-                  <label
-                    className="text-foreground text-xs font-medium"
-                    htmlFor="monthly-allowance-input"
-                  >
-                    Monthly safety cap (USD)
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      aria-label="Monthly safety cap in USD"
-                      className="h-9 w-24 rounded-lg border border-[color:var(--hairline)] bg-background px-2.5 text-right text-sm tabular-nums text-foreground"
-                      data-testid="monthly-allowance-input"
-                      id="monthly-allowance-input"
-                      max={10_000}
-                      min={0.01}
-                      onChange={(e) => setCapInput(e.target.value)}
-                      step="0.01"
-                      type="number"
-                      value={capInput}
-                    />
-                    <button
-                      className="inline-flex h-9 items-center rounded-full bg-primary px-3.5 font-medium text-primary-foreground text-xs hover:bg-primary/90 disabled:opacity-50"
-                      data-testid="monthly-allowance-save"
-                      disabled={savingCap}
-                      type="submit"
-                    >
-                      {savingCap ? "Saving…" : "Save"}
-                    </button>
-                  </div>
-                </form>
               </div>
 
               {data.calls.length > 0 && (
@@ -581,15 +461,12 @@ function UsagePageContent() {
                       >
                         <div className="flex items-center justify-between font-medium text-foreground">
                           <span>{call.model}</span>
-                          <span>
-                            {usd(Number(call.estimatedUsd ?? call.reservedUsd))}
-                          </span>
+                          <span>{call.outcome}</span>
                         </div>
                         <div className="flex items-center justify-between text-muted-foreground">
                           <time>
                             {new Date(call.createdAt).toLocaleString()}
                           </time>
-                          <span>{call.outcome}</span>
                         </div>
                         <div className="text-muted-foreground">
                           In {call.inputTokens ?? "—"} · Cached{" "}
@@ -611,7 +488,6 @@ function UsagePageContent() {
                           <th className="py-2 font-medium">
                             Output / reasoning
                           </th>
-                          <th className="py-2 font-medium">Estimated USD</th>
                           <th className="py-2 font-medium">Status</th>
                         </tr>
                       </thead>
@@ -635,11 +511,6 @@ function UsagePageContent() {
                             <td className="py-2.5 pr-3">
                               {call.outputTokens ?? "—"} /{" "}
                               {call.reasoningTokens ?? "—"}
-                            </td>
-                            <td className="py-2.5 pr-3">
-                              {usd(
-                                Number(call.estimatedUsd ?? call.reservedUsd)
-                              )}
                             </td>
                             <td className="py-2.5">{call.outcome}</td>
                           </tr>
