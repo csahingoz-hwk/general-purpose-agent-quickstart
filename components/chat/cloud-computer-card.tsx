@@ -22,6 +22,7 @@ export function resolveCloudFileUrls(output: Record<string, unknown>): {
   downloadUrl: string | null;
   isHtml: boolean;
   isImage: boolean;
+  isBinaryArchive: boolean;
   textPreview: string | null;
 } {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
@@ -83,6 +84,15 @@ export function resolveCloudFileUrls(output: Record<string, unknown>): {
     lower.endsWith(".jpeg") ||
     lower.endsWith(".webp") ||
     lower.endsWith(".svg");
+  const isBinaryArchive =
+    mediaType === "application/zip" ||
+    mediaType === "application/gzip" ||
+    mediaType === "application/octet-stream" ||
+    lower.endsWith(".zip") ||
+    lower.endsWith(".gz") ||
+    lower.endsWith(".tgz") ||
+    lower.endsWith(".tar") ||
+    lower.endsWith(".bin");
   const textPreview =
     typeof output.textPreview === "string" && output.textPreview.length > 0
       ? output.textPreview
@@ -90,10 +100,11 @@ export function resolveCloudFileUrls(output: Record<string, unknown>): {
 
   return {
     filename,
-    previewUrl,
+    previewUrl: isBinaryArchive ? null : previewUrl,
     downloadUrl,
     isHtml,
     isImage,
+    isBinaryArchive,
     textPreview,
   };
 }
@@ -116,12 +127,19 @@ export function CloudComputerCard({
     (toolName === "cloudExportFileToChat" || toolName === "cloudWriteFile") &&
     status === "ok"
   ) {
-    const { filename, previewUrl, downloadUrl, isHtml, isImage, textPreview } =
-      resolveCloudFileUrls(output);
+    const {
+      filename,
+      previewUrl,
+      downloadUrl,
+      isHtml,
+      isImage,
+      isBinaryArchive,
+      textPreview,
+    } = resolveCloudFileUrls(output);
     const rawBytes = Number(output.sizeBytes ?? output.bytesWritten ?? 0);
     const sizeKb = Math.max(1, Math.round(rawBytes / 1024));
     const canInlinePreview = Boolean(
-      isHtml || isImage || textPreview || previewUrl
+      !isBinaryArchive && (isHtml || isImage || textPreview || previewUrl)
     );
     const testId =
       toolName === "cloudExportFileToChat"
@@ -142,6 +160,8 @@ export function CloudComputerCard({
             onClick={() => {
               if (canInlinePreview) {
                 setOpenPreview((prev) => !prev);
+              } else if (downloadUrl && typeof window !== "undefined") {
+                window.location.assign(downloadUrl);
               }
             }}
             type="button"
@@ -208,7 +228,7 @@ export function CloudComputerCard({
             {isHtml ? (
               <iframe
                 className="h-72 w-full rounded-xl border border-[color:var(--hairline)] bg-white"
-                sandbox="allow-scripts"
+                sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"
                 src={textPreview ? undefined : (previewUrl ?? undefined)}
                 srcDoc={textPreview ?? undefined}
                 title={filename}

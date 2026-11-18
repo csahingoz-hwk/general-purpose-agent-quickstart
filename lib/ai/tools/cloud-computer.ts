@@ -1,6 +1,11 @@
 import { tool } from "ai";
 import { z } from "zod";
 import {
+  fetchGroundedNewsBriefing,
+  isNewsPageOrBriefingTarget,
+  validateGroundedNewsPageContent,
+} from "@/lib/ai/grounded-news";
+import {
   classifyCloudCommand,
   cloudBrowsePublicUrl,
   cloudReadWorkspaceFile,
@@ -37,6 +42,8 @@ export function createCloudComputerTools(opts: {
   hmacSecret?: string;
   signingSecret?: string;
   fetchImpl?: typeof fetch;
+  verifiedSearchUrls?: readonly string[];
+  groundedNewsFetcher?: typeof fetchGroundedNewsBriefing;
 }) {
   const {
     userId,
@@ -79,6 +86,26 @@ export function createCloudComputerTools(opts: {
           cwd,
           message: decision.reason,
         };
+      }
+
+      if (
+        /(?:<!doctype\s+html|<html\b)/i.test(command) &&
+        isNewsPageOrBriefingTarget({ path: command, content: command })
+      ) {
+        const newsCheck = validateGroundedNewsPageContent(command, {
+          verifiedUrls: opts.verifiedSearchUrls,
+        });
+        if (!newsCheck.valid) {
+          return {
+            status: "error" as const,
+            code: "ungrounded_news_rejected" as const,
+            reason: newsCheck.reason,
+            command,
+            cwd,
+            message:
+              "Rejected: news pages must use real webSearch results with publication dates and clickable https:// source links — never invented items or placeholder links. Call webSearch first, then use cloudWriteFile with verified dated items and real source URLs.",
+          };
+        }
       }
 
       if (decision.tier === "needs_approval" || hasUntrustedContext) {
@@ -162,10 +189,48 @@ export function createCloudComputerTools(opts: {
         };
       }
       try {
+        const safePath = resolveSafeWorkspacePath(rawPath);
+        const safeNamePreview = sanitizeAttachmentFilename(safePath);
+        const lowerName = safeNamePreview.toLowerCase();
+        if (
+          (lowerName.endsWith(".html") ||
+            lowerName.endsWith(".htm") ||
+            lowerName.endsWith(".md") ||
+            lowerName.endsWith(".markdown")) &&
+          isNewsPageOrBriefingTarget({ path: safePath, content })
+        ) {
+          const newsCheck = validateGroundedNewsPageContent(content, {
+            verifiedUrls: opts.verifiedSearchUrls,
+          });
+          if (!newsCheck.valid) {
+            const topicHint = safeNamePreview
+              .replace(/\.[a-z0-9]+$/i, "")
+              .replace(/[_-]+/g, " ")
+              .trim();
+            const briefing = await (
+              opts.groundedNewsFetcher ?? fetchGroundedNewsBriefing
+            )(topicHint || "latest news").catch(() => null);
+            return {
+              status: "error" as const,
+              code: "ungrounded_news_rejected" as const,
+              reason: newsCheck.reason,
+              path: safePath,
+              message:
+                "Rejected: news pages must be built from real web search results and include each item's real publication date and clickable https:// source link (never invented items or placeholder URLs). Rewrite the file using ONLY verified dated items and real source links, then call cloudExportFileToChat.",
+              ...(briefing?.ok
+                ? {
+                    fetchedAtIso: briefing.fetchedAtIso,
+                    groundedSummary: briefing.summaryText,
+                    groundedSources: briefing.sources,
+                  }
+                : {}),
+            };
+          }
+        }
+
         const wake = await lifecycle
           .ensureAwakeForTask({ userId })
           .catch(() => null);
-        const safePath = resolveSafeWorkspacePath(rawPath);
         const res = await cloudWriteWorkspaceFile({
           path: safePath,
           contentBase64: Buffer.from(content, "utf8").toString("base64"),
@@ -200,7 +265,7 @@ export function createCloudComputerTools(opts: {
 
   const cloudExportFileToChat = tool({
     description:
-      "Read a generated file (HTML, CSV, PDF, PNG, JPEG, Markdown, JSON, or text) from /workspace on the Cloud Computer and attach private preview and download links into the chat.",
+      "Read any generated file (HTML, Markdown, TXT, JSON, CSV, PDF, PNG, JPEG, SVG, WEBP, ZIP, or binary/archive) from /workspace on the Cloud Computer and attach private preview and download links into the chat.",
     inputSchema: z.object({
       path: z
         .string()

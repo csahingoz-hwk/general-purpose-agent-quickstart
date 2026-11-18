@@ -13,9 +13,14 @@ export const EXPORTED_PRIVATE_FILE_TYPES = [
   "image/webp",
   "image/svg+xml",
   "text/html",
+  "text/css",
+  "text/javascript",
   "text/markdown",
   "text/plain",
   "application/json",
+  "application/xml",
+  "application/zip",
+  "application/gzip",
   "application/octet-stream",
 ] as const;
 
@@ -47,11 +52,34 @@ export function inferPrivateFileMediaType(
   if (lower.endsWith(".html") || lower.endsWith(".htm")) {
     return "text/html";
   }
+  if (lower.endsWith(".css")) {
+    return "text/css";
+  }
+  if (
+    lower.endsWith(".js") ||
+    lower.endsWith(".mjs") ||
+    lower.endsWith(".cjs")
+  ) {
+    return "text/javascript";
+  }
   if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
     return "text/markdown";
   }
   if (lower.endsWith(".json") || lower.endsWith(".jsonl")) {
     return "application/json";
+  }
+  if (lower.endsWith(".xml")) {
+    return "application/xml";
+  }
+  if (lower.endsWith(".zip")) {
+    return "application/zip";
+  }
+  if (
+    lower.endsWith(".gz") ||
+    lower.endsWith(".tgz") ||
+    lower.endsWith(".tar.gz")
+  ) {
+    return "application/gzip";
   }
   if (
     lower.endsWith(".txt") ||
@@ -59,11 +87,9 @@ export function inferPrivateFileMediaType(
     lower.endsWith(".py") ||
     lower.endsWith(".ts") ||
     lower.endsWith(".tsx") ||
-    lower.endsWith(".js") ||
     lower.endsWith(".sh") ||
     lower.endsWith(".yaml") ||
     lower.endsWith(".yml") ||
-    lower.endsWith(".xml") ||
     lower.endsWith(".sql")
   ) {
     return "text/plain";

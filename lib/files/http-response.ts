@@ -6,11 +6,9 @@ function formatContentTypeWithCharset(
   contentType: ExportedPrivateFileMediaType
 ): string {
   if (
-    contentType === "text/html" ||
-    contentType === "text/plain" ||
-    contentType === "text/markdown" ||
-    contentType === "text/csv" ||
-    contentType === "application/json"
+    contentType.startsWith("text/") ||
+    contentType === "application/json" ||
+    contentType === "application/xml"
   ) {
     return `${contentType}; charset=utf-8`;
   }
@@ -26,8 +24,9 @@ function cspForFileResponse(
   }
   if (contentType === "text/html" || contentType === "image/svg+xml") {
     // Opaque-origin sandbox (no allow-same-origin): renders HTML/CSS/inline charts
-    // cleanly in mobile Safari while isolating cookies, storage, and same-origin APIs.
-    return "sandbox allow-scripts; default-src 'unsafe-inline' https: data: blob:; img-src * data: blob:; style-src 'unsafe-inline' https:; font-src * data:; connect-src 'none'; form-action 'none'; base-uri 'none'";
+    // cleanly in mobile Safari while isolating cookies, storage, and same-origin APIs,
+    // and permits clicking external source links (`target="_blank"`).
+    return "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox; default-src 'unsafe-inline' https: data: blob:; img-src * data: blob:; style-src 'unsafe-inline' https:; font-src * data:; connect-src 'none'; form-action 'none'; base-uri 'none'";
   }
   if (contentType.startsWith("image/") || contentType === "application/pdf") {
     return "default-src 'none'; img-src 'self' data: blob:; style-src 'unsafe-inline'; sandbox";

@@ -11,6 +11,10 @@ import {
 } from "@/lib/ai/capability-manifest";
 import { resolveChatReplyIndicatorState } from "@/lib/ai/chat-status-indicator";
 import { safeUIStream } from "@/lib/ai/conversation-state";
+import {
+  fetchGroundedNewsBriefing,
+  validateGroundedNewsPageContent,
+} from "@/lib/ai/grounded-news";
 import { createCloudComputerTools } from "@/lib/ai/tools/cloud-computer";
 import {
   createMemoryTools,
@@ -78,14 +82,27 @@ test("Fix 1: Cloud VM file cards export & serve HTML inline (sandboxed) and atta
     hmacSecret: "a".repeat(64),
     fileStore,
     signingSecret: "b".repeat(64),
-    fetchImpl: ((url) => {
+    fetchImpl: ((url, init) => {
       if (String(url).endsWith("/files/read")) {
+        const parsed = JSON.parse(String(init?.body ?? "{}")) as {
+          path?: string;
+        };
+        const reqPath = parsed.path ?? "/workspace/ai_news.html";
+        const contentByPath: Record<string, Buffer> = {
+          "/workspace/ai_news.html": Buffer.from(htmlSample, "utf8"),
+          "/workspace/summary.md": Buffer.from("# Summary\nOk", "utf8"),
+          "/workspace/notes.txt": Buffer.from("Plain text", "utf8"),
+          "/workspace/data.json": Buffer.from('{"ok":true}', "utf8"),
+          "/workspace/bundle.zip": Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+        };
+        const buf =
+          contentByPath[reqPath] ?? Buffer.from("generic-bytes", "utf8");
         return Promise.resolve(
           Response.json({
             status: "ok",
-            path: "/workspace/ai_news.html",
-            sizeBytes: Buffer.byteLength(htmlSample, "utf8"),
-            base64: Buffer.from(htmlSample, "utf8").toString("base64"),
+            path: reqPath,
+            sizeBytes: buf.byteLength,
+            base64: buf.toString("base64"),
           })
         );
       }
@@ -105,6 +122,38 @@ test("Fix 1: Cloud VM file cards export & serve HTML inline (sandboxed) and atta
   assert.match(
     String(exported.previewUrl),
     /^\/api\/files\/.+\?disposition=inline$/
+  );
+
+  // Verify cloudExportFileToChat issues a signed downloadUrl for ALL file types (md, txt, json, zip, etc.)
+  for (const [samplePath, expectedMime] of [
+    ["/workspace/summary.md", "text/markdown"],
+    ["/workspace/notes.txt", "text/plain"],
+    ["/workspace/data.json", "application/json"],
+    ["/workspace/bundle.zip", "application/zip"],
+  ] as const) {
+    const res = (await cloudTools.cloudExportFileToChat.execute?.(
+      { path: samplePath },
+      { toolCallId: `exp-${samplePath}`, messages: [] } as never
+    )) as Record<string, unknown>;
+    assert.equal(res.status, "ok", samplePath);
+    assert.equal(res.mediaType, expectedMime, samplePath);
+    assert.match(
+      String(res.downloadUrl),
+      /^\/api\/files\/.+/,
+      `Expected downloadUrl for ${samplePath}`
+    );
+  }
+  const zipCardUrls = resolveCloudFileUrls({
+    status: "ok",
+    filename: "bundle.zip",
+    mediaType: "application/zip",
+    downloadUrl: "/api/files/tok-zip",
+  });
+  assert.equal(zipCardUrls.isBinaryArchive, true);
+  assert.equal(zipCardUrls.previewUrl, null);
+  assert.equal(
+    zipCardUrls.downloadUrl,
+    "/api/files/tok-zip?disposition=attachment"
   );
 
   // Verify inline preview vs attachment headers for mobile Safari
@@ -888,4 +937,188 @@ test("Fix 7: Vertex STS 1h principal cache, non-probing capability manifest, par
     clearLiveCapabilityManifestCache();
     clearGoogleWorkspaceHealthCache();
   }
+});
+
+// ---------------------------------------------------------------------------
+// 8. Grounded news pages: real web search results, dates & source links only
+// ---------------------------------------------------------------------------
+test("Fix 8: News pages require real webSearch results with publication dates and clickable https:// source links, never invented items", async () => {
+  // 1) Validator rejects invented / unlinked / undated / placeholder news pages
+  const inventedNoLinks =
+    "<!doctype html><html><head><title>AI News</title></head><body><h1>Latest AI News</h1><article><h2>Major Model Released</h2><p>Big breakthrough announced today.</p></article></body></html>";
+  assert.deepEqual(
+    validateGroundedNewsPageContent(inventedNoLinks).reason,
+    "missing_source_links"
+  );
+
+  const placeholderExampleCom =
+    '<!doctype html><html><head><title>AI News</title></head><body><article><time>2026-11-18</time><a href="https://example.com/story1">Story</a></article></body></html>';
+  assert.equal(
+    validateGroundedNewsPageContent(placeholderExampleCom).reason,
+    "placeholder_or_invented_items"
+  );
+
+  const missingDatesHtml =
+    '<!doctype html><html><head><title>AI News</title></head><body><article><a href="https://reuters.com/technology/ai-chip-2026">AI Chip Update</a></article></body></html>';
+  assert.equal(
+    validateGroundedNewsPageContent(missingDatesHtml).reason,
+    "missing_dates"
+  );
+
+  const unverifiedDomainHtml =
+    '<!doctype html><html><head><title>AI News</title></head><body><article><time>2026-11-18</time><a href="https://invented-blog.invalid/post">Story</a></article></body></html>';
+  assert.equal(
+    validateGroundedNewsPageContent(unverifiedDomainHtml, {
+      verifiedUrls: ["https://www.reuters.com/technology/real-story/"],
+    }).reason,
+    "unverified_source_urls"
+  );
+
+  const validGroundedHtml = `<!doctype html>
+<html>
+  <head><title>AI News Digest</title></head>
+  <body>
+    <h1>AI News — 2026-11-18</h1>
+    <article>
+      <h2>New Open-Weights Benchmark Published</h2>
+      <p>Published: 2026-11-18 · Reuters</p>
+      <a href="https://www.reuters.com/technology/real-story/" target="_blank" rel="noopener noreferrer">Read on Reuters</a>
+    </article>
+  </body>
+</html>`;
+  const validCheck = validateGroundedNewsPageContent(validGroundedHtml, {
+    verifiedUrls: ["https://www.reuters.com/technology/real-story/"],
+  });
+  assert.equal(validCheck.valid, true);
+  assert.equal(validCheck.sourceLinks.length, 1);
+  assert.ok(validCheck.datesFound.includes("2026-11-18"));
+
+  // 2) cloudWriteFile rejects invented ai_news.html, returns live grounded sources, and accepts grounded rewrite
+  let vmWrites = 0;
+  const tools = createCloudComputerTools({
+    userId: "owner-news",
+    relayUrl: "https://cloud-vm.internal.example",
+    hmacSecret: "a".repeat(64),
+    signingSecret: "b".repeat(64),
+    groundedNewsFetcher: () =>
+      Promise.resolve({
+        ok: true,
+        query: "ai news",
+        fetchedAtIso: "2026-11-18",
+        summaryText:
+          "2026-11-18 — Reuters: New Open-Weights Benchmark Published.",
+        sources: [
+          {
+            title: "Reuters Technology",
+            url: "https://www.reuters.com/technology/real-story/",
+          },
+        ],
+        promptContext: "Grounded pack",
+      }),
+    fetchImpl: ((url, init) => {
+      if (String(url).endsWith("/files/write")) {
+        vmWrites += 1;
+        const parsed = JSON.parse(String(init?.body ?? "{}")) as {
+          path?: string;
+          contentBase64?: string;
+        };
+        return Promise.resolve(
+          Response.json({
+            status: "ok",
+            path: parsed.path ?? "/workspace/ai_news.html",
+            bytesWritten: Buffer.from(parsed.contentBase64 ?? "", "base64")
+              .byteLength,
+          })
+        );
+      }
+      return Promise.resolve(Response.json({ status: "ok" }));
+    }) as typeof fetch,
+  });
+
+  const rejectedWrite = (await tools.cloudWriteFile.execute?.(
+    { path: "/workspace/ai_news.html", content: inventedNoLinks },
+    { toolCallId: "cw-invented", messages: [] } as never
+  )) as Record<string, unknown>;
+  assert.equal(rejectedWrite.status, "error");
+  assert.equal(rejectedWrite.code, "ungrounded_news_rejected");
+  assert.equal(
+    vmWrites,
+    0,
+    "Invented news page must never be written to Cloud VM"
+  );
+  assert.ok(Array.isArray(rejectedWrite.groundedSources));
+  assert.equal(
+    (rejectedWrite.groundedSources as Array<{ url: string }>)[0]?.url,
+    "https://www.reuters.com/technology/real-story/"
+  );
+
+  // Also blocks `cat <<EOF > /workspace/ai_news.html` via cloudExec with invented items
+  const rejectedExec = (await tools.cloudExec.execute?.(
+    {
+      command: `cat << 'EOF' > /workspace/ai_news.html\n${inventedNoLinks}\nEOF`,
+      cwd: "/workspace",
+    },
+    { toolCallId: "ce-invented", messages: [] } as never
+  )) as Record<string, unknown>;
+  assert.equal(rejectedExec.code, "ungrounded_news_rejected");
+
+  // Grounded rewrite with real search dates & clickable https:// source links succeeds
+  const acceptedWrite = (await tools.cloudWriteFile.execute?.(
+    { path: "/workspace/ai_news.html", content: validGroundedHtml },
+    { toolCallId: "cw-grounded", messages: [] } as never
+  )) as Record<string, unknown>;
+  assert.equal(acceptedWrite.status, "ok");
+  assert.equal(vmWrites, 1);
+
+  // 3) fetchGroundedNewsBriefing calls gemini-4-hydrogen with { googleSearch: {} } and blocks KF data
+  let capturedUrl = "";
+  const briefing = await fetchGroundedNewsBriefing("latest AI news", {
+    projectId: "project-cd0bc64c-0025-446c-b41",
+    getAccessToken: () => Promise.resolve("ya29.test"),
+    now: new Date("2026-11-18T12:00:00Z"),
+    fetcher: ((url) => {
+      capturedUrl = String(url);
+      return Promise.resolve(
+        Response.json({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: "2026-11-18 — Ars Technica: New AI compiler release.",
+                  },
+                ],
+              },
+              groundingMetadata: {
+                groundingChunks: [
+                  {
+                    web: {
+                      uri: "https://arstechnica.com/ai/2026/11/compiler-release/",
+                      title: "Ars Technica",
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        })
+      );
+    }) as typeof fetch,
+  });
+  assert.match(capturedUrl, /models\/gemini-4-hydrogen:generateContent$/);
+  assert.equal(briefing.ok, true);
+  assert.equal(briefing.sources.length, 1);
+  assert.equal(
+    briefing.sources[0]?.url,
+    "https://arstechnica.com/ai/2026/11/compiler-release/"
+  );
+
+  const kfBlocked = await fetchGroundedNewsBriefing(
+    "Korn Ferry internal news",
+    {
+      projectId: "project-cd0bc64c-0025-446c-b41",
+      getAccessToken: () => Promise.resolve("ya29.test"),
+    }
+  );
+  assert.equal(kfBlocked.ok, false);
 });
