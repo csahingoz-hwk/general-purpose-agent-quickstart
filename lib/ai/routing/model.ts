@@ -9,7 +9,9 @@ import { createGateway } from "ai";
 import { z } from "zod";
 import {
   ARGON,
+  COPILOT_HAIKU,
   HYDROGEN,
+  isCopilotFallbackModel,
   isVertexModel,
   LUNA,
   type PremiumModelId,
@@ -21,7 +23,12 @@ import {
 } from "./catalog";
 import { inputTokenBound, reserveCost } from "./cost";
 import { gatewaySlug } from "./gateway";
-import { failureKind, ModelFailure, mayFallback } from "./policy";
+import {
+  failureKind,
+  ModelFailure,
+  mayFallback,
+  mayFallbackFromVertexToCopilot,
+} from "./policy";
 import type { InferenceSession } from "./session";
 
 /** Official API only. No Gateway, web session, hosted tool or provider fallback. */
@@ -60,11 +67,16 @@ export function createRoutedModel(
     vertexSearch = false,
   }: { gateway?: boolean; vertexSearch?: boolean } = {}
 ): LanguageModelV4 {
+  function isSubscriptionBackedZeroCashModel(model: PremiumModelId): boolean {
+    return isVertexModel(model) || isCopilotFallbackModel(model);
+  }
   function fallbackTargetFor(model: PremiumModelId): PremiumModelId | null {
-    // Owner policy: NO automatic fallback on Vertex AI models (`gemini-4-hydrogen`
-    // and `gemini-4-argon`) until the owner chooses a subscription-backed fallback
-    // order. Never silently switch to pay-per-use GPT/Gateway models.
-    if (model === ARGON || model === HYDROGEN || model === TERRA) {
+    // Owner chain: Gemini 4 Hydrogen -> Argon (escalation) -> Copilot Claude Haiku 5.5
+    // (fallback ONLY on Vertex failure/timeout via Cloud VM bridge).
+    if (model === HYDROGEN || model === ARGON) {
+      return session.available.includes(COPILOT_HAIKU) ? COPILOT_HAIKU : null;
+    }
+    if (model === COPILOT_HAIKU || model === TERRA) {
       return null;
     }
     // Synthetic unit-test compatibility when createRoutedModel(LUNA, ...) is tested directly:
@@ -91,7 +103,7 @@ export function createRoutedModel(
             : model === HYDROGEN || model === LUNA
               ? "low"
               : "medium";
-    if (isVertexModel(model)) {
+    if (isSubscriptionBackedZeroCashModel(model)) {
       return {
         ...params,
         maxOutputTokens,
@@ -146,27 +158,38 @@ export function createRoutedModel(
   ): { reason: string; target: PremiumModelId } {
     const failure = failureKind(error);
     const target = fallbackTargetFor(model);
-    const allowMultiHopFromArgon =
-      initial === ARGON &&
-      model === HYDROGEN &&
-      target === TERRA &&
-      !visited.has(TERRA);
-    if (
-      !target ||
-      visited.has(target) ||
-      !mayFallback({
-        failure,
-        exposed: session.exposed,
-        toolBoundary: session.toolBoundary,
-        used: allowMultiHopFromArgon ? false : session.fallbackUsed,
-        available: true,
-        cancelled: params.abortSignal?.aborted ?? false,
-      })
-    ) {
+    const cancelled = params.abortSignal?.aborted ?? false;
+    const allowed =
+      target !== null &&
+      !visited.has(target) &&
+      (isVertexModel(model) && target === COPILOT_HAIKU
+        ? mayFallbackFromVertexToCopilot({
+            failure,
+            exposed: session.exposed,
+            toolBoundary: session.toolBoundary,
+            used: session.fallbackUsed,
+            available: true,
+            cancelled,
+          })
+        : mayFallback({
+            failure,
+            exposed: session.exposed,
+            toolBoundary: session.toolBoundary,
+            used: session.fallbackUsed,
+            available: true,
+            cancelled,
+          }));
+    if (!allowed || !target) {
       throw new ModelFailure(failure);
     }
     session.fallbackUsed = true;
+    session.activeModelId = target;
     visited.add(target);
+    session.onFallback?.({
+      fromModel: model,
+      toModel: target,
+      reason: failure,
+    });
     return { reason: failure, target };
   }
   function reserve(
@@ -184,8 +207,12 @@ export function createRoutedModel(
     ) {
       throw new ModelFailure("context");
     }
-    const allowWebSearchOnModel = isVertexModel(model) ? vertexSearch : gateway;
-    const searchChargePerCall = isVertexModel(model) ? 0 : WEB_SEARCH_COST_USD;
+    const allowWebSearchOnModel = isSubscriptionBackedZeroCashModel(model)
+      ? vertexSearch
+      : gateway;
+    const searchChargePerCall = isSubscriptionBackedZeroCashModel(model)
+      ? 0
+      : WEB_SEARCH_COST_USD;
     const searchTools =
       params.tools?.filter(
         (tool) => tool.type === "provider" && tool.id === WEB_SEARCH_TOOL_ID
@@ -259,6 +286,7 @@ export function createRoutedModel(
       let reason: string | undefined;
       const visited = new Set<PremiumModelId>([initial]);
       for (;;) {
+        session.activeModelId = model;
         const opts = options(model, params);
         const id = await reserve(model, opts, reason);
         let usage: LanguageModelV4Usage | undefined;
@@ -303,7 +331,10 @@ export function createRoutedModel(
             model,
             "completed",
             usage,
-            searches * (isVertexModel(model) ? 0 : WEB_SEARCH_COST_USD)
+            searches *
+              (isSubscriptionBackedZeroCashModel(model)
+                ? 0
+                : WEB_SEARCH_COST_USD)
           );
           session.exposed = true;
           if (result.content.some((p) => p.type === "tool-call")) {
@@ -316,7 +347,10 @@ export function createRoutedModel(
             model,
             recordedOutcome(model, error),
             usage,
-            searches * (isVertexModel(model) ? 0 : WEB_SEARCH_COST_USD)
+            searches *
+              (isSubscriptionBackedZeroCashModel(model)
+                ? 0
+                : WEB_SEARCH_COST_USD)
           );
           const fallback = next(model, error, params, visited);
           reason = fallback.reason;
@@ -336,6 +370,7 @@ export function createRoutedModel(
             let reason: string | undefined;
             const visited = new Set<PremiumModelId>([initial]);
             for (;;) {
+              session.activeModelId = model;
               const opts = options(model, params);
               let id: string | undefined;
               let usage: LanguageModelV4Usage | undefined;
@@ -430,7 +465,10 @@ export function createRoutedModel(
                   model,
                   "completed",
                   usage,
-                  searches * (isVertexModel(model) ? 0 : WEB_SEARCH_COST_USD)
+                  searches *
+                    (isSubscriptionBackedZeroCashModel(model)
+                      ? 0
+                      : WEB_SEARCH_COST_USD)
                 );
                 for (const h of held) {
                   controller.enqueue(h);
@@ -447,7 +485,10 @@ export function createRoutedModel(
                     model,
                     recordedOutcome(model, error),
                     usage,
-                    searches * (isVertexModel(model) ? 0 : WEB_SEARCH_COST_USD)
+                    searches *
+                      (isSubscriptionBackedZeroCashModel(model)
+                        ? 0
+                        : WEB_SEARCH_COST_USD)
                   );
                 }
                 if (cancelled) {

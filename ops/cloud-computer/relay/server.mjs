@@ -72,7 +72,6 @@ async function ensureVmRunningAndGetInternalIp() {
     if (vm.status === "RUNNING") {
       const ip = vm.networkInterfaces?.[0]?.networkIP;
       if (ip) {
-        // Confirm sandboxd HTTP socket is ready after wake/boot
         try {
           const h = await fetch(`http://${ip}:${SANDBOX_PORT}/healthz`, {
             signal: AbortSignal.timeout(2500),
@@ -128,6 +127,7 @@ const server = createServer(async (req, res) => {
     const { ip, vmWakeMs } = await ensureVmRunningAndGetInternalIp();
     const ts = String(Date.now());
     const sig = signHmac("POST", urlObj.pathname, rawBody, ts);
+    const copilotTokenHeader = req.headers["x-copilot-token"];
     const upstream = await fetch(
       `http://${ip}:${SANDBOX_PORT}${urlObj.pathname}`,
       {
@@ -136,11 +136,31 @@ const server = createServer(async (req, res) => {
           "Content-Type": "application/json",
           "X-Sandbox-Timestamp": ts,
           "X-Sandbox-Signature": sig,
+          ...(typeof copilotTokenHeader === "string" && copilotTokenHeader
+            ? { "X-Copilot-Token": copilotTokenHeader }
+            : {}),
         },
         body: rawBody,
         signal: AbortSignal.timeout(95_000),
       }
     );
+
+    const contentType = upstream.headers.get("content-type") ?? "";
+    if (contentType.includes("text/event-stream") && upstream.body) {
+      res.writeHead(upstream.status, {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+        "X-Vm-Wake-Ms": String(vmWakeMs),
+      });
+      for await (const chunk of upstream.body) {
+        res.write(chunk);
+      }
+      res.end();
+      return;
+    }
+
     const text = await upstream.text();
     let parsed;
     try {

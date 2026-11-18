@@ -16,6 +16,10 @@ if ! gcloud secrets describe cloud-computer-hmac-secret --project="$PROJECT" >/d
     --data-file=-
 fi
 HMAC_SECRET="$(gcloud secrets versions access latest --secret=cloud-computer-hmac-secret --project="$PROJECT")"
+COPILOT_TOKEN=""
+if gcloud secrets describe copilot-github-token --project="$PROJECT" >/dev/null 2>&1; then
+  COPILOT_TOKEN="$(gcloud secrets versions access latest --secret=copilot-github-token --project="$PROJECT")"
+fi
 
 echo "[2/5] Configuring internal-VPC-only firewall rule (zero public ingress)..."
 if ! gcloud compute networks describe default --project="$PROJECT" >/dev/null 2>&1; then
@@ -38,10 +42,10 @@ trap 'rm -f "$STARTUP_TMP"' EXIT
 
 cat > "$STARTUP_TMP" <<EOF
 #!/usr/bin/env bash
-set -euxo pipefail
+set -euo pipefail
 
 if ! id -u operator >/dev/null 2>&1; then
-  useradd -m -u 1001 -g operator -s /bin/bash operator
+  useradd -m -u 1001 -s /bin/bash operator
 fi
 mkdir -p /workspace /opt/sandboxd
 chown -R operator:operator /workspace
@@ -64,13 +68,16 @@ if ! command -v tailscale >/dev/null 2>&1; then
 fi
 
 mkdir -p /opt/playwright-browsers
+cd /opt/sandboxd
+[ -f package.json ] || npm init -y >/dev/null
 if [ ! -f /opt/sandboxd/node_modules/playwright-core/index.mjs ]; then
-  cd /opt/sandboxd
-  [ -f package.json ] || npm init -y >/dev/null
   PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers npm install --silent playwright-core@1.52.0
   PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers /opt/sandboxd/node_modules/.bin/playwright-core install --with-deps chromium
-  chmod -R a+rX /opt/playwright-browsers /opt/sandboxd/node_modules
 fi
+if [ ! -f /opt/sandboxd/node_modules/@github/copilot-sdk/dist/index.js ]; then
+  npm install --silent @github/copilot-sdk@1.0.34
+fi
+chmod -R a+rX /opt/playwright-browsers /opt/sandboxd/node_modules
 
 cat > /opt/sandboxd/sandboxd.mjs <<'SANDBOX_EOF'
 $(cat "$SCRIPT_DIR/sandboxd.mjs")
@@ -86,10 +93,13 @@ chmod 440 /etc/sudoers.d/operator-idle-only
 
 cat > /etc/opt-sandboxd.env <<ENV_EOF
 CLOUD_COMPUTER_HMAC_SECRET=${HMAC_SECRET}
+COPILOT_GITHUB_TOKEN=${COPILOT_TOKEN}
+COPILOT_TELEMETRY_DISABLED=true
 SANDBOX_PORT=8787
 SANDBOX_WORKSPACE=/workspace
 PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
 ENV_EOF
+chown root:root /etc/opt-sandboxd.env
 chmod 600 /etc/opt-sandboxd.env
 
 cat > /etc/systemd/system/sandboxd.service <<'UNIT_EOF'

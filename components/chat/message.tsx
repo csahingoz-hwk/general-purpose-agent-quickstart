@@ -93,7 +93,12 @@ const PurePreviewMessage = ({
   const fixture = isAssistant ? fixtureFromParts(message.parts) : null;
   const visual = isAssistant && !fixture ? visualPayload(message.parts) : null;
   const turnStatus = isAssistant
-    ? message.parts.find((p) => p.type === "data-turn-status")?.data
+    ? [...message.parts].reverse().find((p) => p.type === "data-turn-status")
+        ?.data
+    : undefined;
+  const modelUsed = isAssistant
+    ? [...message.parts].reverse().find((p) => p.type === "data-model-used")
+        ?.data
     : undefined;
   const agentSteps: AgentLoopStepItem[] = isAssistant
     ? message.parts
@@ -687,7 +692,8 @@ const PurePreviewMessage = ({
   );
 
   const content = isThinking ? (
-    turnStatus?.phase === "searching" ? (
+    turnStatus?.phase === "searching" &&
+    turnStatus?.model !== "claude-haiku-5.5" ? (
       <WebSearchCard
         locale={locale}
         output={undefined}
@@ -696,25 +702,57 @@ const PurePreviewMessage = ({
     ) : (
       <div className="w-fit rounded-[22px] bg-bubble-assistant px-4 py-2.5 text-[17px] leading-[1.45]">
         <Shimmer className="font-medium" duration={1}>
-          {turnStatus?.phase === "weather"
+          {turnStatus?.model === "claude-haiku-5.5"
             ? locale === "tr"
-              ? "Hava durumu kontrol ediliyor…"
-              : "Checking the weather…"
-            : turnStatus?.phase === "fixtures"
+              ? "Claude Haiku 5.5 (Copilot) yanıtlıyor…"
+              : "Answering with Claude Haiku 5.5 (Copilot)…"
+            : turnStatus?.phase === "weather"
               ? locale === "tr"
-                ? "Fikstür bakılıyor…"
-                : "Checking the fixture list…"
-              : turnStatus?.phase === "tool"
+                ? "Hava durumu kontrol ediliyor…"
+                : "Checking the weather…"
+              : turnStatus?.phase === "fixtures"
                 ? locale === "tr"
-                  ? "Araç çalıştırılıyor…"
-                  : "Running tool…"
-                : copy.statusThinking}
+                  ? "Fikstür bakılıyor…"
+                  : "Checking the fixture list…"
+                : turnStatus?.phase === "tool"
+                  ? locale === "tr"
+                    ? "Araç çalıştırılıyor…"
+                    : "Running tool…"
+                  : copy.statusThinking}
         </Shimmer>
       </div>
     )
   ) : (
     <>
       {attachments}
+      {modelUsed && (modelUsed.isFallback || modelUsed.escalated) && (
+        <div
+          className={cn(
+            "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 font-medium text-[12px] leading-tight",
+            modelUsed.isFallback
+              ? "border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+              : "border-[color:var(--hairline)] bg-muted/60 text-muted-foreground"
+          )}
+          data-fallback={modelUsed.isFallback ? "true" : "false"}
+          data-model-id={modelUsed.modelId}
+          data-testid="message-model-badge"
+        >
+          <span
+            aria-hidden="true"
+            className={cn(
+              "size-1.5 shrink-0 rounded-full",
+              modelUsed.isFallback ? "bg-amber-500" : "bg-emerald-500"
+            )}
+          />
+          <span className="truncate">
+            {modelUsed.isFallback
+              ? locale === "tr"
+                ? `${modelUsed.modelName} · Copilot yedek`
+                : `${modelUsed.modelName} · Copilot fallback`
+              : modelUsed.modelName}
+          </span>
+        </div>
+      )}
       {agentSteps.length >= 2 && (
         <AgentLoopStepStrip locale={locale} steps={agentSteps} />
       )}

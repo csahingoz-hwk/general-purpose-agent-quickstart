@@ -410,11 +410,39 @@ export function createVertexGeminiAdapter(
     fetcher?: typeof fetch;
     getAccessToken?: () => Promise<string>;
     projectId?: string;
+    timeoutMs?: number;
   }
 ): LanguageModelV4 {
   const fetcher = deps?.fetcher ?? fetch;
   const resolveToken =
     deps?.getAccessToken ?? (() => getVertexWifAccessToken(fetcher));
+  const upstreamTimeoutMs = Math.max(
+    250,
+    deps?.timeoutMs ??
+      Number.parseInt(process.env.VERTEX_UPSTREAM_TIMEOUT_MS ?? "25000", 10)
+  );
+
+  function withUpstreamTimeout(callerSignal?: AbortSignal): AbortSignal {
+    const timerSignal = AbortSignal.timeout(upstreamTimeoutMs);
+    return callerSignal
+      ? AbortSignal.any([callerSignal, timerSignal])
+      : timerSignal;
+  }
+
+  function normalizeUpstreamError(
+    err: unknown,
+    callerSignal?: AbortSignal
+  ): never {
+    if (callerSignal?.aborted) {
+      throw err;
+    }
+    const name =
+      err && typeof err === "object" && "name" in err ? String(err.name) : "";
+    if (name === "TimeoutError" || name === "AbortError") {
+      throw Object.assign(new Error("vertex_timeout"), { statusCode: 504 });
+    }
+    throw err;
+  }
 
   function endpointFor(projectId: string, streaming: boolean): string {
     const encodedProject = encodeURIComponent(projectId);
@@ -441,7 +469,9 @@ export function createVertexGeminiAdapter(
           statusCode: 503,
         });
       }
-      const accessToken = await resolveToken();
+      const accessToken = await resolveToken().catch((err) =>
+        normalizeUpstreamError(err, params.abortSignal)
+      );
       const body = buildVertexRequestBody(modelId, params);
 
       const res = await fetcher(endpointFor(projectId, false), {
@@ -451,8 +481,8 @@ export function createVertexGeminiAdapter(
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
-        signal: params.abortSignal,
-      });
+        signal: withUpstreamTimeout(params.abortSignal),
+      }).catch((err) => normalizeUpstreamError(err, params.abortSignal));
 
       if (!res.ok) {
         throw Object.assign(new Error(`vertex_http_${res.status}`), {
@@ -544,7 +574,9 @@ export function createVertexGeminiAdapter(
           statusCode: 503,
         });
       }
-      const accessToken = await resolveToken();
+      const accessToken = await resolveToken().catch((err) =>
+        normalizeUpstreamError(err, params.abortSignal)
+      );
       const body = buildVertexRequestBody(modelId, params);
 
       const res = await fetcher(endpointFor(projectId, true), {
@@ -554,8 +586,8 @@ export function createVertexGeminiAdapter(
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
-        signal: params.abortSignal,
-      });
+        signal: withUpstreamTimeout(params.abortSignal),
+      }).catch((err) => normalizeUpstreamError(err, params.abortSignal));
 
       if (!res.ok || !res.body) {
         throw Object.assign(new Error(`vertex_http_${res.status}`), {
@@ -602,6 +634,7 @@ export function createVertexGeminiAdapter(
       const immediateSearchCallId = hasSearchToolOnTurn
         ? `vground-0-${Math.random().toString(36).slice(2, 7)}`
         : null;
+      let immediateSearchStarted = false;
       let immediateSearchResolved = false;
 
       function processPayload(
@@ -614,6 +647,16 @@ export function createVertexGeminiAdapter(
         const candidate = payload.candidates?.[0];
         if (!candidate) {
           return;
+        }
+        if (immediateSearchCallId && !immediateSearchStarted) {
+          immediateSearchStarted = true;
+          controller.enqueue({
+            type: "tool-call",
+            toolCallId: immediateSearchCallId,
+            toolName: "webSearch",
+            input: JSON.stringify({ query: latestUserQuery }),
+            providerExecuted: true,
+          });
         }
         if (candidate.finishReason) {
           rawFinish = candidate.finishReason;
@@ -689,15 +732,6 @@ export function createVertexGeminiAdapter(
         stream: new ReadableStream<LanguageModelV4StreamPart>({
           async start(controller) {
             controller.enqueue({ type: "stream-start", warnings: [] });
-            if (immediateSearchCallId) {
-              controller.enqueue({
-                type: "tool-call",
-                toolCallId: immediateSearchCallId,
-                toolName: "webSearch",
-                input: JSON.stringify({ query: latestUserQuery }),
-                providerExecuted: true,
-              });
-            }
             try {
               for (;;) {
                 const { done, value } = await upstreamReader.read();
@@ -760,7 +794,11 @@ export function createVertexGeminiAdapter(
                 ) {
                   const slice = grounding.results.slice(idx, idx + chunkSize);
                   const qIdx = Math.floor(idx / chunkSize);
-                  if (idx === 0 && immediateSearchCallId) {
+                  if (
+                    idx === 0 &&
+                    immediateSearchCallId &&
+                    immediateSearchStarted
+                  ) {
                     immediateSearchResolved = true;
                     controller.enqueue({
                       type: "tool-result",
@@ -790,7 +828,11 @@ export function createVertexGeminiAdapter(
                     providerExecuted: true,
                   } as unknown as LanguageModelV4StreamPart);
                 }
-              } else if (immediateSearchCallId && !immediateSearchResolved) {
+              } else if (
+                immediateSearchCallId &&
+                immediateSearchStarted &&
+                !immediateSearchResolved
+              ) {
                 immediateSearchResolved = true;
                 controller.enqueue({
                   type: "tool-result",

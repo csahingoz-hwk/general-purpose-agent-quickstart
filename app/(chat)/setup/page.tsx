@@ -95,10 +95,10 @@ function SetupPageContent() {
         <ul className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card text-sm">
           {(data?.items ?? []).map((item) => (
             <li
-              className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5"
+              className="flex flex-col items-start justify-between gap-3 px-4 py-3.5 sm:flex-row sm:items-center"
               key={item.id}
             >
-              <div className="flex min-w-0 flex-1 items-start gap-3">
+              <div className="flex w-full min-w-0 flex-1 items-start gap-3">
                 <span
                   aria-hidden="true"
                   className={cn(
@@ -110,15 +110,15 @@ function SetupPageContent() {
                         : "bg-muted-foreground/45"
                   )}
                 />
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="font-medium text-foreground">{item.label}</p>
-                  <p className="text-muted-foreground text-xs">
+                  <p className="mt-0.5 break-words text-muted-foreground text-xs [overflow-wrap:anywhere]">
                     {item.summary}
                   </p>
                 </div>
               </div>
 
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="flex shrink-0 items-center gap-2 pl-5 sm:pl-0">
                 {item.connectedProvider ? (
                   <button
                     className="min-h-11 rounded-full border border-[color:var(--hairline)] px-4 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
@@ -160,15 +160,22 @@ function SetupPageContent() {
                     </button>
                   </form>
                 ) : item.actionKind === "external_link" && item.externalUrl ? (
-                  <a
-                    className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-background px-4 font-medium text-foreground text-xs hover:bg-muted"
-                    href={item.externalUrl}
-                    rel="noopener noreferrer"
-                    target="_blank"
-                  >
-                    {item.externalLabel ?? "Open"}
-                    <ExternalLinkIcon className="size-3.5" />
-                  </a>
+                  <div className="flex items-center gap-2">
+                    {item.status === "ready" && (
+                      <span className="text-emerald-600 text-xs dark:text-emerald-400">
+                        Ready
+                      </span>
+                    )}
+                    <a
+                      className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-foreground text-xs hover:bg-muted"
+                      href={item.externalUrl}
+                      rel="noopener noreferrer"
+                      target="_blank"
+                    >
+                      {item.externalLabel ?? "Open"}
+                      <ExternalLinkIcon className="size-3.5" />
+                    </a>
+                  </div>
                 ) : (
                   <span className="text-muted-foreground text-xs">Ready</span>
                 )}

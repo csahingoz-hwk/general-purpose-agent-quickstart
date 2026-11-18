@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/app/(auth)/auth";
+import { isCopilotTokenConfigured } from "@/lib/ai/copilot-vm-model";
 import { vertexEnabled } from "@/lib/ai/routing/catalog";
 import { isCloudComputerConfigured } from "@/lib/cloud-computer/client";
 import { GITHUB_VAULT_SECRET_NAME } from "@/lib/connectors/calendar-and-github";
@@ -41,6 +42,8 @@ export async function GET() {
   const redisConfigured = Boolean(process.env.REDIS_URL?.trim());
   const redisReady = redisConfigured && (await pingRedis());
   const cloudComputerReady = isCloudComputerConfigured();
+  const copilotTokenReady = isCopilotTokenConfigured();
+  const copilotFallbackReady = cloudComputerReady && copilotTokenReady;
   const macBridgeReady = isMacBridgeConfigured();
 
   const storedNames = new Set<string>();
@@ -78,12 +81,25 @@ export async function GET() {
       id: "core_ai",
       label: "Chat, web search, voice & images",
       summary: vertexReady
-        ? "Active via Google Cloud Vertex AI (Gemini 4 Hydrogen & Argon on Google AI Ultra credit — zero pay-per-use APIs)."
+        ? "Active via Google Cloud Vertex AI (Gemini 4 Hydrogen -> Argon escalation on Google AI Ultra credit — zero pay-per-use APIs)."
         : "Turn on Vertex AI WIF (GOOGLE_VERTEX_PROJECT_ID + GOOGLE_VERTEX_WORKLOAD_AUDIENCE) in your Vercel project settings.",
       status: aiReady ? "ready" : "action_needed",
       actionKind: aiReady ? "none" : "external_link",
       externalUrl: aiReady ? undefined : "https://vercel.com/dashboard",
       externalLabel: aiReady ? undefined : "Open Vercel",
+    },
+    {
+      id: "copilot_fallback",
+      label: "Copilot Claude Haiku 5.5 fallback (Cloud VM)",
+      summary: copilotFallbackReady
+        ? "Active via Cloud VM bridge (COPILOT_GITHUB_TOKEN configured in Vercel/VM server env — answers only on Vertex failure or timeout)."
+        : cloudComputerReady
+          ? "Set COPILOT_GITHUB_TOKEN (GitHub token with Copilot Requests permission) in Vercel & Cloud VM server env."
+          : "Connect Cloud Computer VM relay and set COPILOT_GITHUB_TOKEN in Vercel/VM server env to enable Claude Haiku 5.5 fallback.",
+      status: copilotFallbackReady ? "ready" : "action_needed",
+      actionKind: "external_link",
+      externalUrl: "https://github.com/settings/personal-access-tokens/new",
+      externalLabel: "Copilot token",
     },
     {
       id: "database_vault",

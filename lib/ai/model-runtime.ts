@@ -1,6 +1,11 @@
 import "server-only";
 import { chatModels } from "./models";
-import { ARGON, HYDROGEN, vertexEnabled } from "./routing/catalog";
+import {
+  ARGON,
+  copilotFallbackEnabled,
+  HYDROGEN,
+  vertexEnabled,
+} from "./routing/catalog";
 import type { Readiness } from "./routing/gateway";
 import { getVertexWifAccessToken } from "./vertex-auth";
 
@@ -10,16 +15,19 @@ let vertexCache:
 
 /**
  * Standing owner rule: NO pay-per-use models (no paid Vercel AI Gateway credits,
- * no OpenAI/Anthropic API keys).
+ * no OpenAI/Anthropic API keys, no Antigravity/ChatGPT/Claude consumer hacks).
  *
- * Only Google Vertex AI via keyless Vercel OIDC -> WIF (`vercel-pool` on
- * `project-cd0bc64c-0025-446c-b41`, covered by the $40/mo Google AI Ultra credit
- * `0140A2-72DEB2-62EDCD`) is exposed:
- * - Default: `gemini-4-hydrogen`
- * - Research / hard questions: `gemini-4-argon`
+ * Chain:
+ * - Default: `gemini-4-hydrogen` (Vertex AI on Ultra credit `0140A2-72DEB2-62EDCD`)
+ * - Escalation: `gemini-4-argon` (Vertex AI on Ultra credit)
+ * - Fallback ONLY on Vertex failure/timeout: `claude-haiku-5.5` via GitHub Copilot SDK
+ *   on the Cloud VM bridge (`assistant-computer-01`).
  */
 async function vertexAvailability(): Promise<Readiness> {
-  if (!vertexEnabled()) {
+  const hasVertex = vertexEnabled();
+  const hasCopilotFallback = copilotFallbackEnabled();
+
+  if (!hasVertex && !hasCopilotFallback) {
     return {
       status: "setup_required",
       reason: "provider_opt_in_missing",
@@ -31,16 +39,18 @@ async function vertexAvailability(): Promise<Readiness> {
     };
   }
 
-  const cacheKey = "vertex-wif";
+  const cacheKey = `vertex-wif:${hasVertex}:${hasCopilotFallback}`;
   if (vertexCache?.key === cacheKey && vertexCache.expires > Date.now()) {
     return vertexCache.result;
   }
 
-  const tokenOk = await getVertexWifAccessToken()
-    .then(() => true)
-    .catch(() => false);
+  const tokenOk = hasVertex
+    ? await getVertexWifAccessToken()
+        .then(() => true)
+        .catch(() => false)
+    : false;
 
-  if (!tokenOk) {
+  if (!tokenOk && !hasCopilotFallback) {
     return {
       status: "setup_required",
       reason: "gateway_auth_missing",
@@ -64,7 +74,11 @@ async function vertexAvailability(): Promise<Readiness> {
     checkedAt: new Date().toISOString(),
     unavailableModels: [],
   };
-  vertexCache = { key: cacheKey, expires: Date.now() + 300_000, result };
+  // Only cache healthy Vertex WIF tokens for 5 minutes; if running degraded on
+  // Copilot fallback during a WIF outage, re-probe Vertex on subsequent turns.
+  if (tokenOk) {
+    vertexCache = { key: cacheKey, expires: Date.now() + 300_000, result };
+  }
   return result;
 }
 

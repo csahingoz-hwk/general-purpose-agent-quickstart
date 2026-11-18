@@ -1,3 +1,4 @@
+import { isCopilotFallbackConfigured } from "../copilot-vm-model";
 import { isVertexWifConfigured } from "../vertex-auth";
 
 /**
@@ -7,8 +8,11 @@ import { isVertexWifConfigured } from "../vertex-auth";
  *   covered by the $40/mo Google AI Ultra credit), so they consume $0 of the
  *   Vercel AI Gateway / OpenAI cash allowance (`input/output = 0` in the
  *   Gateway spend cap ledger).
- * - `gpt-6.1-terra` executes on Vercel AI Gateway / OpenAI and is metered
- *   against `AI_MONTHLY_ALLOWANCE_USD`.
+ * - `claude-haiku-5.5` executes ONLY as fallback on Vertex failure/timeout via
+ *   the GitHub Copilot SDK on the Cloud VM bridge (covered by GitHub Copilot
+ *   subscription, $0 pay-per-use cash spend).
+ * - `gpt-6.1-terra` and `gpt-6-luna` remain in the catalog for legacy cost/test
+ *   verification only; never active in default or fallback routes.
  */
 export const premiumModels = {
   "gemini-4-hydrogen": {
@@ -26,6 +30,15 @@ export const premiumModels = {
     cacheWrite: 0,
     output: 0,
     contextWindow: 1_000_000,
+    inferenceBudget: 65_536,
+    outputLimit: 8192,
+  },
+  "claude-haiku-5.5": {
+    input: 0,
+    cached: 0,
+    cacheWrite: 0,
+    output: 0,
+    contextWindow: 200_000,
     inferenceBudget: 65_536,
     outputLimit: 8192,
   },
@@ -63,6 +76,7 @@ export const WEB_SEARCH_TOOL_ID = "gateway.deepseek_search";
 
 export const HYDROGEN = "gemini-4-hydrogen" as const;
 export const ARGON = "gemini-4-argon" as const;
+export const COPILOT_HAIKU = "claude-haiku-5.5" as const;
 export const TERRA = "gpt-6.1-terra" as const;
 export const LUNA = "gpt-6-luna" as const;
 
@@ -72,13 +86,18 @@ export function isPremiumModel(id: string): id is PremiumModelId {
 export function isVertexModel(id: string): id is VertexModelId {
   return id === HYDROGEN || id === ARGON;
 }
+export function isCopilotFallbackModel(id: string): id is typeof COPILOT_HAIKU {
+  return id === COPILOT_HAIKU;
+}
 export function isOpenAIPremiumModel(
   id: string
 ): id is "gpt-6.1-terra" | "gpt-6-luna" {
   return id === TERRA || id === LUNA;
 }
 export function isFloorCompliantModel(id: string): boolean {
-  return id === HYDROGEN || id === ARGON || id === TERRA;
+  return (
+    id === HYDROGEN || id === ARGON || id === COPILOT_HAIKU || id === TERRA
+  );
 }
 export function legacyEnabled() {
   return (
@@ -88,6 +107,9 @@ export function legacyEnabled() {
 }
 export function vertexEnabled() {
   return !legacyEnabled() && isVertexWifConfigured();
+}
+export function copilotFallbackEnabled() {
+  return !legacyEnabled() && isCopilotFallbackConfigured();
 }
 export function openAIEnabled() {
   return (

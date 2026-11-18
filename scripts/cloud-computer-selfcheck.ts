@@ -1,4 +1,6 @@
+import { isCopilotFallbackConfigured } from "../lib/ai/copilot-vm-model";
 import {
+  callCloudRelay,
   cloudRunExec,
   isCloudComputerConfigured,
 } from "../lib/cloud-computer/client";
@@ -24,9 +26,28 @@ async function main() {
     );
   }
 
+  let copilotSummary = "unconfigured";
+  if (isCopilotFallbackConfigured()) {
+    const cp = await callCloudRelay<{
+      status: string;
+      isAuthenticated: boolean;
+      model: string | null;
+    }>({
+      pathname: "/copilot/status",
+      payload: {},
+      timeoutMs: 35_000,
+    });
+    if (!cp.isAuthenticated || !cp.model) {
+      throw new Error(
+        `Copilot VM fallback check failed: authenticated=${cp.isAuthenticated} model=${cp.model}`
+      );
+    }
+    copilotSummary = `ready(${cp.model})`;
+  }
+
   const hostLine = res.stdout.split("\n")[0]?.trim() || res.hostname || "vm";
   console.log(
-    `Cloud Computer self-check: PASS vm=${hostLine} wake=${res.vmWakeMs ?? 0}ms exec=${res.durationMs}ms metadataBlocked=true`
+    `Cloud Computer self-check: PASS vm=${hostLine} wake=${res.vmWakeMs ?? 0}ms exec=${res.durationMs}ms metadataBlocked=true copilotFallback=${copilotSummary}`
   );
 }
 

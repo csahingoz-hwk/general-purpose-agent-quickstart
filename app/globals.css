@@ -888,3 +888,7 @@ vercel-toolbar,
     opacity: 0;
   }
 }
+
+[data-openui-devtools-root] {
+  display: none !important;
+}

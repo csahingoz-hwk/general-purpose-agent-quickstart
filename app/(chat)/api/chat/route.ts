@@ -36,17 +36,26 @@ import {
 } from "@/lib/ai/conversation-state";
 import { resolveTurnModelAndEffort } from "@/lib/ai/escalation";
 import { getRequestModelAvailability } from "@/lib/ai/model-runtime";
-import { chatModels, getCapabilities } from "@/lib/ai/models";
+import {
+  chatModels,
+  getCapabilities,
+  getModelDisplayName,
+} from "@/lib/ai/models";
 import { createMultiSearchRecoveryStream } from "@/lib/ai/multi-search-fallback";
 import { systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
 import {
+  COPILOT_HAIKU,
+  copilotFallbackEnabled,
   isPremiumModel,
   premiumModels,
   webSearchLane,
 } from "@/lib/ai/routing/catalog";
 import { createUsageLedger } from "@/lib/ai/routing/ledger";
-import { inferenceSession } from "@/lib/ai/routing/session";
+import {
+  type InferenceSession,
+  inferenceSession,
+} from "@/lib/ai/routing/session";
 import { askUserQuestion } from "@/lib/ai/tools/ask-question";
 import { createCalendarAndGithubTools } from "@/lib/ai/tools/calendar-github-connectors";
 import { cancelSchedule } from "@/lib/ai/tools/cancel-schedule";
@@ -162,7 +171,9 @@ function dropWebSearchHistory(messages: ChatMessage[]): ChatMessage[] {
       (part) =>
         (part.type as string) !== "tool-webSearch" &&
         part.type !== "data-openui" &&
-        part.type !== "data-turn-status"
+        part.type !== "data-turn-status" &&
+        part.type !== "data-task-step" &&
+        part.type !== "data-model-used"
     ),
   }));
 }
@@ -485,20 +496,38 @@ export async function POST(request: Request) {
       premium?.inferenceBudget ??
       (requestedTools.length > 0 ? GROQ_TOOL_TURN_BUDGET : 7000);
     const replyTokens = premium?.outputLimit ?? DEFAULT_REPLY_TOKENS;
-    const execution = {
+    const availablePremium = [
+      ...availability.models.map((model) => model.id).filter(isPremiumModel),
+      ...(copilotFallbackEnabled() ? [COPILOT_HAIKU] : []),
+    ];
+    const execution: InferenceSession = {
       ledger: createUsageLedger(session.user.id, message?.id ?? generateUUID()),
-      available: availability.models
-        .map((model) => model.id)
-        .filter(isPremiumModel),
+      available: [...new Set(availablePremium)],
       exposed: false,
       toolBoundary: false,
       fallbackUsed: false,
+      activeModelId: isPremiumModel(chatModel) ? chatModel : undefined,
     };
 
     const stream = createUIMessageStream<ChatMessage>({
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
       execute: ({ writer: dataStream }) =>
         inferenceSession.run(execution, async () => {
+          execution.onFallback = ({ fromModel, toModel }) => {
+            dataStream.write({
+              type: "data-turn-status",
+              data: { phase: "thinking", model: toModel },
+            });
+            dataStream.write({
+              type: "data-model-used",
+              data: {
+                modelId: toModel,
+                modelName: getModelDisplayName(toModel),
+                isFallback: true,
+                fallbackFrom: fromModel,
+              },
+            });
+          };
           const initialPhase =
             searchLane && requestedTools.includes("webSearch")
               ? "searching"
@@ -513,6 +542,17 @@ export async function POST(request: Request) {
             type: "data-turn-status",
             data: { phase: initialPhase, model: chatModel },
           });
+          if (turnEscalation.escalated) {
+            dataStream.write({
+              type: "data-model-used",
+              data: {
+                modelId: chatModel,
+                modelName: getModelDisplayName(chatModel),
+                isFallback: false,
+                escalated: true,
+              },
+            });
+          }
           if (explicitSavedFact) {
             const memCallId = `mem-${explicitSavedFact.id.slice(0, 12)}`;
             dataStream.write({
@@ -898,7 +938,8 @@ export async function POST(request: Request) {
           if (!reply) {
             return;
           }
-          const withVisual = attachOpenUiPart(reply, chatModel);
+          const resolvedModelId = execution.activeModelId ?? chatModel;
+          const withVisual = attachOpenUiPart(reply, resolvedModelId);
           const saved = messagesFromDb.find((m) => m.id === withVisual.id);
           if (saved) {
             await updateMessage({ id: withVisual.id, parts: withVisual.parts });

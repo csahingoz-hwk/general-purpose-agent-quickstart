@@ -79,3 +79,39 @@ export function mayFallback({
     (failure === "transient" || failure === "structured")
   );
 }
+
+/**
+ * Independent-provider fallback from Google Cloud Vertex AI (`gemini-4-hydrogen` /
+ * `gemini-4-argon`) to GitHub Copilot SDK (`claude-haiku-5.5`) on the Cloud VM bridge.
+ *
+ * Fires ONLY on Vertex failure or timeout before any text/tool output is exposed,
+ * NEVER when cancelled by the user and NEVER across the Korn Ferry `work_boundary`.
+ */
+export function mayFallbackFromVertexToCopilot({
+  failure,
+  exposed,
+  toolBoundary,
+  used,
+  available,
+  cancelled,
+}: {
+  failure: Failure;
+  exposed: boolean;
+  toolBoundary: boolean;
+  used: boolean;
+  available: boolean;
+  cancelled: boolean;
+}) {
+  return (
+    available &&
+    !cancelled &&
+    !exposed &&
+    !toolBoundary &&
+    !used &&
+    failure !== "cancelled" &&
+    failure !== "work_boundary" &&
+    failure !== "context" &&
+    failure !== "tool" &&
+    failure !== "spend"
+  );
+}

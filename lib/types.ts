@@ -69,6 +69,13 @@ export type CustomUIDataTypes = {
     status: "running" | "done" | "error";
     elapsedMs: number;
   };
+  "model-used": {
+    modelId: string;
+    modelName: string;
+    isFallback: boolean;
+    fallbackFrom?: string;
+    escalated?: boolean;
+  };
 };
 
 export type ChatMessage = UIMessage<

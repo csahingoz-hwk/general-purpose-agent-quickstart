@@ -11,7 +11,7 @@ export type CloudCommandPolicyDecision =
   | { tier: "blocked"; reason: string };
 
 const HARD_BLOCKED_CLOUD_CMD =
-  /(?:169\.254\.169\.254|metadata\.google\.internal|computemetadata\/v1|\bsudo\b|\bsu\s+-|\btailscale\s+(?:funnel|serve)\b|\/proc\/\d+\/environ|\/etc\/shadow|:\(\)\s*\{)/i;
+  /(?:169\.254\.169\.254|metadata\.google\.internal|computemetadata\/v1|\bsudo\b|\bsu\s+-|\btailscale\s+(?:funnel|serve)\b|\/proc\/(?:self|\d+)\/environ|\/etc\/opt-sandboxd\.env|\/etc\/shadow|:\(\)\s*\{)/i;
 
 const APPROVAL_REQUIRED_CLOUD_CMD =
   /\b(?:git\s+push|gh\s+(?:pr|issue|release)\s+(?:create|merge|comment|close|edit)|npm\s+publish|pnpm\s+publish|twine\s+upload|curl\b[^\n]*(?:-X\s*(?:POST|PUT|PATCH|DELETE)|--data|-d\s|-F\s|--upload-file)|wget\b[^\n]*--post-|ssh-keygen|scp\b|rsync\b)\b|rm\s+-[rf]{1,2}\s+\/workspace\/?(?:\s|$|\*)/i;
