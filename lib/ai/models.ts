@@ -38,6 +38,39 @@ export const chatModels: ChatModel[] = [
   },
 ];
 
+// Hermetic CI wire-fixture candidates ONLY (`tests/sdk7/provider-fixture.ts`).
+// Never exposed when `isSyntheticSdk7FixtureMode()` is false.
+export const SYNTHETIC_SDK7_FIXTURE_MODELS: ChatModel[] = [
+  {
+    id: "gpt-6-luna",
+    name: "Everyday chat",
+    provider: "openai",
+    description: "GPT-6 Luna · economical bilingual conversation",
+    reasoningEffort: "low",
+  },
+  {
+    id: "gpt-6.1-terra",
+    name: "Detailed chat",
+    provider: "openai",
+    description: "GPT-6.1 Terra · deeper thinking when needed",
+    reasoningEffort: "medium",
+  },
+  {
+    id: "openai/gpt-oss-20b",
+    name: "Everyday chat",
+    provider: "groq",
+    description: "GPT OSS 20B · free-account quota applies",
+    reasoningEffort: "low",
+  },
+  {
+    id: "openai/gpt-oss-120b",
+    name: "Detailed chat",
+    provider: "groq",
+    description: "GPT OSS 120B · free-account quota applies",
+    reasoningEffort: "low",
+  },
+];
+
 const MODEL_DISPLAY_NAMES: Record<string, string> = {
   "gemini-4-hydrogen": "Gemini 4 Hydrogen",
   "gemini-4-argon": "Gemini 4 Argon",
@@ -64,11 +97,19 @@ export function getCapabilities(): Record<string, ModelCapabilities> {
     FALLBACK_CHAT_MODEL,
     { tools: true, vision: true, reasoning: false },
   ]);
-  // Preserve compatibility lookup for legacy persisted message metadata tests only.
+  // Preserve compatibility lookup for legacy persisted message metadata & CI wire-fixture tests only.
   entries.push(["gpt-6-luna", { tools: true, vision: true, reasoning: true }]);
   entries.push([
     "gpt-6.1-terra",
     { tools: true, vision: true, reasoning: true },
+  ]);
+  entries.push([
+    "openai/gpt-oss-20b",
+    { tools: true, vision: false, reasoning: true },
+  ]);
+  entries.push([
+    "openai/gpt-oss-120b",
+    { tools: true, vision: false, reasoning: true },
   ]);
   return Object.fromEntries(entries);
 }

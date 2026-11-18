@@ -267,9 +267,7 @@ test("Gmail 390x844 iPhone E2E: neutral chat message on SERVICE_DISABLED (never 
     });
 
     await page.goto(origin, { waitUntil: "networkidle" });
-    await page
-      .getByTestId("multimodal-input")
-      .fill("Can you fetch my Gmail?");
+    await page.getByTestId("multimodal-input").fill("Can you fetch my Gmail?");
     await page.getByTestId("send-button").click();
 
     const neutralBubble = page.getByTestId("connector-disabled-message");

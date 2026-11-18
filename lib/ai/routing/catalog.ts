@@ -99,6 +99,15 @@ export function isFloorCompliantModel(id: string): boolean {
     id === HYDROGEN || id === ARGON || id === COPILOT_HAIKU || id === TERRA
   );
 }
+/**
+ * True ONLY inside the hermetic CI wire-fixture harness (`scripts/test-sdk7-integration.sh`
+ * + `tests/sdk7/provider-fixture.ts`), which intercepts `fetch` in-process and rejects
+ * any real credential. Never true in production, preview, or with real API keys.
+ */
+export function isSyntheticSdk7FixtureMode(): boolean {
+  return process.env.GROQ_API_KEY === "synthetic-sdk7-provider-key";
+}
+
 export function legacyEnabled() {
   return (
     process.env.CHAT_PROVIDER === "groq-legacy" &&

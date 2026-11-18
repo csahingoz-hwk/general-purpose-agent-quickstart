@@ -70,7 +70,10 @@ function asString(value: unknown): string {
     return String(value);
   }
   if (Array.isArray(value)) {
-    return value.map((item) => asString(item)).filter(Boolean).join(", ");
+    return value
+      .map((item) => asString(item))
+      .filter(Boolean)
+      .join(", ");
   }
   return "";
 }

@@ -89,8 +89,7 @@ export function applyApprovalResponses(
       }
       count++;
       const partType = String(part.type);
-      const dynamicToolName =
-        "toolName" in part ? String(part.toolName) : "";
+      const dynamicToolName = "toolName" in part ? String(part.toolName) : "";
       const canApplyDraftEdit =
         Boolean(editedDraft) &&
         update.approval.approved === true &&
@@ -100,9 +99,7 @@ export function applyApprovalResponses(
           dynamicToolName === "gmailCreateDraft" ||
           dynamicToolName === "draftOutboundMessage");
       const baseInput =
-        "input" in part &&
-        typeof part.input === "object" &&
-        part.input !== null
+        "input" in part && typeof part.input === "object" && part.input !== null
           ? (part.input as Record<string, unknown>)
           : {};
       const nextInput =

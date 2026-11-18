@@ -26,7 +26,6 @@ const user = (text: string) =>
     parts: [{ type: "text", text }],
   }) as ChatMessage;
 const run = async (t: unknown, input: object) =>
-  // biome-ignore lint/suspicious/noExplicitAny: invoking the tool's execute directly
   (t as any).execute(input, { toolCallId: "t", messages: [] });
 
 test("London switches GMT to BST at 01:00 UTC on the last Sunday of March and back in October", () => {

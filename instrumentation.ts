@@ -19,6 +19,8 @@ export async function register() {
     const { runStartupGoogleWorkspaceHealthCheck } = await import(
       "@/lib/connectors/google-health"
     );
-    void runStartupGoogleWorkspaceHealthCheck();
+    runStartupGoogleWorkspaceHealthCheck().catch(() => {
+      /* non-blocking startup health probe */
+    });
   }
 }

@@ -173,8 +173,7 @@ test("390x844 iPhone E2E: Gmail draft & Calendar approval cards show human-reada
               recipient:
                 captured.edited?.recipient ?? "ahmet.yilmaz@example.com",
               subject:
-                captured.edited?.subject ??
-                "Perşembe Londra Kahve Buluşması",
+                captured.edited?.subject ?? "Perşembe Londra Kahve Buluşması",
               body:
                 captured.edited?.body ??
                 "Merhaba Ahmet,\n\nPerşembe günü 14:30'da Soho'da kahve içmeye ne dersin?\n\nSelamlar,\nÇağlar",
@@ -235,9 +234,9 @@ test("390x844 iPhone E2E: Gmail draft & Calendar approval cards show human-reada
     await expect(gmailCard).toBeVisible({ timeout: 10_000 });
 
     // 1) Verify Turkish labels, "Asla göndermez" badge, line breaks preserved, ZERO JSON or braces visible!
-    await expect(gmailCard.getByTestId("approval-never-sends-badge")).toHaveText(
-      "Asla göndermez"
-    );
+    await expect(
+      gmailCard.getByTestId("approval-never-sends-badge")
+    ).toHaveText("Asla göndermez");
     await expect(gmailCard.getByTestId("email-preview-to")).toContainText(
       "Kime"
     );
@@ -330,10 +329,7 @@ test("390x844 iPhone E2E: Gmail draft & Calendar approval cards show human-reada
     );
     assert.ok(captured.edited, "Expected editedDraftApproval in POST");
     assert.equal(captured.edited.recipient, "ahmet.yeni@example.com");
-    assert.equal(
-      captured.edited.subject,
-      "Cuma Londra Öğle Yemeği"
-    );
+    assert.equal(captured.edited.subject, "Cuma Londra Öğle Yemeği");
     await expect(gmailCard.getByTestId("email-preview-to")).toContainText(
       "ahmet.yeni@example.com"
     );
@@ -360,7 +356,9 @@ test("390x844 iPhone E2E: Gmail draft & Calendar approval cards show human-reada
     await expect(calCard).toContainText("Bitiş");
     await expect(calCard).toContainText("Davet göndermez");
     assert.equal(
-      await calCard.getByTestId("approval-technical-details").getAttribute("open"),
+      await calCard
+        .getByTestId("approval-technical-details")
+        .getAttribute("open"),
       null
     );
 

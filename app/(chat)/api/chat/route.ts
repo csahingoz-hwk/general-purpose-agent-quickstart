@@ -40,6 +40,7 @@ import {
   chatModels,
   getCapabilities,
   getModelDisplayName,
+  SYNTHETIC_SDK7_FIXTURE_MODELS,
 } from "@/lib/ai/models";
 import { createMultiSearchRecoveryStream } from "@/lib/ai/multi-search-fallback";
 import { systemPrompt } from "@/lib/ai/prompts";
@@ -331,7 +332,9 @@ export async function POST(request: Request) {
       ];
     }
 
-    const modelConfig = chatModels.find((m) => m.id === chatModel);
+    const modelConfig =
+      chatModels.find((m) => m.id === chatModel) ??
+      SYNTHETIC_SDK7_FIXTURE_MODELS.find((m) => m.id === chatModel);
     const modelCapabilities = getCapabilities();
     const capabilities = modelCapabilities[chatModel];
     const supportsTools = capabilities?.tools === true;
