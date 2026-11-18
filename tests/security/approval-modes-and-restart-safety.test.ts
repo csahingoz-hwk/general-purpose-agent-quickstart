@@ -24,14 +24,14 @@ test("Item 3: Owner approval mode toggles 'ask_every_time' vs 'draft_without_ask
   const baseTools = {
     gmailCreateDraft: {
       needsApproval: true,
-      execute: (input: unknown) => {
+      execute: (input: unknown, _options?: unknown) => {
         draftExecCount += 1;
         return Promise.resolve({ status: "draft_created_unsent", input });
       },
     },
     draftOutboundMessage: {
       needsApproval: true,
-      execute: (input: unknown) => {
+      execute: (input: unknown, _options?: unknown) => {
         sendExecCount += 1;
         return Promise.resolve({ status: "approved_dry_run", input });
       },
@@ -91,7 +91,7 @@ test("Item 5: Per-tool 'Always allow' and 'Never allow' rules override defaults 
   const baseTools = {
     draftOutboundMessage: {
       needsApproval: true,
-      execute: () => {
+      execute: (_input: unknown, _options?: unknown) => {
         outboundRuns += 1;
         return Promise.resolve({ status: "approved_dry_run" });
       },
@@ -190,7 +190,7 @@ test("Item 6: Mid-flight tool calls across a server restart/redeploy are marked 
     {
       gmailCreateDraft: {
         needsApproval: true,
-        execute: () => {
+        execute: (_input: unknown, _options?: unknown) => {
           emailActionCalls += 1;
           return Promise.resolve({ status: "draft_created_unsent" });
         },

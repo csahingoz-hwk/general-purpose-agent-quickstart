@@ -45,7 +45,12 @@ export async function ensureParitySchema(
         to_regclass('public."RoutineTriggerProcessedEvent"')::text AS rtpe
     `.catch(() => []);
     const row = existing[0];
-    if (row?.pf && row?.rt && row?.cb && row?.mpf && row?.oas && row?.rtpe) {
+    const hasCoreTables = Boolean(row?.pf && row?.rt && row?.cb && row?.mpf);
+    const missingAutonomyTables =
+      row !== undefined &&
+      ("oas" in row || "rtpe" in row) &&
+      (!row.oas || !row.rtpe);
+    if (hasCoreTables && !missingAutonomyTables) {
       schemaEnsuredForProcess = true;
       return;
     }
