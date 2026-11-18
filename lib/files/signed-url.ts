@@ -1,5 +1,5 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { AllowedAttachmentMediaType } from "./attachment-validator";
+import type { ExportedPrivateFileMediaType } from "./attachment-validator";
 
 export const DEFAULT_SIGNED_FILE_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
@@ -8,7 +8,7 @@ export type SignedFileTokenPayload = {
   uid: string;
   fid: string;
   name: string;
-  ct: AllowedAttachmentMediaType;
+  ct: ExportedPrivateFileMediaType;
   size: number;
   ref: string;
   exp: number;

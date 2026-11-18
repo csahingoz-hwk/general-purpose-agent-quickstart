@@ -18,7 +18,7 @@ import {
 } from "@/lib/cloud-computer/screen-handoff";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import {
-  type AllowedAttachmentMediaType,
+  inferPrivateFileMediaType,
   sanitizeAttachmentFilename,
 } from "@/lib/files/attachment-validator";
 import { createSignedFileToken } from "@/lib/files/signed-url";
@@ -27,25 +27,6 @@ import {
   type PrivateFileStore,
 } from "@/lib/files/store";
 import { reviewActionRisk } from "@/lib/safety/action-review";
-
-function inferExportMediaType(
-  filename: string
-): AllowedAttachmentMediaType | null {
-  const lower = filename.toLowerCase();
-  if (lower.endsWith(".png")) {
-    return "image/png";
-  }
-  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) {
-    return "image/jpeg";
-  }
-  if (lower.endsWith(".pdf")) {
-    return "application/pdf";
-  }
-  if (lower.endsWith(".csv")) {
-    return "text/csv";
-  }
-  return null;
-}
 
 export function createCloudComputerTools(opts: {
   userId: string;
@@ -193,10 +174,18 @@ export function createCloudComputerTools(opts: {
           fetchImpl,
         });
         await lifecycle.recordActivity({ userId }).catch(() => null);
+        const safeName = sanitizeAttachmentFilename(res.path);
+        const mediaType = inferPrivateFileMediaType(safeName);
+        const encodedPath = encodeURIComponent(res.path);
         return {
           status: "ok" as const,
           path: res.path,
+          filename: safeName,
+          mediaType,
           bytesWritten: res.bytesWritten,
+          sizeBytes: res.bytesWritten,
+          previewUrl: `/api/cloud-computer/files?path=${encodedPath}&disposition=inline`,
+          downloadUrl: `/api/cloud-computer/files?path=${encodedPath}&disposition=attachment`,
           wokeFromSleep: wake?.wokeFromSleep ?? false,
         };
       } catch (err) {
@@ -211,16 +200,24 @@ export function createCloudComputerTools(opts: {
 
   const cloudExportFileToChat = tool({
     description:
-      "Read a generated file (CSV, PDF, PNG, JPEG, or text) from /workspace on the Cloud Computer and attach a private signed download link into the chat.",
+      "Read a generated file (HTML, CSV, PDF, PNG, JPEG, Markdown, JSON, or text) from /workspace on the Cloud Computer and attach private preview and download links into the chat.",
     inputSchema: z.object({
       path: z
         .string()
         .trim()
         .min(1)
         .max(240)
-        .describe("Path inside /workspace, e.g. '/workspace/report.csv'."),
+        .describe("Path inside /workspace, e.g. '/workspace/ai_news.html'."),
     }),
     execute: async ({ path: rawPath }) => {
+      if (containsRestrictedWorkData(rawPath)) {
+        return {
+          status: "blocked" as const,
+          path: rawPath,
+          message:
+            "Blocked: employer/Korn Ferry material cannot be exported from the personal Cloud Computer.",
+        };
+      }
       try {
         await lifecycle.ensureAwakeForTask({ userId }).catch(() => null);
         const safePath = resolveSafeWorkspacePath(rawPath);
@@ -233,44 +230,67 @@ export function createCloudComputerTools(opts: {
         await lifecycle.recordActivity({ userId }).catch(() => null);
         const bytes = new Uint8Array(Buffer.from(read.base64, "base64"));
         const safeName = sanitizeAttachmentFilename(safePath);
-        const mediaType = inferExportMediaType(safeName);
+        const mediaType = inferPrivateFileMediaType(safeName);
+        const isTextLike =
+          mediaType.startsWith("text/") ||
+          mediaType === "application/json" ||
+          mediaType === "image/svg+xml";
+        const textPreview = isTextLike
+          ? Buffer.from(bytes).toString("utf8").slice(0, 24_000)
+          : undefined;
+        if (textPreview && containsRestrictedWorkData(textPreview)) {
+          return {
+            status: "blocked" as const,
+            path: read.path,
+            message:
+              "Blocked: employer/Korn Ferry material cannot be exported to chat.",
+          };
+        }
 
-        if (!mediaType) {
-          const previewText = Buffer.from(bytes)
-            .toString("utf8")
-            .slice(0, 6000);
+        const encodedPath = encodeURIComponent(read.path);
+        const vmPreviewUrl = `/api/cloud-computer/files?path=${encodedPath}&disposition=inline`;
+        const vmDownloadUrl = `/api/cloud-computer/files?path=${encodedPath}&disposition=attachment`;
+
+        try {
+          const stored = await fileStore.save({
+            userId,
+            safeName,
+            contentType: mediaType,
+            bytes,
+          });
+          const token = createSignedFileToken({
+            uid: userId,
+            fid: stored.fileId,
+            name: safeName,
+            ct: mediaType,
+            size: bytes.byteLength,
+            ref: stored.storageRef,
+            secret: signingSecret,
+          });
+          const baseFileUrl = `/api/files/${encodeURIComponent(token)}`;
           return {
             status: "ok" as const,
             path: read.path,
             filename: safeName,
+            mediaType,
             sizeBytes: bytes.byteLength,
-            textPreview: previewText,
+            downloadUrl: baseFileUrl,
+            previewUrl: `${baseFileUrl}?disposition=inline`,
+            vmFileUrl: vmPreviewUrl,
+            ...(textPreview !== undefined ? { textPreview } : {}),
+          };
+        } catch {
+          return {
+            status: "ok" as const,
+            path: read.path,
+            filename: safeName,
+            mediaType,
+            sizeBytes: bytes.byteLength,
+            downloadUrl: vmDownloadUrl,
+            previewUrl: vmPreviewUrl,
+            ...(textPreview !== undefined ? { textPreview } : {}),
           };
         }
-
-        const stored = await fileStore.save({
-          userId,
-          safeName,
-          contentType: mediaType,
-          bytes,
-        });
-        const token = createSignedFileToken({
-          uid: userId,
-          fid: stored.fileId,
-          name: safeName,
-          ct: mediaType,
-          size: bytes.byteLength,
-          ref: stored.storageRef,
-          secret: signingSecret,
-        });
-        return {
-          status: "ok" as const,
-          path: read.path,
-          filename: safeName,
-          mediaType,
-          sizeBytes: bytes.byteLength,
-          downloadUrl: `/api/files/${encodeURIComponent(token)}`,
-        };
       } catch (err) {
         return {
           status: "error" as const,
