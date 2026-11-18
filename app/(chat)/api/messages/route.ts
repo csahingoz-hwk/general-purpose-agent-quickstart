@@ -1,4 +1,5 @@
 import { auth } from "@/app/(auth)/auth";
+import { syncThreadSummary } from "@/lib/ai/context/thread-summary";
 import { markMidFlightToolsInterrupted } from "@/lib/ai/conversation-state";
 import { acquireChatLock } from "@/lib/db/chat-lock";
 import {
@@ -57,8 +58,15 @@ export async function GET(request: Request) {
     }
   }
 
+  const threadSummary = await syncThreadSummary({
+    chatId,
+    userId: chat.userId,
+    messages: uiMessages,
+  }).catch(() => ({ record: null, promptBlock: "" }));
+
   return Response.json({
     messages: uiMessages,
+    earlierSummary: threadSummary.record?.summaryText ?? null,
     visibility: chat.visibility,
     userId: chat.userId,
     isReadonly,

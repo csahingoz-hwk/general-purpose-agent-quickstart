@@ -76,6 +76,7 @@ export type CustomUIDataTypes = {
     fallbackFrom?: string;
     escalated?: boolean;
   };
+  "earlier-summary": string;
 };
 
 export type ChatMessage = UIMessage<

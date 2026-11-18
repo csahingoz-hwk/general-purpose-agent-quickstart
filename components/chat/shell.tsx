@@ -34,6 +34,7 @@ export function ChatShell() {
     isReadonly,
     isLoading,
     votes,
+    earlierSummary,
     currentModelId,
     setCurrentModelId,
   } = useActiveChat();
@@ -81,6 +82,7 @@ export function ChatShell() {
               activity={activity}
               addToolApprovalResponse={addToolApprovalResponse}
               chatId={chatId}
+              earlierSummary={earlierSummary}
               error={error}
               isArtifactVisible={isArtifactVisible}
               isLoading={isLoading}

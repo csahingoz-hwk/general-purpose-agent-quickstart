@@ -30,6 +30,7 @@ import {
   selectActiveTools,
   selectToolsWithRanking,
 } from "@/lib/ai/context/select-tools";
+import { syncThreadSummary } from "@/lib/ai/context/thread-summary";
 import {
   applyApprovalResponses,
   expirePendingApprovalsOnNewUserTurn,
@@ -186,7 +187,8 @@ function dropWebSearchHistory(messages: ChatMessage[]): ChatMessage[] {
         part.type !== "data-openui" &&
         part.type !== "data-turn-status" &&
         part.type !== "data-task-step" &&
-        part.type !== "data-model-used"
+        part.type !== "data-model-used" &&
+        part.type !== "data-earlier-summary"
     ),
   }));
 }
@@ -465,40 +467,48 @@ export async function POST(request: Request) {
         ? extractExplicitRememberFact(finalUserText)
         : null;
 
-    const [, activeTeammate, explicitSavedFact] = await Promise.all([
-      message?.role === "user" && !retryAlreadyPersisted
-        ? saveMessages({
-            messages: [
-              {
-                chatId: id,
-                id: message.id,
-                role: "user",
-                parts: message.parts,
-                attachments: [],
-                createdAt: new Date(),
-              },
-            ],
-          })
-        : Promise.resolve(),
-      requestedBotSlug
-        ? createPostgresBotRosterStore()
-            .getBotBySlug(session.user.id, requestedBotSlug)
-            .catch(() => null)
-        : Promise.resolve(null),
-      explicitRemember?.kind === "ok"
-        ? createPostgresMemoryStore()
-            .upsertProfileFact({
-              userId: session.user.id,
-              category: explicitRemember.category,
-              key: explicitRemember.key,
-              value: explicitRemember.value,
-              source: "chat",
-              pinned: explicitRemember.pinned,
-              sharedAcrossBots: true,
+    const [, activeTeammate, explicitSavedFact, threadSummary] =
+      await Promise.all([
+        message?.role === "user" && !retryAlreadyPersisted
+          ? saveMessages({
+              messages: [
+                {
+                  chatId: id,
+                  id: message.id,
+                  role: "user",
+                  parts: message.parts,
+                  attachments: [],
+                  createdAt: new Date(),
+                },
+              ],
             })
-            .catch((): ProfileFact | null => null)
-        : Promise.resolve(null),
-    ]);
+          : Promise.resolve(),
+        requestedBotSlug
+          ? createPostgresBotRosterStore()
+              .getBotBySlug(session.user.id, requestedBotSlug)
+              .catch(() => null)
+          : Promise.resolve(null),
+        explicitRemember?.kind === "ok"
+          ? createPostgresMemoryStore()
+              .upsertProfileFact({
+                userId: session.user.id,
+                category: explicitRemember.category,
+                key: explicitRemember.key,
+                value: explicitRemember.value,
+                source: "chat",
+                pinned: explicitRemember.pinned,
+                sharedAcrossBots: true,
+              })
+              .catch((): ProfileFact | null => null)
+          : Promise.resolve(null),
+        session.user.type !== "guest" && !isSyntheticSdk7FixtureMode()
+          ? syncThreadSummary({
+              chatId: id,
+              userId: session.user.id,
+              messages: uiMessages,
+            }).catch(() => ({ record: null, promptBlock: "" }))
+          : Promise.resolve({ record: null, promptBlock: "" }),
+      ]);
 
     const mergedFacts = explicitSavedFact
       ? [
@@ -546,7 +556,12 @@ export async function POST(request: Request) {
     const premium = isPremiumModel(chatModel) ? premiumModels[chatModel] : null;
     const ownerHeader =
       ownerDisplayName && premium ? `Owner: ${ownerDisplayName}` : "";
-    const baseContext = [ownerHeader, rawBaseContext, memoryContextBlock]
+    const baseContext = [
+      ownerHeader,
+      rawBaseContext,
+      memoryContextBlock,
+      threadSummary.promptBlock,
+    ]
       .filter(Boolean)
       .join("\n\n");
     const hasOperatorToolOnTurn = requestedTools.some((name) =>
@@ -676,6 +691,12 @@ export async function POST(request: Request) {
               escalated: turnEscalation.escalated,
             },
           });
+          if (threadSummary.record?.summaryText) {
+            dataStream.write({
+              type: "data-earlier-summary",
+              data: threadSummary.record.summaryText,
+            });
+          }
           if (explicitSavedFact) {
             const memCallId = `mem-${explicitSavedFact.id.slice(0, 12)}`;
             dataStream.write({

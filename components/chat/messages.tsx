@@ -1,8 +1,9 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
-import { ArrowDownIcon, RotateCcwIcon } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ArrowDownIcon, HistoryIcon, RotateCcwIcon } from "lucide-react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMessages } from "@/hooks/use-messages";
 import { safeModelError } from "@/lib/ai/context/errors";
+import { buildEarlierInChatSummary } from "@/lib/ai/context/thread-summary-shared";
 import {
   canRetryReply,
   hasNonRetryableToolExecution,
@@ -26,6 +27,7 @@ type MessagesProps = {
   activity: MascotState;
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
   chatId: string;
+  earlierSummary?: string | null;
   error?: Error;
   status: UseChatHelpers<ChatMessage>["status"];
   votes: Vote[] | undefined;
@@ -45,6 +47,7 @@ function PureMessages({
   activity,
   addToolApprovalResponse,
   chatId,
+  earlierSummary,
   error,
   status,
   votes,
@@ -70,7 +73,20 @@ function PureMessages({
     status,
   });
 
-  useDataStream();
+  const { dataStream } = useDataStream();
+
+  const effectiveEarlierSummary = useMemo(() => {
+    const streamed = [...(dataStream ?? [])]
+      .reverse()
+      .find((part) => part.type === "data-earlier-summary");
+    if (streamed && typeof streamed.data === "string" && streamed.data.trim()) {
+      return streamed.data;
+    }
+    if (earlierSummary?.trim()) {
+      return earlierSummary.trim();
+    }
+    return buildEarlierInChatSummary(messages)?.summaryText ?? null;
+  }, [dataStream, earlierSummary, messages]);
 
   const lastMessage = messages.at(-1);
   const lastUserText =
@@ -209,6 +225,25 @@ function PureMessages({
               : undefined
           }
         >
+          {effectiveEarlierSummary && (
+            <details
+              className="rounded-2xl border border-[color:var(--hairline)] bg-card/80 px-4 py-3 text-sm"
+              data-testid="earlier-in-chat-summary"
+            >
+              <summary className="flex cursor-pointer select-none items-center justify-between gap-2 font-medium text-foreground text-xs">
+                <span className="inline-flex items-center gap-1.5">
+                  <HistoryIcon className="size-3.5 text-primary" />
+                  {localCopy.earlierInChatTitle}
+                </span>
+                <span className="font-normal text-[11px] text-muted-foreground">
+                  {localCopy.earlierInChatSubtitle}
+                </span>
+              </summary>
+              <pre className="mt-2.5 whitespace-pre-wrap break-words font-sans text-[13px] text-muted-foreground leading-relaxed">
+                {effectiveEarlierSummary}
+              </pre>
+            </details>
+          )}
           {messages.map((message, index) => (
             <PreviewMessage
               addToolApprovalResponse={addToolApprovalResponse}

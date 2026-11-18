@@ -45,6 +45,7 @@ type ActiveChatContextValue = {
   isReadonly: boolean;
   isLoading: boolean;
   votes: Vote[] | undefined;
+  earlierSummary: string | null;
   currentModelId: string;
   setCurrentModelId: (id: string) => void;
 };
@@ -322,6 +323,10 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
 
   const isReadonly = isNewChat ? false : (chatData?.isReadonly ?? false);
 
+  const earlierSummary: string | null = isNewChat
+    ? null
+    : (chatData?.earlierSummary ?? null);
+
   const { data: votes } = useSWR<Vote[]>(
     !isReadonly && messages.length >= 2
       ? `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/vote?chatId=${chatId}`
@@ -347,6 +352,7 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       isReadonly,
       isLoading: !isNewChat && isLoading,
       votes,
+      earlierSummary,
       currentModelId,
       setCurrentModelId,
     }),
@@ -366,6 +372,7 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       isNewChat,
       isLoading,
       votes,
+      earlierSummary,
       currentModelId,
     ]
   );
