@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
@@ -37,8 +38,7 @@ function buildSseBody(chunks: Record<string, unknown>[]): string {
 
 test("Gmail 390x844 iPhone E2E: neutral chat message on SERVICE_DISABLED (never Cloud Console in chat), single owner Setup checklist link when disabled, and 10-message inbox render when enabled", async () => {
   const scratchDir =
-    process.env.VERIFY_SCREENSHOT_DIR ||
-    "/Users/caglar/.gemini/antigravity-cli/brain/dd9cadeb-6946-44ae-87cb-364a999ae07b/scratch";
+    process.env.VERIFY_SCREENSHOT_DIR || join(tmpdir(), "chatbot-e2e-scratch");
   mkdirSync(scratchDir, { recursive: true });
 
   const executablePath =

@@ -12,7 +12,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { Suspense, useEffect, useState } from "react";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { HomeLocationPanel } from "@/components/chat/home-location";
 import { MascotPicker } from "@/components/chat/mascot-preference";
 import { SubpageHeader } from "@/components/chat/subpage-header";
@@ -37,6 +37,8 @@ type UsageResponse = {
   dailyEstimatedUsd: number;
   monthlyEstimatedUsd: number;
   allowanceUsd: number;
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
   requests: number;
   invocations: number;
   fallbackInvocations: number;
@@ -72,9 +74,12 @@ export default function UsagePage() {
 function UsagePageContent() {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
   const searchParams = useSearchParams();
+  const { mutate: globalMutate } = useSWRConfig();
   const { theme, setTheme } = useTheme();
   const [hasSpeechApi, setHasSpeechApi] = useState(false);
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
+  const [capInput, setCapInput] = useState("");
+  const [savingCap, setSavingCap] = useState(false);
 
   useEffect(() => {
     if (searchParams.get("connected") === "google") {
@@ -95,15 +100,40 @@ function UsagePageContent() {
     );
   }, []);
 
-  const { data, error } = useSWR<UsageResponse>(
-    `${basePath}/api/usage`,
-    fetcher
-  );
+  const {
+    data,
+    error,
+    mutate: mutateUsage,
+  } = useSWR<UsageResponse>(`${basePath}/api/usage`, fetcher);
+  useEffect(() => {
+    if (data?.allowanceUsd !== undefined && capInput === "") {
+      setCapInput(String(data.allowanceUsd));
+    }
+  }, [data?.allowanceUsd, capInput]);
+
   const { data: connectors, mutate: mutateConnectors } =
     useSWR<ConnectorStatusResponse>(`${basePath}/api/connectors`, fetcher, {
       revalidateOnFocus: false,
-      shouldRetryOnError: false,
     });
+  const { data: setupStatus } = useSWR<{
+    googleConnected?: boolean;
+    githubConnected?: boolean;
+    googleSignInReady?: boolean;
+  }>(`${basePath}/api/setup-status`, fetcher, {
+    revalidateOnFocus: false,
+  });
+  const connectorsLoading = !connectors && !setupStatus;
+  const googleConnected =
+    connectors?.gmailReady !== undefined
+      ? Boolean(connectors.gmailReady)
+      : Boolean(setupStatus?.googleConnected);
+  const githubConnected =
+    connectors?.githubReady !== undefined
+      ? Boolean(connectors.githubReady)
+      : Boolean(setupStatus?.githubConnected);
+  const googleSignInReady =
+    connectors?.googleSignInReady ?? setupStatus?.googleSignInReady ?? true;
+
   const { data: voice } = useSWR<VoiceReadinessResponse>(
     `${basePath}/api/voice/transcribe`,
     fetcher,
@@ -126,7 +156,10 @@ function UsagePageContent() {
         { method: "DELETE" }
       );
       if (res.ok) {
-        await mutateConnectors();
+        await Promise.all([
+          mutateConnectors(),
+          globalMutate(`${basePath}/api/setup-status`),
+        ]);
         toast({
           type: "success",
           description:
@@ -137,6 +170,46 @@ function UsagePageContent() {
       }
     } finally {
       setBusyProvider(null);
+    }
+  }
+
+  async function handleSaveCap(event: React.FormEvent) {
+    event.preventDefault();
+    const numeric = Number(capInput);
+    if (!Number.isFinite(numeric) || numeric <= 0 || numeric > 10_000) {
+      toast({
+        type: "error",
+        description: "Enter a monthly cap between $0.01 and $10,000.",
+      });
+      return;
+    }
+    setSavingCap(true);
+    try {
+      const res = await fetch(`${basePath}/api/usage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allowanceUsd: numeric }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Could not save monthly cap.");
+      }
+      await Promise.all([
+        mutateUsage(),
+        globalMutate(`${basePath}/api/setup-status`),
+      ]);
+      toast({
+        type: "success",
+        description: `Monthly safety cap updated to $${numeric.toFixed(2)}.`,
+      });
+    } catch (err) {
+      toast({
+        type: "error",
+        description:
+          err instanceof Error ? err.message : "Could not save monthly cap.",
+      });
+    } finally {
+      setSavingCap(false);
     }
   }
 
@@ -319,7 +392,11 @@ function UsagePageContent() {
                   without you
                 </p>
               </div>
-              {connectors?.gmailReady ? (
+              {connectorsLoading ? (
+                <span className="rounded-full bg-muted px-3 py-1 text-muted-foreground text-xs">
+                  Checking…
+                </span>
+              ) : googleConnected ? (
                 <div className="flex shrink-0 items-center gap-2">
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300">
                     <CheckCircle2Icon className="size-3.5" />
@@ -334,15 +411,7 @@ function UsagePageContent() {
                     Disconnect
                   </button>
                 </div>
-              ) : connectors?.googleSignInReady === false ? (
-                <button
-                  className="inline-flex min-h-10 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs opacity-50"
-                  disabled
-                  type="button"
-                >
-                  Connect Google
-                </button>
-              ) : (
+              ) : googleSignInReady ? (
                 <a
                   className="inline-flex min-h-10 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs transition-colors hover:bg-primary/90"
                   href={`${basePath}/connect/google/start?returnTo=${encodeURIComponent("/usage?connected=google")}`}
@@ -351,6 +420,14 @@ function UsagePageContent() {
                 >
                   Connect Google
                 </a>
+              ) : (
+                <button
+                  className="inline-flex min-h-10 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs opacity-50"
+                  disabled
+                  type="button"
+                >
+                  Connect Google
+                </button>
               )}
             </li>
 
@@ -366,7 +443,7 @@ function UsagePageContent() {
                   Read pull requests &amp; prepare unpublished draft reviews
                 </p>
               </div>
-              {connectors?.githubReady ? (
+              {githubConnected ? (
                 <div className="flex shrink-0 items-center gap-2">
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300">
                     <CheckCircle2Icon className="size-3.5" />
@@ -399,8 +476,9 @@ function UsagePageContent() {
               Conversation usage
             </h1>
             <p className="mt-1 text-muted-foreground text-sm">
-              Estimated API costs for this UTC month. Your provider&apos;s
-              billing records and spending controls remain authoritative.
+              Vertex AI runs on Google AI Ultra credit ($0 per-call charge).
+              Real input/output tokens are recorded below, and you can set your
+              internal monthly safety cap anytime.
             </p>
           </div>
 
@@ -435,7 +513,9 @@ function UsagePageContent() {
                 <p className="text-muted-foreground text-xs tabular-nums">
                   {data.requests} requests · {data.invocations} model calls ·{" "}
                   {data.fallbackInvocations} fallback calls (
-                  {usd(data.fallbackEstimatedUsd)})
+                  {usd(data.fallbackEstimatedUsd)}) ·{" "}
+                  {(data.totalInputTokens ?? 0).toLocaleString()} in /{" "}
+                  {(data.totalOutputTokens ?? 0).toLocaleString()} out tokens
                 </p>
 
                 {data.unreportedInvocations > 0 && (
@@ -444,6 +524,41 @@ function UsagePageContent() {
                     estimate is included until reconciled.
                   </p>
                 )}
+
+                <form
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[color:var(--hairline)] bg-background/70 px-3 py-2.5"
+                  data-testid="monthly-allowance-form"
+                  onSubmit={handleSaveCap}
+                >
+                  <label
+                    className="text-foreground text-xs font-medium"
+                    htmlFor="monthly-allowance-input"
+                  >
+                    Monthly safety cap (USD)
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      aria-label="Monthly safety cap in USD"
+                      className="h-9 w-24 rounded-lg border border-[color:var(--hairline)] bg-background px-2.5 text-right text-sm tabular-nums text-foreground"
+                      data-testid="monthly-allowance-input"
+                      id="monthly-allowance-input"
+                      max={10_000}
+                      min={0.01}
+                      onChange={(e) => setCapInput(e.target.value)}
+                      step="0.01"
+                      type="number"
+                      value={capInput}
+                    />
+                    <button
+                      className="inline-flex h-9 items-center rounded-full bg-primary px-3.5 font-medium text-primary-foreground text-xs hover:bg-primary/90 disabled:opacity-50"
+                      data-testid="monthly-allowance-save"
+                      disabled={savingCap}
+                      type="submit"
+                    >
+                      {savingCap ? "Saving…" : "Save"}
+                    </button>
+                  </div>
+                </form>
               </div>
 
               {data.calls.length > 0 && (

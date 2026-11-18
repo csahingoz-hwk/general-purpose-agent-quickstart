@@ -170,7 +170,7 @@ test("negative: legacy Groq mode never reports the Gateway lane as ready", async
 test("negative: invalid spend allowance is reported before any network call", async () => {
   process.env.AI_GATEWAY_USAGE_ENABLED = "true";
   deployedWithOidc();
-  for (const bad of ["0", "-1", "11", "abc"]) {
+  for (const bad of ["0", "-1", "10001", "abc"]) {
     process.env.AI_MONTHLY_ALLOWANCE_USD = bad;
     const result = await discoverGatewayReadiness({
       provider: {

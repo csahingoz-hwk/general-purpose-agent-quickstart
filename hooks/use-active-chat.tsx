@@ -89,7 +89,7 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
   const { data: modelAvailability } = useSWR(
     `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/models`,
     fetcher,
-    { revalidateOnFocus: true, dedupingInterval: 60_000 }
+    { revalidateOnFocus: false, dedupingInterval: 5 * 60_000 }
   );
   useEffect(() => {
     if (modelAvailability?.status !== "ready") {
@@ -122,6 +122,8 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
   const visibility: VisibilityType = isNewChat
     ? "private"
     : (chatData?.visibility ?? "private");
+  const messagesRef = useRef<ChatMessage[]>(initialMessages);
+  const lastErrorToastAtRef = useRef(0);
 
   const {
     messages,
@@ -194,19 +196,32 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       setDataStream((ds) => (ds ? [...ds, dataPart] : []));
     },
     onFinish: () => {
+      const base = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
       mutate(unstable_serialize(getChatHistoryPaginationKey));
+      mutate(`${base}/api/memory`);
+      mutate(`${base}/api/usage`);
     },
-    onError: (error) => {
-      // The message was already persisted by the API. Restoring it to the
-      // composer would create a second turn when sent again.
+    onError: (err) => {
+      // When an assistant bubble is already mounted in the transcript (e.g. after
+      // a tool card like Weather rendered), `Messages` renders a single inline
+      // status banner + Retry button; avoid popping a duplicate floating toast.
+      if (messagesRef.current.at(-1)?.role === "assistant") {
+        return;
+      }
+      const now = Date.now();
+      if (now - lastErrorToastAtRef.current < 1500) {
+        return;
+      }
+      lastErrorToastAtRef.current = now;
       toast({
         type: "error",
         description:
-          error.message ||
+          err.message ||
           "Couldn't finish this reply. Tap Retry response to continue.",
       });
     },
   });
+  messagesRef.current = messages;
 
   const loadedChatIds = useRef(new Set<string>());
 

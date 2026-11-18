@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { auth } from "@/app/(auth)/auth";
+import { resolveLiveCapabilityManifest } from "@/lib/ai/capability-manifest";
 import { vertexEnabled } from "@/lib/ai/routing/catalog";
 import {
   createPostgresBotRosterStore,
@@ -76,7 +77,7 @@ export async function POST(request: Request) {
   }
 
   const hasDb = Boolean(process.env.POSTGRES_URL?.trim());
-  const [teammate, facts, recentTurns] = await Promise.all([
+  const [teammate, facts, recentTurns, capabilityManifest] = await Promise.all([
     body.selectedBotSlug && hasDb
       ? createPostgresBotRosterStore()
           .getBotBySlug(userId, body.selectedBotSlug)
@@ -125,6 +126,11 @@ export async function POST(request: Request) {
             );
         })()
       : Promise.resolve([]),
+    resolveLiveCapabilityManifest({
+      userId,
+      isGuest: false,
+      webSearchAvailable: useVertex,
+    }),
   ]);
 
   const latestRecentText = recentTurns.at(-1)?.text ?? "";
@@ -150,6 +156,7 @@ export async function POST(request: Request) {
     timeZone: validTimeZone(body.timeZone),
     teammate: teammate ? { name: teammate.name, soul: teammate.soul } : null,
     groupedMemoryBlock,
+    capabilityManifest,
     recentTurns,
   });
 

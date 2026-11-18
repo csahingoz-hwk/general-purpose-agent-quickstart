@@ -44,7 +44,7 @@ const HINTS: Record<Exclude<ReadinessReason, "ready">, string> = {
   provider_opt_in_missing:
     "No model lane is enabled for this deployment. Configure GOOGLE_VERTEX_PROJECT_ID + GOOGLE_VERTEX_WORKLOAD_AUDIENCE or AI_GATEWAY_USAGE_ENABLED=true and redeploy.",
   spend_configuration_invalid:
-    "AI_MONTHLY_ALLOWANCE_USD must be a number above 0 and at most 10.",
+    "AI_MONTHLY_ALLOWANCE_USD must be a positive number up to 10000.",
   gateway_auth_missing:
     "AI Gateway is enabled but no credential reached the function. Enable OIDC for the Vercel project (or set AI_GATEWAY_API_KEY for this environment) and redeploy.",
   gateway_auth_rejected:

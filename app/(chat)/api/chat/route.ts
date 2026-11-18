@@ -16,6 +16,7 @@ import {
   type ResumableStreamContext,
 } from "resumable-stream";
 import { auth } from "@/app/(auth)/auth";
+import { resolveLiveCapabilityManifest } from "@/lib/ai/capability-manifest";
 import {
   budgetModelMessages,
   DEFAULT_REPLY_TOKENS,
@@ -27,6 +28,7 @@ import { safeModelError } from "@/lib/ai/context/errors";
 import {
   needsArtifactInstructions,
   selectActiveTools,
+  selectToolsWithRanking,
 } from "@/lib/ai/context/select-tools";
 import {
   applyApprovalResponses,
@@ -88,8 +90,8 @@ import {
   extractRequestedBotSlug,
   filterFactsForBot,
 } from "@/lib/bots/roster";
+import { isCloudComputerConfigured } from "@/lib/cloud-computer/client";
 import { isGithubConnectorEnabled } from "@/lib/connectors/calendar-and-github";
-import { probeGoogleWorkspaceApiHealth } from "@/lib/connectors/google-health";
 import { isGoogleConnectorsEnabled } from "@/lib/connectors/google-vault-auth";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import { isProductionEnvironment } from "@/lib/constants";
@@ -110,6 +112,7 @@ import {
 import type { DBMessage } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
 import { prepareMessagesWithAttachments } from "@/lib/files/parse-attachment";
+import { isMacBridgeConfigured } from "@/lib/mac-bridge/client";
 import { isMediaStudioEnabled } from "@/lib/media/media-studio";
 import {
   buildGroupedMemoryPromptBlock,
@@ -132,7 +135,6 @@ import {
 import { contextBlock, validTimeZone } from "@/lib/temporal";
 import type { ChatMessage } from "@/lib/types";
 import { convertToUIMessages, generateUUID } from "@/lib/utils";
-import { isVaultConfigured } from "@/lib/vault/secret-vault";
 import { generateTitleFromUserMessage } from "../../actions";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
@@ -258,7 +260,7 @@ export async function POST(request: Request) {
       soul,
       homeLocation,
       storedFacts,
-      googleConnectedAndHealthy,
+      capabilityManifest,
     ] = await Promise.all([
       checkIpRateLimit(ipAddress(request)),
       acquireChatLock(id),
@@ -270,20 +272,17 @@ export async function POST(request: Request) {
             .listProfileFacts({ userId: session.user.id })
             .catch(() => [])
         : Promise.resolve([]),
-      session.user.type !== "guest" &&
-      !isSyntheticSdk7FixtureMode() &&
-      isGoogleConnectorsEnabled() &&
-      isVaultConfigured()
-        ? Promise.race([
-            probeGoogleWorkspaceApiHealth({ userId: session.user.id })
-              .then((res) => res.status === "ready")
-              .catch(() => false),
-            new Promise<boolean>((resolve) =>
-              setTimeout(() => resolve(false), 1800)
-            ),
-          ])
-        : Promise.resolve(false),
+      isSyntheticSdk7FixtureMode()
+        ? Promise.resolve(undefined)
+        : resolveLiveCapabilityManifest({
+            userId: session.user.id,
+            isGuest: session.user.type === "guest",
+            webSearchAvailable: webSearchLane(chatModel),
+          }),
     ]);
+    const googleConnectedAndHealthy =
+      capabilityManifest?.entries.find((e) => e.id === "gmail")?.state ===
+      "connected_and_healthy";
 
     releaseLock = acquiredLock;
     if (!releaseLock) {
@@ -366,14 +365,29 @@ export async function POST(request: Request) {
     const requestTimeZone = validTimeZone(timeZone);
     const requestNow = new Date();
     const searchLane = supportsTools && webSearchLane(chatModel);
+    const toolSelectOptions = {
+      googleConnectedAndHealthy,
+      capabilityManifest:
+        isPremiumModel(chatModel) && session.user.type !== "guest"
+          ? capabilityManifest
+          : undefined,
+    };
     const requestedTools = supportsTools
       ? selectActiveTools(
           uiMessages,
           session.user.type !== "guest",
           searchLane,
-          { googleConnectedAndHealthy }
+          toolSelectOptions
         )
       : [];
+    const { intentMatchedTools } = supportsTools
+      ? selectToolsWithRanking(
+          uiMessages,
+          session.user.type !== "guest",
+          searchLane,
+          toolSelectOptions
+        )
+      : { intentMatchedTools: [] as typeof requestedTools };
     const finalUserText =
       [...uiMessages]
         .reverse()
@@ -385,7 +399,7 @@ export async function POST(request: Request) {
       selectedModelId: chatModel,
       availableModelIds: availability.models.map((model) => model.id),
       userText: finalUserText,
-      requestedTools,
+      requestedTools: intentMatchedTools,
       baseEffort: modelConfig?.reasoningEffort,
     });
     chatModel = turnEscalation.modelId;
@@ -521,16 +535,32 @@ export async function POST(request: Request) {
       needsOnboarding:
         !effectiveSoul &&
         session.user.type !== "guest" &&
-        requestedTools.length === 0 &&
+        intentMatchedTools.length === 0 &&
         !hasPriorAssistantTurn,
       includeArtifacts: needsArtifactInstructions(requestedTools),
       includeWebSearch: searchLane && requestedTools.includes("webSearch"),
-      includeFixtures: requestedTools.includes("getFixtures"),
+      includeFixtures: intentMatchedTools.includes("getFixtures"),
       includeOperatorTools: hasOperatorToolOnTurn || googleConnectedAndHealthy,
       googleConnected: googleConnectedAndHealthy,
+      capabilityManifest,
+      setupCapabilities:
+        Boolean(premium) && session.user.type !== "guest"
+          ? {
+              googleConnected: googleConnectedAndHealthy,
+              githubConnected:
+                capabilityManifest?.entries.find((e) => e.id === "github")
+                  ?.state === "connected_and_healthy" ||
+                (isGithubConnectorEnabled() &&
+                  Boolean(process.env.GITHUB_CONNECTOR_PAT?.trim())),
+              memoryEnabled: isMemoryToolsEnabled(),
+              routinesEnabled: isRoutinesEnabled(),
+              cloudComputerConnected: isCloudComputerConfigured(),
+              macBridgeConnected: isMacBridgeConfigured(),
+            }
+          : undefined,
       includeVisual:
         Boolean(premium) &&
-        isVisualCandidateTurn(finalUserText, requestedTools),
+        isVisualCandidateTurn(finalUserText, intentMatchedTools),
       context: activeSkill
         ? `${baseContext}\n\n${formatSkillPromptBlock(activeSkill)}`
         : baseContext,
@@ -574,30 +604,28 @@ export async function POST(request: Request) {
             });
           };
           const initialPhase =
-            searchLane && requestedTools.includes("webSearch")
+            searchLane && intentMatchedTools.includes("webSearch")
               ? "searching"
-              : requestedTools.includes("getWeather")
+              : intentMatchedTools.includes("getWeather")
                 ? "weather"
-                : requestedTools.includes("getFixtures")
+                : intentMatchedTools.includes("getFixtures")
                   ? "fixtures"
-                  : requestedTools.length > 0
+                  : intentMatchedTools.length > 0
                     ? "tool"
                     : "thinking";
           dataStream.write({
             type: "data-turn-status",
             data: { phase: initialPhase, model: chatModel },
           });
-          if (turnEscalation.escalated) {
-            dataStream.write({
-              type: "data-model-used",
-              data: {
-                modelId: chatModel,
-                modelName: getModelDisplayName(chatModel),
-                isFallback: false,
-                escalated: true,
-              },
-            });
-          }
+          dataStream.write({
+            type: "data-model-used",
+            data: {
+              modelId: chatModel,
+              modelName: getModelDisplayName(chatModel),
+              isFallback: false,
+              escalated: turnEscalation.escalated,
+            },
+          });
           if (explicitSavedFact) {
             const memCallId = `mem-${explicitSavedFact.id.slice(0, 12)}`;
             dataStream.write({
@@ -692,12 +720,12 @@ export async function POST(request: Request) {
                     )
                   );
                   const hasUntrusted =
-                    requestedTools.includes("webSearch") ||
-                    requestedTools.includes("gmailReadMessages") ||
-                    requestedTools.includes("driveReadFiles") ||
-                    requestedTools.includes("calendarReadEvents") ||
-                    requestedTools.includes("githubReadPullRequests") ||
-                    requestedTools.includes("cloudBrowseUrl") ||
+                    intentMatchedTools.includes("webSearch") ||
+                    intentMatchedTools.includes("gmailReadMessages") ||
+                    intentMatchedTools.includes("driveReadFiles") ||
+                    intentMatchedTools.includes("calendarReadEvents") ||
+                    intentMatchedTools.includes("githubReadPullRequests") ||
+                    intentMatchedTools.includes("cloudBrowseUrl") ||
                     attachmentPrep.hasUntrustedAttachment ||
                     hasPriorConnectorReads;
 
@@ -993,7 +1021,23 @@ export async function POST(request: Request) {
             return;
           }
           const resolvedModelId = execution.activeModelId ?? chatModel;
-          const withVisual = attachOpenUiPart(reply, resolvedModelId);
+          const ensuredModelParts = [
+            ...reply.parts.filter((p) => p.type !== "data-model-used"),
+            {
+              type: "data-model-used" as const,
+              data: {
+                modelId: resolvedModelId,
+                modelName: getModelDisplayName(resolvedModelId),
+                isFallback: execution.fallbackUsed,
+                ...(execution.fallbackUsed ? { fallbackFrom: chatModel } : {}),
+                escalated: turnEscalation.escalated,
+              },
+            },
+          ];
+          const withVisual = attachOpenUiPart(
+            { ...reply, parts: ensuredModelParts },
+            resolvedModelId
+          );
           const saved = messagesFromDb.find((m) => m.id === withVisual.id);
           if (saved) {
             await updateMessage({ id: withVisual.id, parts: withVisual.parts });

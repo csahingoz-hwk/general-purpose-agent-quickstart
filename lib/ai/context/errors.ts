@@ -53,14 +53,26 @@ export function safeModelError(error: unknown, userText: string): string {
       ? "Engellendi: Korn Ferry veya işveren gizli verileri kişisel Google AI modellerine gönderilemez."
       : "Blocked: Korn Ferry or employer confidential material cannot be sent to personal Google AI models.";
   }
+  if (/spend_configuration/i.test(raw)) {
+    return tr
+      ? "Aylık bütçe yapılandırması (AI_MONTHLY_ALLOWANCE_USD) geçersiz. Ayarlar > Kullanım sayfasından aylık üst sınırı güncelleyebilirsin."
+      : "Monthly allowance configuration (AI_MONTHLY_ALLOWANCE_USD) is invalid. Update your monthly cap in Usage & settings.";
+  }
   if (
-    /model_(billing|spend)|spend_configuration|spending allowance or account credit limit|Kullanım bütçesi veya hesap kredisi/.test(
+    /model_spend|App's internal monthly allowance|Uygulama içi aylık/i.test(raw)
+  ) {
+    return tr
+      ? "Uygulama içi aylık harcama üst sınırına ulaşıldı (Vertex kredisi değil, uygulama içi limit). Ayarlar > Kullanım sayfasından bu sınırı artırabilirsin."
+      : "App's internal monthly allowance cap reached (internal app cap, not Vertex quota). You can raise this cap in Usage & settings.";
+  }
+  if (
+    /model_billing|spending allowance or account credit limit|Sağlayıcı kredi sınırına/.test(
       raw
     )
   ) {
     return tr
-      ? "Kullanım bütçesi veya hesap kredisi sınırına ulaşıldı. Sohbetin kayıtlı; kapasite yeniden açıldığında buradan devam edebilirsin."
-      : "The spending allowance or account credit limit has been reached. Your conversation is saved; you can continue here when capacity is available.";
+      ? "Sağlayıcı (Google Cloud / Vertex AI) hesap kredi sınırına ulaşıldı. Sohbetin kayıtlı; kapasite açıldığında buradan devam edebilirsin."
+      : "Upstream provider credit limit reached. Your conversation is saved; you can continue here when capacity is available.";
   }
   if (
     /model_auth|account connection needs attention|Sohbet bağlantısının hesap ayarları/.test(
@@ -84,8 +96,8 @@ export function safeModelError(error: unknown, userText: string): string {
     )
   ) {
     return tr
-      ? "Hesabın şu anki kullanım sınırına ulaşıldı. Biraz sonra aynı sohbetten yeniden deneyebilirsin."
-      : "The account's current rate limit was reached. Please retry in this conversation shortly.";
+      ? "Vertex AI kota veya anlık istek hızı sınırına (429) ulaşıldı. Biraz sonra aynı sohbetten yeniden deneyebilirsin."
+      : "Vertex AI quota or rate limit (429) was reached. Please retry in this conversation shortly.";
   }
   const code = classifyModelError(error);
   if (code === "size") {

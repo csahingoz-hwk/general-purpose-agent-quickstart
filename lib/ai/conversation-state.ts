@@ -129,15 +129,27 @@ export function applyApprovalResponses(
   return messages as ChatMessage[];
 }
 
-/** Sanitize tool failures too: SDK tool errors are UI chunks, not fatal errors. */
+/** Sanitize tool failures too, and emit at most one fatal `error` chunk per turn. */
 export function safeUIStream(userText: string) {
+  let fatalErrorEmitted = false;
   return new TransformStream<
     InferUIMessageChunk<ChatMessage>,
     InferUIMessageChunk<ChatMessage>
   >({
     transform(chunk, controller) {
+      if (chunk.type === "error") {
+        if (fatalErrorEmitted) {
+          return;
+        }
+        fatalErrorEmitted = true;
+        controller.enqueue({
+          ...chunk,
+          errorText: safeModelError(chunk.errorText, userText),
+        });
+        return;
+      }
       controller.enqueue(
-        chunk.type === "tool-output-error" || chunk.type === "error"
+        chunk.type === "tool-output-error"
           ? { ...chunk, errorText: safeModelError(chunk.errorText, userText) }
           : chunk
       );

@@ -9,17 +9,14 @@ export function isResearchOrHardTurn(
   userText: string,
   requestedTools: readonly string[]
 ): { escalate: boolean; hardAnalytical: boolean } {
-  // Never escalate solely because webSearch is in requestedTools; only heavy
-  // agentic/operator execution or genuinely hard/research prompts escalate.
+  // Never escalate solely because webSearch is in requestedTools, or because a
+  // chitchat/everyday prompt has two "?" marks or >240 characters. Escalate only
+  // on heavy operator/CLI execution or genuine analytical/research intent.
   const hasHeavyOperatorTool =
     requestedTools.includes("delegateTask") ||
     requestedTools.includes("cloudExec") ||
     requestedTools.includes("macRunAgentCli");
-  const multiQuestion = (userText.match(/\?/g)?.length ?? 0) >= 2;
-  const hardAnalytical =
-    HARD_OR_RESEARCH_PATTERN.test(userText) ||
-    userText.trim().length >= 240 ||
-    multiQuestion;
+  const hardAnalytical = HARD_OR_RESEARCH_PATTERN.test(userText);
   return {
     escalate: hasHeavyOperatorTool || hardAnalytical,
     hardAnalytical,

@@ -851,7 +851,7 @@ const PurePreviewMessage = ({
   ) : (
     <>
       {attachments}
-      {modelUsed && (modelUsed.isFallback || modelUsed.escalated) && (
+      {modelUsed && (
         <div
           className={cn(
             "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 font-medium text-[12px] leading-tight",

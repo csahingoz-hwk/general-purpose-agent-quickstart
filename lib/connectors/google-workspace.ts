@@ -415,54 +415,66 @@ export async function readGmailMessages(opts: {
     messages?: Array<{ id?: string; threadId?: string }>;
   };
   const stubs = (listJson.messages ?? []).slice(0, maxResults);
+  const validStubs = stubs.filter((s): s is { id: string; threadId?: string } =>
+    Boolean(s.id && /^[a-zA-Z0-9_-]+$/.test(s.id))
+  );
+  const perMessageMaxChars = validStubs.length <= 5 ? 3200 : 800;
   const results: FencedGmailMessage[] = [];
+  const batchSize = 5;
 
-  for (const stub of stubs) {
-    if (!stub.id || !/^[a-zA-Z0-9_-]+$/.test(stub.id)) {
-      continue;
+  for (let offset = 0; offset < validStubs.length; offset += batchSize) {
+    const batch = validStubs.slice(offset, offset + batchSize);
+    const fetchedBatch = await Promise.all(
+      batch.map(async (stub): Promise<FencedGmailMessage | null> => {
+        const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${stub.id}?format=full`;
+        assertSafeGoogleRequest("GET", detailUrl);
+        const detailRes = await fetchFn(detailUrl, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${opts.accessToken}`,
+          },
+          cache: "no-store",
+          signal: AbortSignal.timeout(10_000),
+        }).catch(() => null);
+        if (!detailRes?.ok) {
+          return null;
+        }
+        const detail = (await detailRes.json()) as {
+          id?: string;
+          threadId?: string;
+          snippet?: string;
+          payload?: GmailMessagePayload;
+        };
+        const headers = detail.payload?.headers;
+        const subject = headerValue(headers, "Subject") || "(no subject)";
+        const from = headerValue(headers, "From") || "(unknown sender)";
+        const date = headerValue(headers, "Date") || "";
+        const bodyText =
+          extractPlainBodyFromPayload(detail.payload) || detail.snippet || "";
+
+        const rawSummary = `From: ${from}\nDate: ${date}\nSubject: ${subject}\n\n${bodyText}`;
+        const fenced = fenceUntrustedContent({
+          text: rawSummary,
+          source: `connector:gmail:${stub.id}`,
+          maxChars: perMessageMaxChars,
+        });
+
+        return {
+          id: stub.id,
+          threadId: detail.threadId ?? stub.threadId ?? "",
+          subject: subject.slice(0, 160),
+          from: from.slice(0, 160),
+          date: date.slice(0, 80),
+          fencedContent: fenced.fencedText,
+          suspicious: fenced.suspicious,
+        };
+      })
+    );
+    for (const item of fetchedBatch) {
+      if (item) {
+        results.push(item);
+      }
     }
-    const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${stub.id}?format=full`;
-    assertSafeGoogleRequest("GET", detailUrl);
-    const detailRes = await fetchFn(detailUrl, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${opts.accessToken}`,
-      },
-      cache: "no-store",
-      signal: AbortSignal.timeout(12_000),
-    });
-    if (!detailRes.ok) {
-      continue;
-    }
-    const detail = (await detailRes.json()) as {
-      id?: string;
-      threadId?: string;
-      snippet?: string;
-      payload?: GmailMessagePayload;
-    };
-    const headers = detail.payload?.headers;
-    const subject = headerValue(headers, "Subject") || "(no subject)";
-    const from = headerValue(headers, "From") || "(unknown sender)";
-    const date = headerValue(headers, "Date") || "";
-    const bodyText =
-      extractPlainBodyFromPayload(detail.payload) || detail.snippet || "";
-
-    const rawSummary = `From: ${from}\nDate: ${date}\nSubject: ${subject}\n\n${bodyText}`;
-    const fenced = fenceUntrustedContent({
-      text: rawSummary,
-      source: `connector:gmail:${stub.id}`,
-      maxChars: 4000,
-    });
-
-    results.push({
-      id: stub.id,
-      threadId: detail.threadId ?? stub.threadId ?? "",
-      subject: subject.slice(0, 160),
-      from: from.slice(0, 160),
-      date: date.slice(0, 80),
-      fencedContent: fenced.fencedText,
-      suspicious: fenced.suspicious,
-    });
   }
 
   return results;

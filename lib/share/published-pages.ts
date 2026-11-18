@@ -219,7 +219,7 @@ function getSql() {
   if (!url || url === "****") {
     return null;
   }
-  pgClient ??= postgres(url, { max: 2, prepare: false, idle_timeout: 2 });
+  pgClient ??= postgres(url, { max: 2, prepare: false, idle_timeout: 0 });
   return pgClient;
 }
 

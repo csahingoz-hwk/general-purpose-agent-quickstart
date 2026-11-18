@@ -84,14 +84,38 @@ export function isGoogleConnectorsEnabled(): boolean {
   return process.env.GOOGLE_CONNECTORS_ENABLED !== "false";
 }
 
+/**
+ * Single source of truth for whether the owner's Vault currently holds usable
+ * Google Workspace credentials (shared by `/api/connectors` and `/api/setup-status`).
+ */
+export function hasStoredGoogleConnection(
+  storedSecretNames: ReadonlySet<string>,
+  googleSignInReady: boolean
+): boolean {
+  if (!isGoogleConnectorsEnabled()) {
+    return false;
+  }
+  const hasAccess = storedSecretNames.has(
+    GOOGLE_VAULT_SECRET_NAMES.accessToken
+  );
+  const hasRefreshSet =
+    storedSecretNames.has(GOOGLE_VAULT_SECRET_NAMES.refreshToken) &&
+    (googleSignInReady ||
+      (storedSecretNames.has(GOOGLE_VAULT_SECRET_NAMES.clientId) &&
+        storedSecretNames.has(GOOGLE_VAULT_SECRET_NAMES.clientSecret)));
+  return hasAccess || hasRefreshSet;
+}
+
 export async function resolveGoogleAccessTokenFromVault(opts: {
   userId: string;
   vaultStore?: SecretVaultStore;
   fetchImpl?: typeof fetch;
+  forceRefresh?: boolean;
 }): Promise<ResolvedGoogleAuth> {
   const store = opts.vaultStore ?? createPostgresVaultStore();
   const fetchFn = opts.fetchImpl ?? fetch;
-  const canUseRuntimeCache = !opts.fetchImpl && !opts.vaultStore;
+  const canUseRuntimeCache =
+    !opts.fetchImpl && !opts.vaultStore && !opts.forceRefresh;
   const envProjectNumber = parseClientProjectNumber(process.env.AUTH_GOOGLE_ID);
 
   try {

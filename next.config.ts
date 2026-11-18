@@ -61,9 +61,7 @@ const nextConfig: NextConfig = {
     ],
   },
   experimental: {
-    prefetchInlining: true,
     cachedNavigations: true,
-    inlineCss: true,
     turbopackFileSystemCacheForDev: true,
   },
 };

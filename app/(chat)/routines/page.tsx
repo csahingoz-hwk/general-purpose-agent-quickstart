@@ -14,7 +14,7 @@ import {
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
-import useSWR from "swr";
+import useSWR, { useSWRConfig } from "swr";
 import { SubpageHeader } from "@/components/chat/subpage-header";
 import { toast } from "@/components/chat/toast";
 import { cn, fetcher } from "@/lib/utils";
@@ -103,6 +103,7 @@ export default function RoutinesPage() {
 function RoutinesPageContent() {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
   const searchParams = useSearchParams();
+  const { mutate: globalMutate } = useSWRConfig();
   const [tab, setTab] = useState<"routines" | "tasks" | "vault">("routines");
 
   useEffect(() => {
@@ -151,8 +152,25 @@ function RoutinesPageContent() {
     googleSignInReady?: boolean;
   }>(`${basePath}/api/connectors`, fetcher, {
     revalidateOnFocus: false,
-    shouldRetryOnError: false,
   });
+  const { data: setupStatus } = useSWR<{
+    googleConnected?: boolean;
+    githubConnected?: boolean;
+    googleSignInReady?: boolean;
+  }>(`${basePath}/api/setup-status`, fetcher, {
+    revalidateOnFocus: false,
+  });
+  const connectorsLoading = !connectorsData && !setupStatus;
+  const googleConnected =
+    connectorsData?.gmailReady !== undefined
+      ? Boolean(connectorsData.gmailReady)
+      : Boolean(setupStatus?.googleConnected);
+  const githubConnected =
+    connectorsData?.githubReady !== undefined
+      ? Boolean(connectorsData.githubReady)
+      : Boolean(setupStatus?.githubConnected);
+  const googleSignInReady =
+    connectorsData?.googleSignInReady ?? setupStatus?.googleSignInReady ?? true;
 
   async function handleCreateRoutine(event: React.FormEvent) {
     event.preventDefault();
@@ -614,7 +632,11 @@ function RoutinesPageContent() {
                     never sends without your approval.
                   </p>
                 </div>
-                {connectorsData?.gmailReady ? (
+                {connectorsLoading ? (
+                  <span className="rounded-full bg-muted px-3 py-1 text-muted-foreground text-xs">
+                    Checking…
+                  </span>
+                ) : googleConnected ? (
                   <div className="flex items-center gap-2">
                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300">
                       <CheckCircle2Icon className="size-3.5" />
@@ -627,22 +649,18 @@ function RoutinesPageContent() {
                           `${basePath}/api/connectors?provider=google`,
                           { method: "DELETE" }
                         );
-                        await Promise.all([mutateVault(), mutateConnectors()]);
+                        await Promise.all([
+                          mutateVault(),
+                          mutateConnectors(),
+                          globalMutate(`${basePath}/api/setup-status`),
+                        ]);
                       }}
                       type="button"
                     >
                       Disconnect
                     </button>
                   </div>
-                ) : connectorsData?.googleSignInReady === false ? (
-                  <button
-                    className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs opacity-50"
-                    disabled
-                    type="button"
-                  >
-                    Connect Google
-                  </button>
-                ) : (
+                ) : googleSignInReady ? (
                   <a
                     className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs transition-colors hover:bg-primary/90"
                     href={`${basePath}/connect/google/start?returnTo=${encodeURIComponent("/routines?tab=vault")}`}
@@ -651,6 +669,14 @@ function RoutinesPageContent() {
                   >
                     Connect Google
                   </a>
+                ) : (
+                  <button
+                    className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs opacity-50"
+                    disabled
+                    type="button"
+                  >
+                    Connect Google
+                  </button>
                 )}
               </div>
 
@@ -666,7 +692,7 @@ function RoutinesPageContent() {
                     Read PRs &amp; issues and prepare unpublished draft reviews.
                   </p>
                 </div>
-                {connectorsData?.githubReady ? (
+                {githubConnected ? (
                   <div className="flex items-center gap-2">
                     <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300">
                       <CheckCircle2Icon className="size-3.5" />
@@ -679,7 +705,11 @@ function RoutinesPageContent() {
                           `${basePath}/api/connectors?provider=github`,
                           { method: "DELETE" }
                         );
-                        await Promise.all([mutateVault(), mutateConnectors()]);
+                        await Promise.all([
+                          mutateVault(),
+                          mutateConnectors(),
+                          globalMutate(`${basePath}/api/setup-status`),
+                        ]);
                       }}
                       type="button"
                     >

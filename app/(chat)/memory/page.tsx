@@ -338,7 +338,8 @@ export default function MemoryPage() {
 
   const { data, error, mutate } = useSWR<MemoryApiResponse>(
     `${basePath}/api/memory`,
-    fetcher
+    fetcher,
+    { dedupingInterval: 2000, revalidateOnMount: true }
   );
 
   const allFacts = data?.profileFacts ?? [];

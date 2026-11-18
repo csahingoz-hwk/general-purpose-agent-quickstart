@@ -189,7 +189,9 @@ function extractInlineBase64(
   return null;
 }
 
-function buildVertexRequestBody(
+const SPLIT_WEB_SEARCH_FN_NAME = "__vertexGroundedWebSearch";
+
+export function buildVertexRequestBody(
   modelId: VertexModelId,
   params: LanguageModelV4CallOptions
 ): Record<string, unknown> {
@@ -315,11 +317,34 @@ function buildVertexRequestBody(
     }
   }
 
-  if (wantsGoogleSearch) {
-    vertexTools.push({ googleSearch: {} });
-  }
-  if (functionDeclarations.length > 0) {
+  // Never mix built-in `{ googleSearch: {} }` and `{ functionDeclarations }` in
+  // the same Vertex request. When function tools are active alongside webSearch,
+  // expose search as a function declaration and run an isolated grounded sub-call
+  // only if the model invokes it.
+  if (wantsGoogleSearch && functionDeclarations.length > 0) {
+    functionDeclarations.push({
+      name: SPLIT_WEB_SEARCH_FN_NAME,
+      description:
+        "Search Google on the public web for current live facts, news, prices, exchange rates, or match scores.",
+      parametersJsonSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Focused public web search query.",
+          },
+        },
+        required: ["query"],
+      },
+    });
     vertexTools.push({ functionDeclarations });
+  } else {
+    if (wantsGoogleSearch) {
+      vertexTools.push({ googleSearch: {} });
+    }
+    if (functionDeclarations.length > 0) {
+      vertexTools.push({ functionDeclarations });
+    }
   }
 
   const requestedEffort = (
@@ -336,7 +361,11 @@ function buildVertexRequestBody(
   // Add thinking headroom on top of the caller's visible-text `maxOutputTokens` budget
   // so deep reasoning never starves or truncates the visible answer.
   const thinkingHeadroom =
-    thinkingLevel === "HIGH" ? 8192 : thinkingLevel === "MEDIUM" ? 4096 : 1024;
+    modelId === "gemini-4-argon" || thinkingLevel === "HIGH"
+      ? 8192
+      : thinkingLevel === "MEDIUM"
+        ? 4096
+        : 1024;
   const visibleBudget = params.maxOutputTokens ?? 8192;
 
   const generationConfig: Record<string, unknown> = {
@@ -619,6 +648,11 @@ export function createVertexGeminiAdapter(
             (tool.type === "function" && tool.name === "webSearch")
         )
       );
+      const hasOtherFunctionToolsOnTurn = Boolean(
+        params.tools?.some(
+          (tool) => tool.type === "function" && tool.name !== "webSearch"
+        )
+      );
       const latestUserQuery = (() => {
         for (let i = params.prompt.length - 1; i >= 0; i--) {
           const msg = params.prompt[i];
@@ -635,11 +669,13 @@ export function createVertexGeminiAdapter(
         }
         return "";
       })();
-      const immediateSearchCallId = hasSearchToolOnTurn
-        ? `vground-0-${Math.random().toString(36).slice(2, 7)}`
-        : null;
+      const immediateSearchCallId =
+        hasSearchToolOnTurn && !hasOtherFunctionToolsOnTurn
+          ? `vground-0-${Math.random().toString(36).slice(2, 7)}`
+          : null;
       let immediateSearchStarted = false;
       let immediateSearchResolved = false;
+      const deferredGroundedQueries: string[] = [];
 
       function processPayload(
         payload: VertexResponsePayload,
@@ -686,6 +722,17 @@ export function createVertexGeminiAdapter(
             continue;
           }
           if (part.functionCall) {
+            if (part.functionCall.name === SPLIT_WEB_SEARCH_FN_NAME) {
+              const q =
+                typeof part.functionCall.args?.query === "string" &&
+                part.functionCall.args.query.trim()
+                  ? part.functionCall.args.query.trim()
+                  : latestUserQuery;
+              if (q) {
+                deferredGroundedQueries.push(q);
+              }
+              continue;
+            }
             if (textOpen) {
               controller.enqueue({
                 type: "text-end",
@@ -782,6 +829,89 @@ export function createVertexGeminiAdapter(
                     : {}),
                 });
                 textOpen = false;
+              }
+
+              // If a mixed-tool turn invoked the split search function, execute a
+              // dedicated `{ googleSearch: {} }`-only Vertex sub-call (zero functionDeclarations).
+              if (deferredGroundedQueries.length > 0 && !sawFunctionCall) {
+                const subQuery =
+                  deferredGroundedQueries[0] ?? latestUserQuery ?? "";
+                const subCallId = `vground-split-${Math.random().toString(36).slice(2, 7)}`;
+                controller.enqueue({
+                  type: "tool-call",
+                  toolCallId: subCallId,
+                  toolName: "webSearch",
+                  input: JSON.stringify({ query: subQuery }),
+                  providerExecuted: true,
+                });
+                const subBody = buildVertexRequestBody(modelId, {
+                  ...params,
+                  prompt: [
+                    ...params.prompt.filter((m) => m.role === "system"),
+                    {
+                      role: "user",
+                      content: [{ type: "text", text: subQuery }],
+                    },
+                  ],
+                  tools: [
+                    {
+                      type: "provider",
+                      id: WEB_SEARCH_TOOL_ID,
+                      name: "webSearch",
+                      args: {},
+                    },
+                  ],
+                });
+                const subRes = await fetcher(endpointFor(projectId, false), {
+                  method: "POST",
+                  headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    "Content-Type": "application/json",
+                  },
+                  body: JSON.stringify(subBody),
+                  signal: withUpstreamTimeout(params.abortSignal),
+                }).catch((err) =>
+                  normalizeUpstreamError(err, params.abortSignal)
+                );
+                if (subRes.ok) {
+                  const subPayload =
+                    (await subRes.json()) as VertexResponsePayload;
+                  const subCand = subPayload.candidates?.[0];
+                  const subGrounding = buildGroundingSearchResults(
+                    subCand?.groundingMetadata
+                  );
+                  controller.enqueue({
+                    type: "tool-result",
+                    toolCallId: subCallId,
+                    toolName: "webSearch",
+                    result: {
+                      results: subGrounding?.results ?? [],
+                    },
+                    providerExecuted: true,
+                  } as unknown as LanguageModelV4StreamPart);
+                  const subText = (subCand?.content?.parts ?? [])
+                    .filter((p) => !p.thought && typeof p.text === "string")
+                    .map((p) => p.text)
+                    .join("");
+                  if (subText) {
+                    const subTextId = `vtxt-split-${Math.random().toString(36).slice(2, 8)}`;
+                    controller.enqueue({ type: "text-start", id: subTextId });
+                    controller.enqueue({
+                      type: "text-delta",
+                      id: subTextId,
+                      delta: subText,
+                    });
+                    controller.enqueue({ type: "text-end", id: subTextId });
+                  }
+                } else {
+                  controller.enqueue({
+                    type: "tool-result",
+                    toolCallId: subCallId,
+                    toolName: "webSearch",
+                    result: { results: [] },
+                    providerExecuted: true,
+                  } as unknown as LanguageModelV4StreamPart);
+                }
               }
 
               // Emit grounded Google Search sources as WebSearchCard parts

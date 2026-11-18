@@ -173,7 +173,7 @@ async function getFileSql() {
   pgFileClient ??= postgres(url, {
     max: 2,
     prepare: false,
-    idle_timeout: 2,
+    idle_timeout: 0,
   });
   await ensureParitySchema(pgFileClient);
   return pgFileClient;

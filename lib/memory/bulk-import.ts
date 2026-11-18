@@ -650,6 +650,7 @@ export function prepareMemoryImportPreview(
 const EXPLICIT_REMEMBER_PATTERNS: readonly RegExp[] = [
   /^\s*(?:please\s+)?remember\s+this\s*[:\-–—]\s*(.+)$/isu,
   /^\s*(?:please\s+)?remember\s*[:\-–—]\s*(.+)$/isu,
+  /^\s*(?:please\s+)?remember\s+(?!when\b|how\b|if\b|whether\b)(?:that\s+)?(.{4,})$/isu,
   /^\s*(?:please\s+)?save\s+(?:this\s+)?to\s+(?:my\s+)?memory\s*[:\-–—]?\s*(.+)$/isu,
   /^\s*(?:please\s+)?keep\s+in\s+mind\s*[:\-–—]\s*(.+)$/isu,
   /^\s*(?:lütfen\s+)?bunu\s+hatırla\s*[:\-–—]?\s*(.+)$/isu,
@@ -658,6 +659,38 @@ const EXPLICIT_REMEMBER_PATTERNS: readonly RegExp[] = [
   /^\s*(?:lütfen\s+)?aklında\s+tut\s*[:\-–—]\s*(.+)$/isu,
   /^\s*(?:lütfen\s+)?(?:belleğe|belleğime|hafızaya|hafızama)\s+kaydet\s*[:\-–—]\s*(.+)$/isu,
 ];
+
+const TURKISH_SOV_REMEMBER_WITH_COLON =
+  /^\s*(?:lütfen\s+)?(.{2,160}?)\s+(?:hatırla|unutma|aklında\s+tut|(?:belleğe|belleğime|hafızaya|hafızama)\s+kaydet)\s*[:\-–—]\s*(.+)$/isu;
+
+const TURKISH_SOV_REMEMBER_SENTENCE =
+  /^\s*(?:lütfen\s+)?(.{4,240}?)\s+(?:olduğunu\s+|diye\s+)?(?:hatırla|unutma|aklında\s+tut|(?:belleğe|belleğime|hafızaya|hafızama)\s+kaydet)[.!]*$/isu;
+
+function extractRawRememberCandidate(trimmed: string): string | null {
+  for (const pattern of EXPLICIT_REMEMBER_PATTERNS) {
+    const match = trimmed.match(pattern);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+  const sovColon = trimmed.match(TURKISH_SOV_REMEMBER_WITH_COLON);
+  if (sovColon?.[1] && sovColon[2]) {
+    const topic = sovColon[1].trim();
+    const detail = sovColon[2].trim();
+    if (/^(?:bunu|şunu)$/iu.test(topic)) {
+      return detail;
+    }
+    return `${topic}: ${detail}`;
+  }
+  const sovSentence = trimmed.match(TURKISH_SOV_REMEMBER_SENTENCE);
+  if (sovSentence?.[1]) {
+    const clause = sovSentence[1].trim();
+    if (!/^(?:bunu|şunu|beni|adımı|bunu\s+da)$/iu.test(clause)) {
+      return clause;
+    }
+  }
+  return null;
+}
 
 export type ExplicitRememberParseResult =
   | {
@@ -674,8 +707,9 @@ export type ExplicitRememberParseResult =
   | null;
 
 /**
- * Extracts an explicit single-turn `"remember this: …"` / `"bunu hatırla: …"`
- * directive from chat or voice transcripts, blocking passwords/cards/addresses.
+ * Extracts an explicit single-turn `"remember this: …"` / `"bunu hatırla: …"` /
+ * `"Benim adımı ve doğum yılımı hatırla: 1981"` directive from chat or voice
+ * transcripts, blocking passwords/cards/addresses.
  */
 export function extractExplicitRememberFact(
   text: string
@@ -684,39 +718,37 @@ export function extractExplicitRememberFact(
   if (!trimmed || trimmed.endsWith("?")) {
     return null;
   }
-  for (const pattern of EXPLICIT_REMEMBER_PATTERNS) {
-    const match = trimmed.match(pattern);
-    const captured = match?.[1]
-      ?.trim()
-      .replace(/^["“”']+|["“”']+$/g, "")
-      .trim();
-    if (captured && captured.length >= 2 && captured.length <= 1500) {
-      const sensitive = detectSensitiveMemoryContent(captured);
-      if (sensitive) {
-        return { kind: "sensitive_blocked", reason: sensitive };
-      }
-      const kfClass = classifyKornFerryMemoryFact(captured);
-      if (kfClass.kind === "blocked_kf_data") {
-        return { kind: "sensitive_blocked", reason: "korn_ferry_data" };
-      }
-      const sentence =
-        kfClass.kind === "short_context" ||
-        kfClass.kind === "partial_short_context"
-          ? kfClass.fact
-          : toSelfContainedSentence(captured);
-      const category =
-        kfClass.kind === "short_context" ||
-        kfClass.kind === "partial_short_context"
-          ? "work"
-          : inferMemoryCategory(sentence);
-      return {
-        kind: "ok",
-        key: deriveFactKey(sentence),
-        value: sentence,
-        category,
-        pinned: defaultPinnedForCategory(category),
-      };
+  const rawCandidate = extractRawRememberCandidate(trimmed);
+  const captured = rawCandidate
+    ?.trim()
+    .replace(/^["“”']+|["“”']+$/g, "")
+    .trim();
+  if (captured && captured.length >= 2 && captured.length <= 1500) {
+    const sensitive = detectSensitiveMemoryContent(captured);
+    if (sensitive) {
+      return { kind: "sensitive_blocked", reason: sensitive };
     }
+    const kfClass = classifyKornFerryMemoryFact(captured);
+    if (kfClass.kind === "blocked_kf_data") {
+      return { kind: "sensitive_blocked", reason: "korn_ferry_data" };
+    }
+    const sentence =
+      kfClass.kind === "short_context" ||
+      kfClass.kind === "partial_short_context"
+        ? kfClass.fact
+        : toSelfContainedSentence(captured);
+    const category =
+      kfClass.kind === "short_context" ||
+      kfClass.kind === "partial_short_context"
+        ? "work"
+        : inferMemoryCategory(sentence);
+    return {
+      kind: "ok",
+      key: deriveFactKey(sentence),
+      value: sentence,
+      category,
+      pinned: defaultPinnedForCategory(category),
+    };
   }
   return null;
 }

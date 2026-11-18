@@ -124,9 +124,26 @@ test("draftOutboundMessage enforces needsApproval, dry-run execution, and webSea
 
   assert.deepEqual(
     selectActiveTools(
+      [userMsg("Please draft a Slack message to #finance-close")],
+      true,
+      true
+    ),
+    ["draftOutboundMessage"]
+  );
+  assert.deepEqual(
+    selectActiveTools(
       [userMsg("Please draft an email to controller@example.test")],
       true,
       true
+    ),
+    ["gmailCreateDraft"]
+  );
+  assert.deepEqual(
+    selectActiveTools(
+      [userMsg("Please draft an email to controller@example.test")],
+      true,
+      true,
+      { googleConnectedAndHealthy: false }
     ),
     ["draftOutboundMessage"]
   );

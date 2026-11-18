@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { chromium, expect } from "@playwright/test";
@@ -74,8 +75,7 @@ function buildRealistic31kMixedClaudeExport(): string {
 
 test("Live Vertex 30k-char TR/EN Memory Merge + 390x844 iPhone E2E (Bug 1 chunked merge + partial-chunk save, Bug 2 Gmail Reconnect card, Collapsed Tool Accordion + Details)", async () => {
   const scratchDir =
-    process.env.VERIFY_SCREENSHOT_DIR ||
-    "/Users/caglar/.gemini/antigravity-cli/brain/dd9cadeb-6946-44ae-87cb-364a999ae07b/scratch";
+    process.env.VERIFY_SCREENSHOT_DIR || join(tmpdir(), "chatbot-e2e-scratch");
   mkdirSync(scratchDir, { recursive: true });
 
   const export31k = buildRealistic31kMixedClaudeExport();
