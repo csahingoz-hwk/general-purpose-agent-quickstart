@@ -3,14 +3,15 @@ import { ARGON, HYDROGEN } from "./routing/catalog";
 export type ActiveReasoningEffort = "low" | "medium" | "high";
 
 const HARD_OR_RESEARCH_PATTERN =
-  /\b(research|compare|comparison|versus|vs\.?|top\s+\d+|highest[- ]paid|top\s+earners?|annual\s+(?:pay|salary|compensation|earnings)|benchmark|analy[sz]e|analysis|in[- ]depth|comprehensive|breakdown|ranking|rank|prove|theorem|architect(?:ure)?|trade[- ]?offs?|root\s+cause|debug|reconcil\p{L}*|araştır\p{L}*|karşılaştır\p{L}*|kıyasla\p{L}*|en\s+çok\s+kazanan\p{L}*|en\s+yüksek\s+(?:maaş|kazanç|gelir|ücret)\p{L}*|detaylı\s+(?:analiz|incele|rapor)\p{L}*|sıralama\p{L}*|yıllık\s+(?:maaş|kazanç|ücret|gelir)\p{L}*|derinlemesine|kapsamlı|mimari|nedenini\s+bul)\b/iu;
+  /(?<![\p{L}\p{N}])(?:research|compare|comparison|versus|vs\.?|top\s+\d+|highest[- ]paid|top\s+earners?|annual\s+(?:pay|salary|compensation|earnings)|benchmark|analy[sz]e|analysis|in[- ]depth|comprehensive|breakdown|ranking|rank|prove|theorem|architect(?:ure)?|trade[- ]?offs?|root\s+cause|debug|reconcil\p{L}*|araştır\p{L}*|karşılaştır\p{L}*|kıyasla\p{L}*|en\s+çok\s+kazanan\p{L}*|en\s+yüksek\s+(?:maaş|kazanç|gelir|ücret)\p{L}*|detaylı\s+(?:analiz|incele|rapor)\p{L}*|sıralama\p{L}*|yıllık\s+(?:maaş|kazanç|ücret|gelir)\p{L}*|derinlemesine|kapsamlı|mimari|nedenini\s+bul)(?![\p{L}\p{N}])/iu;
 
 export function isResearchOrHardTurn(
   userText: string,
   requestedTools: readonly string[]
 ): { escalate: boolean; hardAnalytical: boolean } {
-  const hasResearchOrOperatorTool =
-    requestedTools.includes("webSearch") ||
+  // Never escalate solely because webSearch is in requestedTools; only heavy
+  // agentic/operator execution or genuinely hard/research prompts escalate.
+  const hasHeavyOperatorTool =
     requestedTools.includes("delegateTask") ||
     requestedTools.includes("cloudExec") ||
     requestedTools.includes("macRunAgentCli");
@@ -20,13 +21,13 @@ export function isResearchOrHardTurn(
     userText.trim().length >= 240 ||
     multiQuestion;
   return {
-    escalate: hasResearchOrOperatorTool || hardAnalytical,
+    escalate: hasHeavyOperatorTool || hardAnalytical,
     hardAnalytical,
   };
 }
 
 const DEEP_PROOF_PATTERN =
-  /\b(prove|theorem|formal\s+proof|root\s+cause|kanıtla|teorem|nedenini\s+bul)\b/iu;
+  /(?<![\p{L}\p{N}])(?:prove|theorem|formal\s+proof|root\s+cause|kanıtla|teorem|nedenini\s+bul)(?![\p{L}\p{N}])/iu;
 
 /**
  * Owner Vertex + Ultra routing rule:

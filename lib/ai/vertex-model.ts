@@ -416,10 +416,14 @@ export function createVertexGeminiAdapter(
   const fetcher = deps?.fetcher ?? fetch;
   const resolveToken =
     deps?.getAccessToken ?? (() => getVertexWifAccessToken(fetcher));
+  const defaultTimeoutMs = modelId === "gemini-4-argon" ? 55_000 : 35_000;
   const upstreamTimeoutMs = Math.max(
     250,
     deps?.timeoutMs ??
-      Number.parseInt(process.env.VERTEX_UPSTREAM_TIMEOUT_MS ?? "25000", 10)
+      Number.parseInt(
+        process.env.VERTEX_UPSTREAM_TIMEOUT_MS ?? String(defaultTimeoutMs),
+        10
+      )
   );
 
   function withUpstreamTimeout(callerSignal?: AbortSignal): AbortSignal {

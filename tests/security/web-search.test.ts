@@ -224,7 +224,7 @@ test("route registers webSearch only behind the lane flag and keeps its own conf
     route,
     /searchLane = supportsTools && webSearchLane\(chatModel\)/
   );
-  assert.match(route, /selectActiveTools\([^)]*searchLane\s*\)/s);
+  assert.match(route, /selectActiveTools\([^)]*searchLane[\s\S]*?\)/);
   assert.deepEqual(WEB_SEARCH_CONFIG, { count: 5, needContent: false });
 });
 

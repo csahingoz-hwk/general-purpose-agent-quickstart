@@ -51,7 +51,7 @@ const en = {
   statusReplying: "Replying…",
   statusWorking: "Working on it…",
   statusError: "The reply could not be completed. What arrived is kept.",
-  statusInterrupted: "The reply was interrupted. What arrived is kept.",
+  statusInterrupted: "Interrupted, try again",
   interruptedAfterTool:
     "This reply stopped after a tool ran. Send a follow-up to continue without repeating its action.",
   mascot: "Mascot",
@@ -114,7 +114,7 @@ const tr: UiCopy = {
   statusReplying: "Yanıt yazıyor…",
   statusWorking: "Üzerinde çalışıyor…",
   statusError: "Yanıt tamamlanamadı. Gelen kısım korundu.",
-  statusInterrupted: "Yanıt yarıda kesildi. Gelen kısım korundu.",
+  statusInterrupted: "Yarıda kesildi, tekrar dene",
   interruptedAfterTool:
     "Bu yanıt bir araç çalıştıktan sonra durdu. İşlemi tekrarlamadan devam etmek için bir mesaj gönder.",
   mascot: "Maskot",

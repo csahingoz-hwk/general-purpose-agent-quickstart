@@ -320,17 +320,17 @@ test("selectActiveTools gates Google connectors behind GOOGLE_CONNECTORS_ENABLED
       ["demoInbox"]
     );
 
-    // Gmail read + draft in same prompt drops state-changing draft tool so untrusted reads stay isolated
+    // Gmail read + approval-gated unsent draft coexist on the same turn, while silent state mutations (e.g. setSoul) are excluded
     const combined = selectActiveTools(
       [
         userTurn(
-          "Check my Gmail messages and create a Gmail draft to bob@example.com"
+          "Check my Gmail messages, create a Gmail draft to bob@example.com, and customize your personality"
         ),
       ],
       true,
       true
     );
-    assert.deepEqual(combined, ["gmailReadMessages"]);
+    assert.deepEqual(combined, ["gmailReadMessages", "gmailCreateDraft"]);
 
     // Explicit draft turn selects gmailCreateDraft without triggering paid webSearch
     const draftTurn = selectActiveTools(

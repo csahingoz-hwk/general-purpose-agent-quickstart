@@ -49,10 +49,12 @@ import {
   COPILOT_HAIKU,
   copilotFallbackEnabled,
   isPremiumModel,
+  isSyntheticSdk7FixtureMode,
   premiumModels,
   webSearchLane,
 } from "@/lib/ai/routing/catalog";
 import { createUsageLedger } from "@/lib/ai/routing/ledger";
+import { failureKind } from "@/lib/ai/routing/policy";
 import {
   type InferenceSession,
   inferenceSession,
@@ -87,6 +89,7 @@ import {
   filterFactsForBot,
 } from "@/lib/bots/roster";
 import { isGithubConnectorEnabled } from "@/lib/connectors/calendar-and-github";
+import { probeGoogleWorkspaceApiHealth } from "@/lib/connectors/google-health";
 import { isGoogleConnectorsEnabled } from "@/lib/connectors/google-vault-auth";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import { isProductionEnvironment } from "@/lib/constants";
@@ -129,6 +132,7 @@ import {
 import { contextBlock, validTimeZone } from "@/lib/temporal";
 import type { ChatMessage } from "@/lib/types";
 import { convertToUIMessages, generateUUID } from "@/lib/utils";
+import { isVaultConfigured } from "@/lib/vault/secret-vault";
 import { generateTitleFromUserMessage } from "../../actions";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
@@ -247,19 +251,39 @@ export async function POST(request: Request) {
     }
     let chatModel = selectedChatModel;
 
-    const [, acquiredLock, chat, soul, homeLocation, storedFacts] =
-      await Promise.all([
-        checkIpRateLimit(ipAddress(request)),
-        acquireChatLock(id),
-        getChatById({ id }),
-        getUserSoul({ userId: session.user.id }),
-        getUserHomeLocation({ userId: session.user.id }),
-        session.user.type !== "guest" && isMemoryToolsEnabled()
-          ? createPostgresMemoryStore()
-              .listProfileFacts({ userId: session.user.id })
-              .catch(() => [])
-          : Promise.resolve([]),
-      ]);
+    const [
+      ,
+      acquiredLock,
+      chat,
+      soul,
+      homeLocation,
+      storedFacts,
+      googleConnectedAndHealthy,
+    ] = await Promise.all([
+      checkIpRateLimit(ipAddress(request)),
+      acquireChatLock(id),
+      getChatById({ id }),
+      getUserSoul({ userId: session.user.id }),
+      getUserHomeLocation({ userId: session.user.id }),
+      session.user.type !== "guest" && isMemoryToolsEnabled()
+        ? createPostgresMemoryStore()
+            .listProfileFacts({ userId: session.user.id })
+            .catch(() => [])
+        : Promise.resolve([]),
+      session.user.type !== "guest" &&
+      !isSyntheticSdk7FixtureMode() &&
+      isGoogleConnectorsEnabled() &&
+      isVaultConfigured()
+        ? Promise.race([
+            probeGoogleWorkspaceApiHealth({ userId: session.user.id })
+              .then((res) => res.status === "ready")
+              .catch(() => false),
+            new Promise<boolean>((resolve) =>
+              setTimeout(() => resolve(false), 1800)
+            ),
+          ])
+        : Promise.resolve(false),
+    ]);
 
     releaseLock = acquiredLock;
     if (!releaseLock) {
@@ -343,7 +367,12 @@ export async function POST(request: Request) {
     const requestNow = new Date();
     const searchLane = supportsTools && webSearchLane(chatModel);
     const requestedTools = supportsTools
-      ? selectActiveTools(uiMessages, session.user.type !== "guest", searchLane)
+      ? selectActiveTools(
+          uiMessages,
+          session.user.type !== "guest",
+          searchLane,
+          { googleConnectedAndHealthy }
+        )
       : [];
     const finalUserText =
       [...uiMessages]
@@ -497,7 +526,8 @@ export async function POST(request: Request) {
       includeArtifacts: needsArtifactInstructions(requestedTools),
       includeWebSearch: searchLane && requestedTools.includes("webSearch"),
       includeFixtures: requestedTools.includes("getFixtures"),
-      includeOperatorTools: hasOperatorToolOnTurn,
+      includeOperatorTools: hasOperatorToolOnTurn || googleConnectedAndHealthy,
+      googleConnected: googleConnectedAndHealthy,
       includeVisual:
         Boolean(premium) &&
         isVisualCandidateTurn(finalUserText, requestedTools),
@@ -815,9 +845,11 @@ export async function POST(request: Request) {
             ),
             maxOutputTokens: replyTokens,
             maxRetries: 0,
-            // The SDK default logs raw upstream errors, including request content.
-            onError: () => {
-              /* Ledger and UI handle safe errors; never log upstream request bodies. */
+            // Log failureKind(error) only — never upstream request/response bodies, URLs, or secrets.
+            onError: ({ error }) => {
+              console.error("[chat] stream error", {
+                kind: failureKind(error),
+              });
             },
             abortSignal: AbortSignal.any([
               request.signal,
@@ -888,7 +920,12 @@ export async function POST(request: Request) {
                 primaryOutcome = outcome;
               },
               sendReasoning: false,
-              onError: (error) => safeModelError(error, finalUserText),
+              onError: (error) => {
+                console.error("[chat] ui stream error", {
+                  kind: failureKind(error),
+                });
+                return safeModelError(error, finalUserText);
+              },
             })
               .pipeThrough(
                 createMultiSearchRecoveryStream({
@@ -914,8 +951,10 @@ export async function POST(request: Request) {
                         providerOptions: {
                           openai: { reasoningEffort: effectiveReasoningEffort },
                         },
-                        onError: () => {
-                          /* Deterministic partial answer handles synthesis errors. */
+                        onError: ({ error }) => {
+                          console.error("[chat] synthesis stream error", {
+                            kind: failureKind(error),
+                          });
                         },
                         abortSignal: AbortSignal.any([
                           request.signal,
@@ -976,7 +1015,12 @@ export async function POST(request: Request) {
           await releaseLock?.();
         }
       },
-      onError: (error) => safeModelError(error, finalUserText),
+      onError: (error) => {
+        console.error("[chat] ui stream error", {
+          kind: failureKind(error),
+        });
+        return safeModelError(error, finalUserText);
+      },
     });
 
     streamOwnsLock = true;

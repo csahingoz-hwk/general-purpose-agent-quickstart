@@ -98,7 +98,7 @@ const CLOUD_BROWSE_PATTERN =
 const PRIVATE_PERSONAL_INTENT =
   /\b(did [\p{L}\s]{1,25} (?:e-?mail|write to|send an? e-?mail to) me|did [\p{L}\s]{1,25} send (?:me )?an? e-?mail|any (?:new |unread |recent )?e-?mails?|what'?s in my inbox|check (?:my )?(?:inbox|e-?mails?)|read (?:my )?(?:inbox|e-?mails?)|e-?mails? from |what'?s on my calendar|am i free |are you free |do i have (?:any )?(?:meetings?|appointments?|events?)|my meetings? (?:today|tomorrow|this week|on \w+)|(?:find|where is|locate) .{1,50} in (?:my )?(?:google )?drive|(?:any|check|list|are there(?: any)?) open (?:github )?(?:prs|pull requests)|what have you saved in (?:my )?memory|what do you remember about me|delegate (?:a |this )?task|create a task card|run (?:this )?in the background|background task)\b|(?<![\p{L}])(?:bana (?:e-?posta|mail) geldi m[ıi]|[\p{L}\s]{1,25} bana (?:yazd[ıi]|mail att[ıi]|e-?posta gönderdi) m[ıi]|[\p{L}']+['’]?(?:dan|den|tan|ten) (?:e-?posta|mail) var m[ıi]|okunmam[ıi]ş (?:e-?posta|mail)\p{L}*|gelen kutum\p{L}*|inbox['’]?(?:ta|da) ne var|mailimi kontrol et|maillerime bak|takvimimde ne var|haftaya takvimim nas[ıi]l|bugün (?:toplant[ıi]m|randevum) var m[ıi]|(?:yar[ıi]n|bugün|pazartesi|sal[ıi]|çarşamba|perşembe|cuma|cumartesi|pazar)\b.{0,30}(?:boş muyum|müsait miyim|uygun muyum)|drive['’]?(?:da|daki) .{1,40}(?:bul|ara|nerede|listele|oku|göster)|aç[ıi]k (?:pr|pull request)\p{L}* (?:var m[ıi]|kontrol et|listele)|hakk[ıi]mda ne (?:hat[ıi]rl[ıi]yorsun|biliyorsun)|beni hat[ıi]rl[ıi]yor musun|görev kart[ıi]|arka planda çal[ıi]şt[ıi]r|görev olarak başlat)(?![\p{L}])/iu;
 
-/** Tools that change stored state; never offered in a turn that reads web content. */
+/** Tools that change stored state; never offered in a turn that reads open-web content. */
 const STATE_CHANGING_TOOLS: readonly ChatToolName[] = [
   "setHomeLocation",
   "setSoul",
@@ -123,6 +123,102 @@ const STATE_CHANGING_TOOLS: readonly ChatToolName[] = [
   "macExec",
   "macRunAgentCli",
 ];
+
+/**
+ * Approval-gated unsent personal connector draft tools (`needsApproval: true`,
+ * never send externally, and flag `hasUntrustedContext` in `reviewActionRisk`).
+ * Allowed alongside authenticated personal connector reads (Gmail/Calendar/Drive/GitHub),
+ * while silent state mutations and shell/VM execution remain excluded.
+ */
+const APPROVAL_GATED_CONNECTOR_DRAFT_TOOLS = new Set<ChatToolName>([
+  "gmailCreateDraft",
+  "driveCreateDraftDoc",
+  "calendarCreateDraftEvent",
+  "githubCreateDraftReview",
+]);
+
+const SYNTHETIC_DEMO_PATTERN =
+  /\b(demo|mock|fictional|sample|synthetic|test inbox)\b|hayal[iî]|örnek|sahte/;
+
+const PERSONAL_EMAIL_NOUN_PATTERN =
+  /(?<![\p{L}])(?:gmail|inbox|gelen\s+kutu\p{L}*|e-?mail\p{L}*|e-?posta\p{L}*|eposta\p{L}*|mail\p{L}*)(?![\p{L}])/iu;
+
+const PERSONAL_EMAIL_READ_CUE_PATTERN =
+  /(?<![\p{L}])(?:inbox|gelen\s+kutu\p{L}*|okunmam[ıi]ş|unread|gelen|gönderdi\p{L}*|att[ıi]\p{L}*|yazd[ıi]\p{L}*|son|latest|last|recent|new|from|bul\p{L}*|oku\p{L}*|bak\p{L}*|kontrol|(?<!internette\s|internetten\s)ara|check|read|find|look\s+at|search(?!\s+(?:the\s+web|online)\b)|show|list|var\s+m[ıi]|geldi\s+m[ıi])(?![\p{L}])|['’](?:dan|den|tan|ten)\b/iu;
+
+const PERSONAL_EMAIL_REPLY_DRAFT_CUE_PATTERN =
+  /(?<![\p{L}])(?:cevap\s+tasla[ğg]\p{L}*|yan[ıi]t\s+tasla[ğg]\p{L}*|gmail\s+tasla[ğg]\p{L}*|gmail'?e\s+taslak)\b|\b(?:create\s+(?:a\s+)?gmail\s+draft|save\s+(?:a\s+)?draft\s+in\s+gmail|gmail\s+draft(?:\s+to|\s+reply)?|draft\s+(?:a\s+)?reply|reply\s+draft|response\s+draft|prepare\s+(?:a\s+)?response(?:\s+draft)?)\b/iu;
+
+function hasPersonalEmailReadIntent(phrase: string): boolean {
+  if (SYNTHETIC_DEMO_PATTERN.test(phrase)) {
+    return false;
+  }
+  if (
+    /\b(did [\p{L}\s]{1,25} (?:e-?mail|write to|send an? e-?mail to) me|did [\p{L}\s]{1,25} send (?:me )?an? e-?mail|what'?s in my inbox)\b|(?<![\p{L}])(?:[\p{L}\s]{1,25} bana (?:yazd[ıi]|mail att[ıi]|e-?posta gönderdi) m[ıi]|gelen kutum\p{L}*|inbox['’]?(?:ta|da) ne var)(?![\p{L}])/iu.test(
+      phrase
+    )
+  ) {
+    return true;
+  }
+  return (
+    PERSONAL_EMAIL_NOUN_PATTERN.test(phrase) &&
+    PERSONAL_EMAIL_READ_CUE_PATTERN.test(phrase)
+  );
+}
+
+function hasPersonalEmailDraftIntent(phrase: string): boolean {
+  if (SYNTHETIC_DEMO_PATTERN.test(phrase)) {
+    return false;
+  }
+  if (PERSONAL_EMAIL_REPLY_DRAFT_CUE_PATTERN.test(phrase)) {
+    return true;
+  }
+  return (
+    hasPersonalEmailReadIntent(phrase) &&
+    /(?<![\p{L}])(?:tasla[ğg]\p{L}*|cevap\p{L}*|yan[ıi]t\p{L}*|draft|reply|respond|response)(?![\p{L}])/iu.test(
+      phrase
+    )
+  );
+}
+
+function hasPersonalCalendarReadIntent(phrase: string): boolean {
+  return /\b(check (?:my )?(?:google )?calendar|upcoming calendar events|read (?:my )?calendar|what'?s on my calendar|am i free |do i have (?:any )?(?:meetings?|appointments?|events?)|my meetings? (?:today|tomorrow|this week|on \w+))\b|(?<![\p{L}])(?:takvim\p{L}*|yaklaşan etkinliklerim|toplant[ıi]lar[ıi]m\p{L}*|bugün (?:toplant[ıi]m|randevum) var m[ıi]|(?:yar[ıi]n|bugün|pazartesi|sal[ıi]|çarşamba|perşembe|cuma|cumartesi|pazar)\b.{0,30}(?:boş muyum|müsait miyim|uygun muyum))(?![\p{L}])/iu.test(
+    phrase
+  );
+}
+
+function hasPersonalDriveReadIntent(phrase: string): boolean {
+  return /\b(search (?:my )?(?:google )?drive|read (?:from )?(?:my )?(?:google )?drive|(?:find|where is|locate) .{1,50} in (?:my )?(?:google )?drive|find in (?:my )?(?:google )?drive|list (?:my )?(?:google )?drive files)\b|(?:google )?drive(?:'da|da|'daki| dosyalar[ıi]m[ıi]) (?:ara|listele|oku|bul)|drive['’]?(?:da|daki) .{1,50}(?:bul\p{L}*|ara\p{L}*|nerede|listele\p{L}*|oku\p{L}*|göster\p{L}*)/iu.test(
+    phrase
+  );
+}
+
+function hasPersonalWorkspaceIntent(phrase: string): boolean {
+  if (SYNTHETIC_DEMO_PATTERN.test(phrase)) {
+    return false;
+  }
+  return (
+    PRIVATE_PERSONAL_INTENT.test(phrase) ||
+    hasPersonalEmailReadIntent(phrase) ||
+    hasPersonalEmailDraftIntent(phrase) ||
+    hasPersonalCalendarReadIntent(phrase) ||
+    hasPersonalDriveReadIntent(phrase)
+  );
+}
+
+const POLITE_TASK_TR_ENDING_PATTERN =
+  /(?<![\p{L}])(?:m[ıi]s[ıi]n(?:[ıi]z)?|m[uü]s[uü]n(?:[uü]z)?)(?:\s+l[üu]tfen)?[?.!\s]*$/iu;
+
+const POLITE_TASK_EN_REQUEST_PATTERN =
+  /\b(?:(?:can|could|would|will|may|might)\s+you|do\s+you\s+mind|would\s+you\s+mind)\b/iu;
+
+function isPoliteTaskRequest(phrase: string): boolean {
+  const trimmed = phrase.trim();
+  return (
+    POLITE_TASK_TR_ENDING_PATTERN.test(trimmed) ||
+    POLITE_TASK_EN_REQUEST_PATTERN.test(trimmed)
+  );
+}
 
 function userText(message: ChatMessage): string {
   return message.parts
@@ -151,9 +247,12 @@ function wantsLiveFacts(phrase: string): boolean {
   );
 }
 
-function isOpenQuestion(phrase: string): boolean {
+export function isOpenQuestion(phrase: string): boolean {
   const trimmed = phrase.trim();
   if (trimmed.length < 8 || CHITCHAT_PATTERN.test(trimmed)) {
+    return false;
+  }
+  if (isPoliteTaskRequest(trimmed)) {
     return false;
   }
   if (trimmed.includes("?")) {
@@ -170,9 +269,8 @@ function isOpenQuestion(phrase: string): boolean {
 /**
  * Offer web search for questions that may need current public facts, and let
  * the model decide whether to call it. Weather, greetings, advice, clock
- * questions, and pure document or local-tool turns stay off the paid tool.
- * Fixture/price/news phrasing is a fallback so those still search even when
- * they look a little like small talk.
+ * questions, polite task requests, and personal inbox/calendar/drive or local-tool
+ * turns stay off webSearch.
  */
 export function shouldOfferWebSearch(
   phrase: string,
@@ -181,19 +279,18 @@ export function shouldOfferWebSearch(
   if (!webSearchAvailable || WEATHER_PATTERN.test(phrase)) {
     return false;
   }
+  const explicitWebOverride =
+    /\b(search the web|on the web|find online|web search)\b|internette|internetten/iu.test(
+      phrase
+    );
+  if (hasPersonalWorkspaceIntent(phrase) && !explicitWebOverride) {
+    return false;
+  }
   const factual = wantsLiveFacts(phrase);
   if (CLOCK_PATTERN.test(phrase) && !factual) {
     return false;
   }
   if (CHITCHAT_PATTERN.test(phrase) && !factual) {
-    return false;
-  }
-  if (
-    PRIVATE_PERSONAL_INTENT.test(phrase) &&
-    !/\b(search the web|on the web|find online|web search)\b|internette|internetten/iu.test(
-      phrase
-    )
-  ) {
     return false;
   }
   const localOnly =
@@ -209,16 +306,27 @@ export function shouldOfferWebSearch(
   return factual || isOpenQuestion(phrase);
 }
 
+export type SelectActiveToolsOptions = {
+  /**
+   * True when the signed-in owner has Google Workspace connected and healthy.
+   * When true, `gmailReadMessages`, `gmailCreateDraft`, `calendarReadEvents`,
+   * and `driveReadFiles` are always offered (with regex acting only as a
+   * priority/ranking hint).
+   */
+  googleConnectedAndHealthy?: boolean;
+};
+
 /** Only offer the model tools relevant to what the owner actually asked. */
 export function selectActiveTools(
   messages: ChatMessage[],
   canPersonalize: boolean,
   /**
-   * True only when this request is served by the AI Gateway lane (see
+   * True only when this request is served by a web-search-capable lane (see
    * webSearchLane in routing/catalog). On every other lane web search is never
    * offered, whatever the user types.
    */
-  webSearchAvailable = false
+  webSearchAvailable = false,
+  options?: SelectActiveToolsOptions
 ): ChatToolName[] {
   const recentUserText = messages
     .filter((msg) => msg.role === "user")
@@ -388,42 +496,21 @@ export function selectActiveTools(
   }
 
   if (canPersonalize && isGoogleConnectorsEnabled()) {
-    const isSyntheticDemo =
-      /\b(demo|mock|fictional|sample|synthetic|test inbox)\b|hayal[iî]|örnek|sahte/.test(
-        phrase
-      );
+    const isSyntheticDemo = SYNTHETIC_DEMO_PATTERN.test(phrase);
 
     if (!isSyntheticDemo) {
-      if (
-        /\b(create (?:a )?gmail draft|save (?:a )?draft in gmail|gmail draft to)\b|gmail taslağı oluştur|gmail'e taslak kaydet/.test(
-          phrase
-        )
-      ) {
-        enabled.push("gmailCreateDraft");
-      }
-      if (
-        /\b(check (?:my )?(?:gmail|inbox|e-?mails?)|read (?:my )?(?:gmail|inbox|unread emails?(?: in gmail)?|e-?mails?)|search (?:my )?gmail|latest emails? in (?:my )?gmail|did [\p{L}\s]{1,25} (?:e-?mail|write to|send an? e-?mail to) me|did [\p{L}\s]{1,25} send (?:me )?an? e-?mail|any (?:new |unread |recent )?e-?mails?|what'?s in my inbox|e-?mails? from )\b|gmail(?:imi|'imi)? (?:kontrol et|oku|ara)|(?<![\p{L}])(?:bana (?:e-?posta|mail) geldi m[ıi]|[\p{L}\s]{1,25} bana (?:yazd[ıi]|mail att[ıi]|e-?posta gönderdi) m[ıi]|[\p{L}']+['’]?(?:dan|den|tan|ten) (?:e-?posta|mail) var m[ıi]|okunmam[ıi]ş (?:e-?posta|mail)\p{L}*|gelen kutum\p{L}*|inbox['’]?(?:ta|da) ne var|mailimi kontrol et|maillerime bak)(?![\p{L}])/iu.test(
-          phrase
-        )
-      ) {
+      // Regex acts as a ranking hint (placing matched tools first) and unlocks
+      // opt-in Calendar/Drive draft tools when requested.
+      if (hasPersonalEmailReadIntent(phrase)) {
         enabled.push("gmailReadMessages");
       }
-
-      if (
-        /\b(create (?:a )?(?:google )?drive draft|save (?:a )?draft (?:doc|document) in (?:google )?drive)\b|(?:google )?drive taslağı oluştur|drive'a taslak kaydet/.test(
-          phrase
-        )
-      ) {
-        enabled.push("driveCreateDraftDoc");
-      }
-      if (
-        /\b(search (?:my )?(?:google )?drive|read (?:from )?(?:my )?(?:google )?drive|(?:find|where is|locate) .{1,50} in (?:my )?(?:google )?drive|find in (?:my )?(?:google )?drive|list (?:my )?(?:google )?drive files)\b|(?:google )?drive(?:'da|da|'daki| dosyalarımı) (?:ara|listele|oku|bul)|drive['’]?(?:da|daki) .{1,40}(?:bul|ara|nerede|listele|oku|göster)/iu.test(
-          phrase
-        )
-      ) {
-        enabled.push("driveReadFiles");
+      if (hasPersonalEmailDraftIntent(phrase)) {
+        enabled.push("gmailCreateDraft");
       }
 
+      if (hasPersonalCalendarReadIntent(phrase)) {
+        enabled.push("calendarReadEvents");
+      }
       if (
         /\b(create (?:a )?(?:google )?calendar draft|draft (?:a )?calendar event)\b|takvim taslağı oluştur/.test(
           phrase
@@ -431,12 +518,27 @@ export function selectActiveTools(
       ) {
         enabled.push("calendarCreateDraftEvent");
       }
+
+      if (hasPersonalDriveReadIntent(phrase)) {
+        enabled.push("driveReadFiles");
+      }
       if (
-        /\b(check (?:my )?(?:google )?calendar|upcoming calendar events|read (?:my )?calendar|what'?s on my calendar|am i free |do i have (?:any )?(?:meetings?|appointments?|events?)|my meetings? (?:today|tomorrow|this week|on \w+))\b|takvimimi (?:kontrol et|oku)|yaklaşan etkinliklerim|(?<![\p{L}])(?:takvimimde ne var|haftaya takvimim nasıl|bugün (?:toplantım|randevum) var mı|(?:yarın|bugün|pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar)\b.{0,30}(?:boş muyum|müsait miyim|uygun muyum))(?![\p{L}])/iu.test(
+        /\b(create (?:a )?(?:google )?drive draft|save (?:a )?draft (?:doc|document) in (?:google )?drive)\b|(?:google )?drive taslağı oluştur|drive'a taslak kaydet/.test(
           phrase
         )
       ) {
-        enabled.push("calendarReadEvents");
+        enabled.push("driveCreateDraftDoc");
+      }
+
+      // When the signed-in owner has Google connected and healthy, ALWAYS offer
+      // Gmail read + draft and Calendar/Drive read tools regardless of phrasing.
+      if (options?.googleConnectedAndHealthy === true) {
+        enabled.push(
+          "gmailReadMessages",
+          "gmailCreateDraft",
+          "calendarReadEvents",
+          "driveReadFiles"
+        );
       }
     }
   }
@@ -510,17 +612,31 @@ export function selectActiveTools(
     ];
   }
 
-  // Untrusted connector reads (Gmail/Drive/Calendar/GitHub/cloudBrowse) never sit alongside state-changing tools in the same turn.
+  // Open-web headless browsing never sits alongside state-changing tools.
+  if (enabled.includes("cloudBrowseUrl")) {
+    return [
+      ...new Set(
+        enabled.filter((name) => !STATE_CHANGING_TOOLS.includes(name))
+      ),
+    ];
+  }
+
+  // Authenticated personal connector reads allow approval-gated unsent connector
+  // drafts (`needsApproval: true`, `hasUntrustedContext: true`), while excluding
+  // silent state mutations and VM/CLI execution tools.
   if (
     enabled.includes("gmailReadMessages") ||
     enabled.includes("driveReadFiles") ||
     enabled.includes("calendarReadEvents") ||
-    enabled.includes("githubReadPullRequests") ||
-    enabled.includes("cloudBrowseUrl")
+    enabled.includes("githubReadPullRequests")
   ) {
     return [
       ...new Set(
-        enabled.filter((name) => !STATE_CHANGING_TOOLS.includes(name))
+        enabled.filter(
+          (name) =>
+            !STATE_CHANGING_TOOLS.includes(name) ||
+            APPROVAL_GATED_CONNECTOR_DRAFT_TOOLS.has(name)
+        )
       ),
     ];
   }

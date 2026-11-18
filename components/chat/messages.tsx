@@ -3,7 +3,11 @@ import { ArrowDownIcon, RotateCcwIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useMessages } from "@/hooks/use-messages";
 import { safeModelError } from "@/lib/ai/context/errors";
-import { canRetryReply, interruptedReply } from "@/lib/ai/conversation-state";
+import {
+  canRetryReply,
+  hasNonRetryableToolExecution,
+  interruptedReply,
+} from "@/lib/ai/conversation-state";
 import type { Vote } from "@/lib/db/schema";
 import { textLocale } from "@/lib/fixtures";
 import type { MascotState } from "@/lib/mascot";
@@ -79,6 +83,12 @@ function PureMessages({
   const activeLocale = textLocale(lastUserText);
   const localCopy = getCopy(activeLocale);
   const interrupted = interruptedReply(lastMessage);
+  const hasPartialAssistantText =
+    lastMessage?.role === "assistant" &&
+    lastMessage.parts.some(
+      (p) => p.type === "text" && p.text.trim().length > 0
+    );
+  const hasBlockingTool = hasNonRetryableToolExecution(lastMessage);
   const showRetry =
     !isReadonly &&
     status !== "submitted" &&
@@ -86,7 +96,7 @@ function PureMessages({
     (canRetryReply(messages) ||
       (status === "error" &&
         lastMessage?.role === "assistant" &&
-        !lastMessage.parts.some((p) => p.type.startsWith("tool-"))));
+        !hasBlockingTool));
   // Existing state only: a tool part that has input but no output yet.
   const toolRunning =
     status === "streaming" &&
@@ -111,6 +121,13 @@ function PureMessages({
       text: interrupted.retryable
         ? localCopy.statusInterrupted
         : localCopy.interruptedAfterTool,
+      visible: true,
+    };
+  } else if (status === "error" && hasPartialAssistantText) {
+    replyStatus = {
+      text: hasBlockingTool
+        ? localCopy.interruptedAfterTool
+        : localCopy.statusInterrupted,
       visible: true,
     };
   } else if (status === "error") {
