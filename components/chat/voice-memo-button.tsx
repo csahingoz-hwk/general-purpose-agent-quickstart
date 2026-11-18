@@ -574,10 +574,12 @@ export function LiveVoiceButton({
         setPendingChatCardHint("Tap to review approval card in chat");
       }
       setMessages((prev) => {
+        const nextParts =
+          ev.parts && ev.parts.length > 0 ? ev.parts : [ev.toolPart];
         const nextMsg: ChatMessage = {
           id: ev.assistantMessageId,
           role: "assistant",
-          parts: [ev.toolPart as unknown as ChatMessage["parts"][number]],
+          parts: nextParts as unknown as ChatMessage["parts"],
           metadata: { createdAt: new Date().toISOString() },
         };
         if (placeholderId && prev.some((m) => m.id === placeholderId)) {

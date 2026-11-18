@@ -1,5 +1,6 @@
 "use client";
 import type { UseChatHelpers } from "@ai-sdk/react";
+import { isScreenHandoffPayload } from "@/lib/cloud-computer/screen-handoff";
 import type { Vote } from "@/lib/db/schema";
 import { readFixturePayload } from "@/lib/fixtures";
 import type { MascotState } from "@/lib/mascot";
@@ -41,6 +42,7 @@ import { OutboundDraftCard } from "./outbound-draft-card";
 import { PreviewAttachment } from "./preview-attachment";
 import { QuestionCard } from "./question-card";
 import { SavedMemoryCard } from "./saved-memory-card";
+import { ScreenHandoffCard } from "./screen-handoff-card";
 import {
   type AgentLoopStepItem,
   AgentLoopStepStrip,
@@ -716,6 +718,26 @@ const PurePreviewMessage = ({
             key={toolCallId}
             locale={locale}
             output={output as Record<string, unknown>}
+          />
+        );
+      }
+
+      if (state === "output-available" && isScreenHandoffPayload(output)) {
+        return (
+          <ScreenHandoffCard
+            isReadonly={isReadonly}
+            key={toolCallId}
+            locale={locale}
+            onRespond={(decision) => {
+              if (decision === "im_here" && onSelectQuestionOption) {
+                onSelectQuestionOption(
+                  locale === "tr"
+                    ? "Bulut Bilgisayar ekranındayım, devam edebilirsin."
+                    : "I'm on the Cloud Computer screen — go ahead and continue."
+                );
+              }
+            }}
+            payload={output}
           />
         );
       }

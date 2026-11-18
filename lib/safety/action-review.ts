@@ -19,6 +19,7 @@ const READ_ONLY_TOOLS = new Set([
   "listMySchedules",
   "recallMemories",
   "askUserQuestion",
+  "requestScreenHandoff",
   "webSearch",
   "gmailReadMessages",
   "driveReadFiles",

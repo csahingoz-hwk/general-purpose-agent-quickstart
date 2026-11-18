@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
+import {
+  type CloudComputerLifecycleStore,
+  resolveCloudLifecycleStore,
+} from "@/lib/cloud-computer/lifecycle";
 import { computeNextRunAt } from "@/lib/cron/cron-utils";
 import type {
   BackgroundTaskRecord,
@@ -514,6 +518,7 @@ export function createPostgresWorkerAdapter(
 
 export class QueueWorkerEngine {
   private readonly adapter: WorkerQueueAdapter;
+  private readonly cloudLifecycle?: CloudComputerLifecycleStore;
   private readonly logger?: RotatingFileLogger;
   private readonly rssCapMb: number;
   private readonly heapCapMb: number;
@@ -533,6 +538,7 @@ export class QueueWorkerEngine {
 
   constructor(opts: {
     adapter: WorkerQueueAdapter;
+    cloudLifecycle?: CloudComputerLifecycleStore;
     logger?: RotatingFileLogger;
     rssCapMb?: number;
     heapCapMb?: number;
@@ -541,6 +547,7 @@ export class QueueWorkerEngine {
     readMemory?: () => MemorySample;
   }) {
     this.adapter = opts.adapter;
+    this.cloudLifecycle = opts.cloudLifecycle;
     this.logger = opts.logger;
     this.rssCapMb = opts.rssCapMb ?? DEFAULT_TARGET_RSS_CAP_MB;
     this.heapCapMb = opts.heapCapMb ?? DEFAULT_HEAP_CAP_MB;
@@ -566,6 +573,12 @@ export class QueueWorkerEngine {
       now,
       staleAfterMs: this.staleRunningMs,
     });
+
+    if (this.cloudLifecycle || process.env.POSTGRES_URL?.trim()) {
+      await resolveCloudLifecycleStore(this.cloudLifecycle)
+        .sleepIdleSessions({ now })
+        .catch(() => null);
+    }
 
     const enqueuedRoutines = await this.adapter.claimDueRoutinesAndEnqueue({
       now,

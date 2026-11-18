@@ -8,6 +8,14 @@ import {
   cloudWriteWorkspaceFile,
   resolveSafeWorkspacePath,
 } from "@/lib/cloud-computer/client";
+import {
+  type CloudComputerLifecycleStore,
+  resolveCloudLifecycleStore,
+} from "@/lib/cloud-computer/lifecycle";
+import {
+  buildScreenHandoffPayload,
+  detectScreenHandoffChallenge,
+} from "@/lib/cloud-computer/screen-handoff";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import {
   type AllowedAttachmentMediaType,
@@ -43,6 +51,7 @@ export function createCloudComputerTools(opts: {
   userId: string;
   hasUntrustedContext?: boolean;
   fileStore?: PrivateFileStore;
+  lifecycleStore?: CloudComputerLifecycleStore;
   relayUrl?: string;
   hmacSecret?: string;
   signingSecret?: string;
@@ -57,10 +66,11 @@ export function createCloudComputerTools(opts: {
     fetchImpl,
   } = opts;
   const fileStore = opts.fileStore ?? getDefaultPrivateFileStore();
+  const lifecycle = resolveCloudLifecycleStore(opts.lifecycleStore);
 
   const cloudExec = tool({
     description:
-      "Run a shell command (bash, git, python3, node, pnpm, curl) on the assistant's persistent sandboxed Linux Cloud Computer (/workspace). Automatically wakes the VM if suspended. Destructive or outbound push commands pause for approval.",
+      "Run a shell command (bash, git, python3, node, pnpm, curl) on the assistant's persistent sandboxed Linux Cloud Computer (/workspace). Automatically wakes the VM if sleeping due to inactivity. Destructive or outbound push commands pause for approval.",
     inputSchema: z.object({
       command: z
         .string()
@@ -110,6 +120,9 @@ export function createCloudComputerTools(opts: {
       }
 
       try {
+        const wake = await lifecycle
+          .ensureAwakeForTask({ userId })
+          .catch(() => null);
         const res = await cloudRunExec({
           command,
           cwd,
@@ -118,6 +131,7 @@ export function createCloudComputerTools(opts: {
           hmacSecret,
           fetchImpl,
         });
+        await lifecycle.recordActivity({ userId }).catch(() => null);
         return {
           status: res.exitCode === 0 ? ("ok" as const) : ("failed" as const),
           command,
@@ -126,7 +140,10 @@ export function createCloudComputerTools(opts: {
           stdout: res.stdout.slice(0, 8000),
           stderr: res.stderr.slice(0, 4000),
           durationMs: res.durationMs,
-          vmWakeMs: res.vmWakeMs,
+          vmWakeMs:
+            res.vmWakeMs ??
+            (wake?.wokeFromSleep ? wake.wakeDurationMs : undefined),
+          wokeFromSleep: wake?.wokeFromSleep ?? false,
         };
       } catch (err) {
         return {
@@ -164,6 +181,9 @@ export function createCloudComputerTools(opts: {
         };
       }
       try {
+        const wake = await lifecycle
+          .ensureAwakeForTask({ userId })
+          .catch(() => null);
         const safePath = resolveSafeWorkspacePath(rawPath);
         const res = await cloudWriteWorkspaceFile({
           path: safePath,
@@ -172,10 +192,12 @@ export function createCloudComputerTools(opts: {
           hmacSecret,
           fetchImpl,
         });
+        await lifecycle.recordActivity({ userId }).catch(() => null);
         return {
           status: "ok" as const,
           path: res.path,
           bytesWritten: res.bytesWritten,
+          wokeFromSleep: wake?.wokeFromSleep ?? false,
         };
       } catch (err) {
         return {
@@ -200,6 +222,7 @@ export function createCloudComputerTools(opts: {
     }),
     execute: async ({ path: rawPath }) => {
       try {
+        await lifecycle.ensureAwakeForTask({ userId }).catch(() => null);
         const safePath = resolveSafeWorkspacePath(rawPath);
         const read = await cloudReadWorkspaceFile({
           path: safePath,
@@ -207,6 +230,7 @@ export function createCloudComputerTools(opts: {
           hmacSecret,
           fetchImpl,
         });
+        await lifecycle.recordActivity({ userId }).catch(() => null);
         const bytes = new Uint8Array(Buffer.from(read.base64, "base64"));
         const safeName = sanitizeAttachmentFilename(safePath);
         const mediaType = inferExportMediaType(safeName);
@@ -260,13 +284,16 @@ export function createCloudComputerTools(opts: {
 
   const cloudBrowseUrl = tool({
     description:
-      "Open a public web page in headless Chromium on the Cloud Computer (uses zero Mac mini RAM), extract readable page content inside an untrusted-content fence, and optionally attach a PNG screenshot.",
+      "Open a public web page in headless Chromium on the Cloud Computer, extract readable page content inside an untrusted-content fence, and optionally attach a PNG screenshot. If the page requires login, 2FA, or human verification (CAPTCHA), automatically returns a Screen Handoff card ('I'm here / Not now') — never asks for passwords in chat.",
     inputSchema: z.object({
       url: z.string().trim().min(4).max(1024),
       captureScreenshot: z.boolean().default(false).optional(),
     }),
     execute: async ({ url, captureScreenshot = false }) => {
       try {
+        const wake = await lifecycle
+          .ensureAwakeForTask({ userId })
+          .catch(() => null);
         const res = await cloudBrowsePublicUrl({
           url,
           captureScreenshot,
@@ -274,6 +301,20 @@ export function createCloudComputerTools(opts: {
           hmacSecret,
           fetchImpl,
         });
+        await lifecycle.recordActivity({ userId }).catch(() => null);
+
+        const challenge = detectScreenHandoffChallenge({
+          url: res.url,
+          title: res.title,
+          text: res.fencedText,
+        });
+        if (challenge) {
+          return buildScreenHandoffPayload({
+            reason: challenge,
+            url: res.url,
+          });
+        }
+
         let screenshotUrl: string | undefined;
         if (res.screenshotBase64) {
           const pngBytes = new Uint8Array(
@@ -301,6 +342,7 @@ export function createCloudComputerTools(opts: {
           url: res.url,
           title: res.title,
           content: res.fencedText,
+          wokeFromSleep: wake?.wokeFromSleep ?? false,
           ...(screenshotUrl ? { screenshotUrl } : {}),
         };
       } catch (err) {
@@ -334,6 +376,9 @@ export function createCloudComputerTools(opts: {
         };
       }
       try {
+        const wake = await lifecycle
+          .ensureAwakeForTask({ userId })
+          .catch(() => null);
         const safePath = resolveSafeWorkspacePath(rawPath);
         const read = await cloudReadWorkspaceFile({
           path: safePath,
@@ -341,6 +386,7 @@ export function createCloudComputerTools(opts: {
           hmacSecret,
           fetchImpl,
         });
+        await lifecycle.recordActivity({ userId }).catch(() => null);
         const text = Buffer.from(read.base64, "base64")
           .toString("utf8")
           .slice(0, 16_000);
@@ -349,6 +395,7 @@ export function createCloudComputerTools(opts: {
           path: read.path,
           sizeBytes: read.sizeBytes,
           content: text,
+          wokeFromSleep: wake?.wokeFromSleep ?? false,
         };
       } catch (err) {
         return {
@@ -360,11 +407,30 @@ export function createCloudComputerTools(opts: {
     },
   });
 
+  const requestScreenHandoff = tool({
+    description:
+      "Show an 'I'm here / Not now' Screen Handoff card when the Cloud Computer needs the owner directly on the screen (for account login, 2FA/OTP verification, or CAPTCHA/human verification). NEVER ask the owner to type passwords, PINs, or 2FA codes in chat.",
+    inputSchema: z.object({
+      reason: z.enum(["login", "two_factor", "captcha"]),
+      serviceName: z.string().trim().min(1).max(120),
+      url: z.string().trim().url().max(1024).optional(),
+    }),
+    execute: ({ reason, serviceName, url }) =>
+      Promise.resolve(
+        buildScreenHandoffPayload({
+          reason,
+          serviceName,
+          url,
+        })
+      ),
+  });
+
   return {
     cloudExec,
     cloudWriteFile,
     cloudReadFile,
     cloudExportFileToChat,
     cloudBrowseUrl,
+    requestScreenHandoff,
   };
 }

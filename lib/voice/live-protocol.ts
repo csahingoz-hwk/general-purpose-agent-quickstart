@@ -45,6 +45,23 @@ export const APPROVAL_REQUIRED_VOICE_TOOLS = new Set<string>([
 export const LIVE_VOICE_TOOL_DECLARATIONS: readonly LiveToolDeclaration[] = [
   {
     type: "function",
+    name: "handOffToTextAgent",
+    description:
+      "Hand real personal work (checking Gmail inbox, finding an email and drafting a reply, reading or creating Calendar events, Drive lookups, or multi-step operator requests) to the shared text agent so it runs the exact same tools, memory, and approval rules, places any cards in chat, and returns a concise spoken summary for you to read aloud.",
+    parameters: {
+      type: "object",
+      properties: {
+        request: {
+          type: "string",
+          description:
+            "The owner's full natural-language request in their spoken language (Turkish or English).",
+        },
+      },
+      required: ["request"],
+    },
+  },
+  {
+    type: "function",
     name: "gmailReadMessages",
     description:
       "Read recent Gmail emails from the owner's connected Google account (unread inbox, messages from a person, or search query).",
@@ -421,6 +438,7 @@ export const LIVE_VOICE_TOOL_DECLARATIONS: readonly LiveToolDeclaration[] = [
 ];
 
 const FILLER_EN: Record<string, string> = {
+  handOffToTextAgent: "Working on that with your assistant…",
   gmailReadMessages: "Checking your inbox…",
   calendarReadEvents: "Checking your calendar…",
   driveReadFiles: "Searching your Google Drive…",
@@ -448,6 +466,7 @@ const FILLER_EN: Record<string, string> = {
 };
 
 const FILLER_TR: Record<string, string> = {
+  handOffToTextAgent: "Asistanla kontrol ediyorum…",
   gmailReadMessages: "Gelen kutuna bakıyorum…",
   calendarReadEvents: "Takvimine bakıyorum…",
   driveReadFiles: "Google Drive'da arıyorum…",

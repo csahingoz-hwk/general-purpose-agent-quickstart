@@ -46,6 +46,7 @@ export const AVAILABLE_CHAT_TOOLS = [
   "cloudReadFile",
   "cloudExportFileToChat",
   "cloudBrowseUrl",
+  "requestScreenHandoff",
   "macExec",
   "macRunAgentCli",
 ] as const;
@@ -106,6 +107,9 @@ const CLOUD_COMPUTER_PATTERN =
 
 const CLOUD_BROWSE_PATTERN =
   /\b(headless\s+(?:browser|chromium)|cloud\s+browser|scrape\s+https?:\/\/|open\s+https?:\/\/\S+\s+in\s+(?:the\s+)?browser|screenshot\s+of\s+https?:\/\/)\b|bulut\s+tarayıcı/iu;
+
+const SCREEN_HANDOFF_PATTERN =
+  /\b(screen\s+handoff|log\s*(?:me\s+)?in\s+on\s+(?:the\s+)?cloud|sign\s+in\s+on\s+(?:the\s+)?cloud|2fa\s+on\s+(?:the\s+)?cloud|captcha\s+on\s+(?:the\s+)?cloud|cloud\s+screen\s+login)\b|bulut\s+ekran\p{L}*|ekranda\s+giriş/iu;
 
 /** Tools that change stored state; never offered in a turn that reads open-web content. */
 const STATE_CHANGING_TOOLS: readonly ChatToolName[] = [
@@ -402,6 +406,7 @@ function hasMatchedLocalOrPersonalIntent(phrase: string): boolean {
     MAC_BRIDGE_PATTERN.test(phrase) ||
     CLOUD_COMPUTER_PATTERN.test(phrase) ||
     CLOUD_BROWSE_PATTERN.test(phrase) ||
+    SCREEN_HANDOFF_PATTERN.test(phrase) ||
     DOCUMENT_PATTERN.test(phrase) ||
     hasPersonalEmailReadIntent(phrase) ||
     hasPersonalEmailDraftIntent(phrase) ||
@@ -750,6 +755,10 @@ export function selectToolsWithRanking(
     }
   }
 
+  if (canPersonalize && SCREEN_HANDOFF_PATTERN.test(phrase)) {
+    enabled.push("requestScreenHandoff");
+    intentOnly.push("requestScreenHandoff");
+  }
   if (canPersonalize && CLOUD_BROWSE_PATTERN.test(phrase)) {
     enabled.push("cloudBrowseUrl");
     intentOnly.push("cloudBrowseUrl");
