@@ -57,6 +57,21 @@ export const BUILT_IN_SKILLS: readonly SkillItem[] = [
     builtIn: true,
     updatedAt: "2026-11-16T00:00:00.000Z",
   },
+  {
+    id: "builtin-firecrawl",
+    slug: "firecrawl",
+    name: "Firecrawl Web Research & Scraping",
+    description:
+      "Playbook for server-side web search vs URL-to-Markdown scrape vs site map/crawl, always citing sources with publication dates.",
+    instructions: [
+      "1. When to Search (`firecrawlSearch` / `webSearch`): Use search first for open-ended questions, breaking news, prices, or multi-source comparisons when you do not have an exact target URL yet.",
+      "2. When to Scrape (`firecrawlScrape`): Use scrape when the user gives a specific URL or after search/map identifies 1–3 authoritative pages whose full clean Markdown body, tables, or release notes you need to read.",
+      "3. When to Map or Crawl (`firecrawlCrawlMap`): Start with `mode: 'map'` to quickly list subpages of a documentation or news domain, then `firecrawlScrape` the best 1–3 URLs; use `mode: 'crawl'` (bounded <=8 pages) only when synthesizing a multi-page docs section.",
+      "4. Mandatory Source & Date Citations: Every factual claim or news item MUST cite its clickable `[Source Title](https://...)` URL AND its publication/retrieval date (`YYYY-MM-DD`). Never invent headlines, dates, or URLs. If `FIRECRAWL_API_KEY` is not connected, state plainly that Firecrawl is not connected yet and point to `/setup#setup-firecrawl` (`https://www.firecrawl.dev/app/api-keys`).",
+    ].join("\n"),
+    builtIn: true,
+    updatedAt: "2026-11-18T00:00:00.000Z",
+  },
 ];
 
 export interface SkillStore {

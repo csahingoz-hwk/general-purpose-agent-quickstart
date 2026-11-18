@@ -4,6 +4,11 @@ import {
   isGithubConnectorEnabled,
 } from "@/lib/connectors/calendar-and-github";
 import {
+  FIRECRAWL_KEY_CREATE_URL,
+  FIRECRAWL_SETUP_HREF,
+  isFirecrawlConfigured,
+} from "@/lib/connectors/firecrawl";
+import {
   type GoogleWorkspaceHealthResult,
   getCachedGoogleWorkspaceHealth,
   probeGoogleWorkspaceApiHealth,
@@ -34,6 +39,7 @@ export type CapabilityId =
   | "calendar"
   | "drive"
   | "github"
+  | "firecrawl"
   | "mac_bridge"
   | "cloud_computer"
   | "voice"
@@ -79,6 +85,8 @@ export type BuildCapabilityManifestInput = {
   githubConnectorEnabled?: boolean;
   githubConnected: boolean;
   githubErrorReason?: string;
+  firecrawlConnected?: boolean;
+  firecrawlErrorReason?: string;
   macBridgeConnected: boolean;
   macBridgeErrorReason?: string;
   cloudComputerConnected: boolean;
@@ -269,6 +277,38 @@ export function buildCapabilityManifestFromStatus(
               : "GitHub connector is disabled in server settings",
             setupHref: "/setup#setup-github",
             tools: ["githubReadPullRequests", "githubCreateDraftReview"],
+          },
+    input.firecrawlErrorReason
+      ? {
+          id: "firecrawl",
+          label: "Firecrawl Web Search, Scrape & Site Map",
+          category: "connector",
+          state: "error",
+          reason: input.firecrawlErrorReason,
+          setupHref: FIRECRAWL_SETUP_HREF,
+          connectHref: FIRECRAWL_KEY_CREATE_URL,
+          retryable: true,
+          tools: ["firecrawlSearch", "firecrawlScrape", "firecrawlCrawlMap"],
+        }
+      : input.firecrawlConnected
+        ? {
+            id: "firecrawl",
+            label: "Firecrawl Web Search, Scrape & Site Map",
+            category: "connector",
+            state: "connected_and_healthy",
+            setupHref: FIRECRAWL_SETUP_HREF,
+            tools: ["firecrawlSearch", "firecrawlScrape", "firecrawlCrawlMap"],
+          }
+        : {
+            id: "firecrawl",
+            label: "Firecrawl Web Search, Scrape & Site Map",
+            category: "connector",
+            state: "not_connected",
+            reason:
+              "FIRECRAWL_API_KEY is not configured in Vercel environment variables yet",
+            setupHref: FIRECRAWL_SETUP_HREF,
+            connectHref: FIRECRAWL_KEY_CREATE_URL,
+            tools: ["firecrawlSearch", "firecrawlScrape", "firecrawlCrawlMap"],
           },
     input.macBridgeErrorReason
       ? {
@@ -675,6 +715,7 @@ export async function resolveLiveCapabilityManifest(opts: {
   const cloudComputerConnected = isCloudComputerConfigured();
   const copilotTokenReady = isCopilotTokenConfigured();
   const macBridgeConnected = isMacBridgeConfigured();
+  const firecrawlConnected = isFirecrawlConfigured();
 
   if (opts.isGuest) {
     return buildCapabilityManifestFromStatus({
@@ -683,6 +724,7 @@ export async function resolveLiveCapabilityManifest(opts: {
       googleConnected: false,
       githubConnectorEnabled: false,
       githubConnected: false,
+      firecrawlConnected: false,
       macBridgeConnected: false,
       cloudComputerConnected: false,
       voiceReady: false,
@@ -768,6 +810,7 @@ export async function resolveLiveCapabilityManifest(opts: {
     googleHealth,
     githubConnectorEnabled,
     githubConnected,
+    firecrawlConnected,
     macBridgeConnected,
     cloudComputerConnected,
     voiceReady:

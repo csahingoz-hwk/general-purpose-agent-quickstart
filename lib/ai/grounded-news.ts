@@ -1,3 +1,7 @@
+import {
+  isFirecrawlConfigured,
+  runFirecrawlSearch,
+} from "@/lib/connectors/firecrawl";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import { fenceUntrustedContent } from "@/lib/safety/untrusted-content";
 import { HYDROGEN } from "./routing/catalog";
@@ -266,6 +270,7 @@ export async function fetchGroundedNewsBriefing(
     fetcher?: typeof fetch;
     getAccessToken?: () => Promise<string>;
     projectId?: string;
+    firecrawlApiKey?: string | null;
     now?: Date;
   }
 ): Promise<GroundedNewsBriefingResult> {
@@ -282,6 +287,46 @@ export async function fetchGroundedNewsBriefing(
 
   if (!query || containsRestrictedWorkData(query)) {
     return empty;
+  }
+
+  // Prefer Firecrawl server-side search with dated Markdown excerpts when configured,
+  // falling back seamlessly to Vertex Google Search grounding (`gemini-4-hydrogen`).
+  if (isFirecrawlConfigured(deps?.firecrawlApiKey)) {
+    const fc = await runFirecrawlSearch({
+      query,
+      limit: 6,
+      apiKey: deps?.firecrawlApiKey,
+      fetchImpl: deps?.fetcher,
+    }).catch(() => null);
+    if (fc && fc.status === "ok" && fc.results.length > 0) {
+      const sources: GroundedNewsSource[] = fc.results.map((item) => ({
+        title: item.title,
+        url: item.url,
+      }));
+      const summaryLines = fc.results.map(
+        (item, idx) =>
+          `${idx + 1}. [${item.publishedDate ?? nowIso}] ${item.title} (${item.url})\n${item.description || item.fencedMarkdown.slice(0, 320)}`
+      );
+      const summaryText = summaryLines.join("\n\n");
+      const rawPack = [
+        `Verified Firecrawl Search date: ${nowIso}`,
+        `Grounded findings:\n${summaryText}`,
+        `Verified source links (use ONLY these real URLs as clickable source links):\n${sources.map((s, idx) => `${idx + 1}. ${s.title} — ${s.url}`).join("\n")}`,
+      ].join("\n\n");
+      const fenced = fenceUntrustedContent({
+        text: rawPack,
+        source: "grounded_firecrawl_search",
+        maxChars: 12_000,
+      });
+      return {
+        ok: true,
+        query,
+        fetchedAtIso: nowIso,
+        summaryText,
+        sources,
+        promptContext: fenced.fencedText,
+      };
+    }
   }
 
   const projectId = deps?.projectId ?? getVertexProjectId();
