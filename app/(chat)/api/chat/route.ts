@@ -75,6 +75,8 @@ import { createDelegateTaskTool } from "@/lib/ai/tools/delegate-task";
 import { demoInbox } from "@/lib/ai/tools/demo-inbox";
 import { draftOutboundMessage } from "@/lib/ai/tools/draft-outbound";
 import { editDocument } from "@/lib/ai/tools/edit-document";
+import { createExcalidrawDiagramTool } from "@/lib/ai/tools/excalidraw-diagram";
+import { createFirecrawlTools } from "@/lib/ai/tools/firecrawl";
 import { createMediaTools } from "@/lib/ai/tools/generate-media";
 import { getCurrentTime } from "@/lib/ai/tools/get-current-time";
 import { getFixtures } from "@/lib/ai/tools/get-fixtures";
@@ -91,6 +93,7 @@ import { scheduleTask } from "@/lib/ai/tools/schedule-task";
 import { setHomeLocation } from "@/lib/ai/tools/set-home-location";
 import { setSoul } from "@/lib/ai/tools/set-soul";
 import { updateDocument } from "@/lib/ai/tools/update-document";
+import { createVisualStudioTools } from "@/lib/ai/tools/visual-studio";
 import { webSearch } from "@/lib/ai/tools/web-search";
 import {
   composeTeammateSoul,
@@ -100,6 +103,7 @@ import {
 } from "@/lib/bots/roster";
 import { isCloudComputerConfigured } from "@/lib/cloud-computer/client";
 import { isGithubConnectorEnabled } from "@/lib/connectors/calendar-and-github";
+import { isFirecrawlConfigured } from "@/lib/connectors/firecrawl";
 import { isGoogleConnectorsEnabled } from "@/lib/connectors/google-vault-auth";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import { isProductionEnvironment } from "@/lib/constants";
@@ -139,6 +143,7 @@ import {
   resolveApprovalPreferencesStore,
 } from "@/lib/safety/approval-preferences";
 import {
+  BUILT_IN_SKILLS,
   createPostgresSkillStore,
   extractRequestedSkillSlug,
   formatSkillPromptBlock,
@@ -597,6 +602,9 @@ export async function POST(request: Request) {
       : storedFacts;
 
     const effectiveSoul = composeTeammateSoul(soul, activeTeammate);
+    const hasFirecrawlIntent = intentMatchedTools.some((name) =>
+      name.startsWith("firecrawl")
+    );
     const requestedSkillSlug =
       extractRequestedSkillSlug(finalUserText) ??
       activeTeammate?.skillSlugs[0] ??
@@ -608,7 +616,9 @@ export async function POST(request: Request) {
             .listSkills(session.user.id)
             .catch(() => []))
         ).find((s) => s.slug === requestedSkillSlug) ?? null)
-      : null;
+      : hasFirecrawlIntent
+        ? (BUILT_IN_SKILLS.find((s) => s.slug === "firecrawl") ?? null)
+        : null;
     const rawBaseContext = contextBlock({
       now: requestNow,
       timeZone: requestTimeZone ?? homeLocation?.timeZone ?? null,
@@ -669,6 +679,12 @@ export async function POST(request: Request) {
         "cloudBrowseUrl",
         "macExec",
         "macRunAgentCli",
+        "firecrawlSearch",
+        "firecrawlScrape",
+        "firecrawlCrawlMap",
+        "buildHtmlPageOrDashboard",
+        "createExcalidrawDiagram",
+        "generateInfographic",
       ].includes(name)
     );
     const hasPriorAssistantTurn = uiMessages.some(
@@ -697,6 +713,7 @@ export async function POST(request: Request) {
                   ?.state === "connected_and_healthy" ||
                 (isGithubConnectorEnabled() &&
                   Boolean(process.env.GITHUB_CONNECTOR_PAT?.trim())),
+              firecrawlConnected: isFirecrawlConfigured(),
               memoryEnabled: isMemoryToolsEnabled(),
               routinesEnabled: isRoutinesEnabled(),
               cloudComputerConnected: isCloudComputerConfigured(),
@@ -867,11 +884,17 @@ export async function POST(request: Request) {
                         (p.type as string) === "tool-driveReadFiles" ||
                         (p.type as string) === "tool-calendarReadEvents" ||
                         (p.type as string) === "tool-githubReadPullRequests" ||
-                        (p.type as string) === "tool-cloudBrowseUrl"
+                        (p.type as string) === "tool-cloudBrowseUrl" ||
+                        (p.type as string) === "tool-firecrawlSearch" ||
+                        (p.type as string) === "tool-firecrawlScrape" ||
+                        (p.type as string) === "tool-firecrawlCrawlMap"
                     )
                   );
                   const hasUntrusted =
                     intentMatchedTools.includes("webSearch") ||
+                    intentMatchedTools.includes("firecrawlSearch") ||
+                    intentMatchedTools.includes("firecrawlScrape") ||
+                    intentMatchedTools.includes("firecrawlCrawlMap") ||
                     intentMatchedTools.includes("gmailReadMessages") ||
                     intentMatchedTools.includes("driveReadFiles") ||
                     intentMatchedTools.includes("calendarReadEvents") ||
@@ -905,6 +928,12 @@ export async function POST(request: Request) {
                       userId: session.user.id,
                       hasUntrustedContext: hasUntrusted,
                     }),
+                    ...createFirecrawlTools(),
+                    ...createVisualStudioTools({
+                      userId: session.user.id,
+                      ledger: execution.ledger,
+                    }),
+                    createExcalidrawDiagram: createExcalidrawDiagramTool(),
                     ...(isRoutinesEnabled()
                       ? { scheduleTask: scheduleTask({ session }) }
                       : {}),
@@ -951,6 +980,9 @@ export async function POST(request: Request) {
           // Only reviewed local tools are available. External integrations stay disconnected.
           const turnHasUntrustedContext =
             intentMatchedTools.includes("webSearch") ||
+            intentMatchedTools.includes("firecrawlSearch") ||
+            intentMatchedTools.includes("firecrawlScrape") ||
+            intentMatchedTools.includes("firecrawlCrawlMap") ||
             intentMatchedTools.includes("gmailReadMessages") ||
             intentMatchedTools.includes("driveReadFiles") ||
             intentMatchedTools.includes("calendarReadEvents") ||
@@ -964,7 +996,10 @@ export async function POST(request: Request) {
                   (p.type as string) === "tool-driveReadFiles" ||
                   (p.type as string) === "tool-calendarReadEvents" ||
                   (p.type as string) === "tool-githubReadPullRequests" ||
-                  (p.type as string) === "tool-cloudBrowseUrl"
+                  (p.type as string) === "tool-cloudBrowseUrl" ||
+                  (p.type as string) === "tool-firecrawlSearch" ||
+                  (p.type as string) === "tool-firecrawlScrape" ||
+                  (p.type as string) === "tool-firecrawlCrawlMap"
               )
             );
           const tools =
@@ -1035,6 +1070,12 @@ export async function POST(request: Request) {
             cancelSchedule: "Cancelled routine",
             getWeather: "Fetched weather forecast",
             getFixtures: "Checked match fixtures",
+            firecrawlSearch: "Searched web via Firecrawl",
+            firecrawlScrape: "Scraped page to Markdown via Firecrawl",
+            firecrawlCrawlMap: "Mapped/crawled site via Firecrawl",
+            buildHtmlPageOrDashboard: "Built HTML page / ECharts dashboard",
+            createExcalidrawDiagram: "Created interactive Excalidraw diagram",
+            generateInfographic: "Rendered infographic PNG on Cloud Computer",
           };
           const result = streamText({
             model: getLanguageModel(chatModel),

@@ -49,6 +49,12 @@ export const AVAILABLE_CHAT_TOOLS = [
   "requestScreenHandoff",
   "macExec",
   "macRunAgentCli",
+  "firecrawlSearch",
+  "firecrawlScrape",
+  "firecrawlCrawlMap",
+  "buildHtmlPageOrDashboard",
+  "createExcalidrawDiagram",
+  "generateInfographic",
 ] as const;
 
 export type ChatToolName = (typeof AVAILABLE_CHAT_TOOLS)[number];
@@ -111,6 +117,61 @@ const CLOUD_BROWSE_PATTERN =
 const SCREEN_HANDOFF_PATTERN =
   /\b(screen\s+handoff|log\s*(?:me\s+)?in\s+on\s+(?:the\s+)?cloud|sign\s+in\s+on\s+(?:the\s+)?cloud|2fa\s+on\s+(?:the\s+)?cloud|captcha\s+on\s+(?:the\s+)?cloud|cloud\s+screen\s+login)\b|bulut\s+ekran\p{L}*|ekranda\s+giriş/iu;
 
+const FIRECRAWL_INTENT_PATTERN =
+  /\bfirecrawl\b|\b(?:scrape|crawl|site\s*map|map\s+(?:the\s+)?(?:site|pages|urls|domain))\b.{0,80}https?:\/\/|https?:\/\/\S+.{0,60}\b(?:scrape|to\s+markdown|crawl|site\s*map)\b|\b(?:scrape|crawl)\s+(?:this\s+|the\s+)?(?:url|page|site|website|docs)\b|(?<![\p{L}])(?:sayfay[ıi]\s+kaz[ıi]\p{L}*|markdown['’]?a\s+çevir|site\s+haritas[ıi]\p{L}*|alt\s+sayfalar[ıi]\s+(?:listele|tara))(?![\p{L}])/iu;
+
+const VISUAL_CREATE_VERB_PATTERN =
+  /(?<![\p{L}])(?:draw|sketch|build|create|make|generate|design|render|produce|plot|write|çiz\p{L}*|oluştur\p{L}*|hazırla\p{L}*|yap\p{L}*|üret\p{L}*|tasarla\p{L}*)(?![\p{L}])/iu;
+
+const HTML_DASHBOARD_NOUN_PATTERN =
+  /\b(dashboard\w*|echarts|single[- ]file\s+html|html\s+(?:page|dashboard|report|briefing|card)\b)\b|(?<![\p{L}])(?:gösterge\s+paneli\p{L}*|veri\s+paneli\p{L}*|tek\s+dosya(?:lık)?\s+html|html\s+(?:sayfa\p{L}*|panel\p{L}*|rapor\p{L}*)|dashboard\p{L}*)(?![\p{L}])/iu;
+
+const EXCALIDRAW_DIAGRAM_NOUN_PATTERN =
+  /\b(excalidraw|diagram\w*|flowchart\w*|flow\s+chart\w*|sequence\s+diagram|architecture\s+diagram|system\s+diagram|er\s+diagram|org\s+chart|state\s+diagram|swimlane)\b|(?<![\p{L}])(?:diyagram\p{L}*|diagram\p{L}*|akış\s+şema\p{L}*|mimari\s+şema\p{L}*|organizasyon\s+şema\p{L}*|sistem\s+şema\p{L}*)(?![\p{L}])/iu;
+
+const INFOGRAPHIC_NOUN_PATTERN =
+  /\b(infographic\w*|info-graphic\w*)\b|(?<![\p{L}])(?:infografik\p{L}*|bilgi\s+grafi[ğg]\p{L}*)(?![\p{L}])/iu;
+
+function hasHtmlDashboardIntent(phrase: string): boolean {
+  if (SYNTHETIC_DEMO_PATTERN.test(phrase)) {
+    return false;
+  }
+  if (
+    /\becharts\b|\bsingle[- ]file\s+html\b|tek\s+dosya(?:lık)?\s+html/iu.test(
+      phrase
+    )
+  ) {
+    return true;
+  }
+  return (
+    HTML_DASHBOARD_NOUN_PATTERN.test(phrase) &&
+    VISUAL_CREATE_VERB_PATTERN.test(phrase)
+  );
+}
+
+function hasExcalidrawDiagramIntent(phrase: string): boolean {
+  if (SYNTHETIC_DEMO_PATTERN.test(phrase)) {
+    return false;
+  }
+  if (/\bexcalidraw\b/iu.test(phrase)) {
+    return true;
+  }
+  return (
+    EXCALIDRAW_DIAGRAM_NOUN_PATTERN.test(phrase) &&
+    VISUAL_CREATE_VERB_PATTERN.test(phrase)
+  );
+}
+
+function hasInfographicIntent(phrase: string): boolean {
+  if (SYNTHETIC_DEMO_PATTERN.test(phrase)) {
+    return false;
+  }
+  return (
+    INFOGRAPHIC_NOUN_PATTERN.test(phrase) &&
+    VISUAL_CREATE_VERB_PATTERN.test(phrase)
+  );
+}
+
 /** Tools that change stored state; never offered in a turn that reads open-web content. */
 const STATE_CHANGING_TOOLS: readonly ChatToolName[] = [
   "setHomeLocation",
@@ -135,6 +196,9 @@ const STATE_CHANGING_TOOLS: readonly ChatToolName[] = [
   "cloudWriteFile",
   "macExec",
   "macRunAgentCli",
+  "buildHtmlPageOrDashboard",
+  "createExcalidrawDiagram",
+  "generateInfographic",
 ];
 
 /**
@@ -325,7 +389,11 @@ function hasPersonalSelfQuestionIntent(phrase: string): boolean {
     SCHEDULE_CREATE_STEM_PATTERN.test(phrase) ||
     MAC_BRIDGE_PATTERN.test(phrase) ||
     CLOUD_COMPUTER_PATTERN.test(phrase) ||
-    CLOUD_BROWSE_PATTERN.test(phrase)
+    CLOUD_BROWSE_PATTERN.test(phrase) ||
+    FIRECRAWL_INTENT_PATTERN.test(phrase) ||
+    hasHtmlDashboardIntent(phrase) ||
+    hasExcalidrawDiagramIntent(phrase) ||
+    hasInfographicIntent(phrase)
   ) {
     return false;
   }
@@ -407,6 +475,10 @@ function hasMatchedLocalOrPersonalIntent(phrase: string): boolean {
     CLOUD_COMPUTER_PATTERN.test(phrase) ||
     CLOUD_BROWSE_PATTERN.test(phrase) ||
     SCREEN_HANDOFF_PATTERN.test(phrase) ||
+    FIRECRAWL_INTENT_PATTERN.test(phrase) ||
+    hasHtmlDashboardIntent(phrase) ||
+    hasExcalidrawDiagramIntent(phrase) ||
+    hasInfographicIntent(phrase) ||
     DOCUMENT_PATTERN.test(phrase) ||
     hasPersonalEmailReadIntent(phrase) ||
     hasPersonalEmailDraftIntent(phrase) ||
@@ -591,7 +663,14 @@ function appendConnectedManifestTools(
       (AVAILABLE_CHAT_TOOLS as readonly string[]).includes(name)
   );
   const ownerSelfService: ChatToolName[] = canPersonalize
-    ? ["setHomeLocation", "setSoul", "draftOutboundMessage"]
+    ? [
+        "setHomeLocation",
+        "setSoul",
+        "draftOutboundMessage",
+        "buildHtmlPageOrDashboard",
+        "createExcalidrawDiagram",
+        "generateInfographic",
+      ]
     : [];
   const combined = [
     ...rankedIntentTools,
@@ -752,6 +831,34 @@ export function selectToolsWithRanking(
     if (MAC_AGENT_CLI_PATTERN.test(phrase)) {
       enabled.push("macRunAgentCli");
       intentOnly.push("macRunAgentCli");
+    }
+  }
+
+  if (canPersonalize && FIRECRAWL_INTENT_PATTERN.test(phrase)) {
+    const orderedFirecrawl: ChatToolName[] =
+      /\b(crawl|site\s*map|map\s+(?:the\s+)?(?:site|pages|urls|domain))\b|site\s+haritas[ıi]|alt\s+sayfalar[ıi]/iu.test(
+        phrase
+      )
+        ? ["firecrawlCrawlMap", "firecrawlScrape", "firecrawlSearch"]
+        : /\b(scrape|to\s+markdown)\b|kaz[ıi]|markdown/iu.test(phrase)
+          ? ["firecrawlScrape", "firecrawlSearch", "firecrawlCrawlMap"]
+          : ["firecrawlSearch", "firecrawlScrape", "firecrawlCrawlMap"];
+    enabled.push(...orderedFirecrawl);
+    intentOnly.push(...orderedFirecrawl);
+  }
+
+  if (canPersonalize && !SYNTHETIC_DEMO_PATTERN.test(phrase)) {
+    if (hasInfographicIntent(phrase)) {
+      enabled.push("generateInfographic");
+      intentOnly.push("generateInfographic");
+    }
+    if (hasExcalidrawDiagramIntent(phrase)) {
+      enabled.push("createExcalidrawDiagram");
+      intentOnly.push("createExcalidrawDiagram");
+    }
+    if (hasHtmlDashboardIntent(phrase)) {
+      enabled.push("buildHtmlPageOrDashboard");
+      intentOnly.push("buildHtmlPageOrDashboard");
     }
   }
 

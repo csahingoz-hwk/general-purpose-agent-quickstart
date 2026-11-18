@@ -68,6 +68,9 @@ const READ_ONLY_FALLBACK_SAFE_TOOLS = new Set<string>([
   "getCurrentTime",
   "getFixtures",
   "webSearch",
+  "firecrawlSearch",
+  "firecrawlScrape",
+  "firecrawlCrawlMap",
 ]);
 
 function hasConsequentialToolInPrompt(

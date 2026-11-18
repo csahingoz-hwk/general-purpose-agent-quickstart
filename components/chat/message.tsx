@@ -30,8 +30,11 @@ import {
 import { useDataStream } from "./data-stream-provider";
 import { DocumentToolResult } from "./document";
 import { DocumentPreview } from "./document-preview";
+import { ExcalidrawCard, isExcalidrawPayload } from "./excalidraw-card";
 import { FictionalInboxCard } from "./fictional-inbox-card";
+import { FirecrawlCard } from "./firecrawl-card";
 import { FixtureCard } from "./fixture-card";
+import { InfographicCard, isInfographicPayload } from "./infographic-card";
 import { MacBridgeCard } from "./mac-bridge-card";
 import { useMascotPreference } from "./mascot-preference";
 import { isMediaPreviewPayload, MediaPreviewCard } from "./media-preview-card";
@@ -751,7 +754,8 @@ const PurePreviewMessage = ({
           toolName === "cloudWriteFile" ||
           toolName === "cloudReadFile" ||
           toolName === "cloudExportFileToChat" ||
-          toolName === "cloudBrowseUrl")
+          toolName === "cloudBrowseUrl" ||
+          toolName === "buildHtmlPageOrDashboard")
       ) {
         return (
           <CloudComputerCard
@@ -760,6 +764,44 @@ const PurePreviewMessage = ({
             output={output as Record<string, unknown>}
             toolName={toolName}
           />
+        );
+      }
+
+      if (
+        state === "output-available" &&
+        output &&
+        typeof output === "object" &&
+        (toolName === "firecrawlSearch" ||
+          toolName === "firecrawlScrape" ||
+          toolName === "firecrawlCrawlMap")
+      ) {
+        return (
+          <FirecrawlCard
+            key={toolCallId}
+            locale={locale}
+            output={output as Record<string, unknown>}
+            toolName={toolName}
+          />
+        );
+      }
+
+      if (
+        toolName === "createExcalidrawDiagram" &&
+        state === "output-available" &&
+        isExcalidrawPayload(output)
+      ) {
+        return (
+          <ExcalidrawCard key={toolCallId} locale={locale} payload={output} />
+        );
+      }
+
+      if (
+        toolName === "generateInfographic" &&
+        state === "output-available" &&
+        isInfographicPayload(output)
+      ) {
+        return (
+          <InfographicCard key={toolCallId} locale={locale} payload={output} />
         );
       }
 

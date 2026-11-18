@@ -8,12 +8,15 @@ import {
   resolveTaskStore,
 } from "@/lib/ai/tools/delegate-task";
 import { draftOutboundMessage } from "@/lib/ai/tools/draft-outbound";
+import { createExcalidrawDiagramTool } from "@/lib/ai/tools/excalidraw-diagram";
+import { createFirecrawlTools } from "@/lib/ai/tools/firecrawl";
 import { getCurrentTime } from "@/lib/ai/tools/get-current-time";
 import { getFixtures } from "@/lib/ai/tools/get-fixtures";
 import { getWeather } from "@/lib/ai/tools/get-weather";
 import { createGoogleConnectorTools } from "@/lib/ai/tools/google-connectors";
 import { createMacBridgeTools } from "@/lib/ai/tools/mac-bridge";
 import { createMemoryTools } from "@/lib/ai/tools/memory-tools";
+import { createVisualStudioTools } from "@/lib/ai/tools/visual-studio";
 import { webSearch } from "@/lib/ai/tools/web-search";
 import { isGithubConnectorEnabled } from "@/lib/connectors/calendar-and-github";
 import { isGoogleConnectorsEnabled } from "@/lib/connectors/google-vault-auth";
@@ -116,6 +119,12 @@ export function buildCoreSharedTools(opts: {
       hasUntrustedContext,
       fetchImpl,
     }),
+    ...createFirecrawlTools({ fetchImpl }),
+    ...createVisualStudioTools({
+      userId,
+      fetchImpl,
+    }),
+    createExcalidrawDiagram: createExcalidrawDiagramTool(),
     ...(isMemoryToolsEnabled()
       ? createMemoryTools({
           userId,
@@ -478,8 +487,9 @@ export async function executeSharedVoiceToolCall(opts: {
     typeof rawOutput === "object" &&
     (rawOutput as { status?: string }).status === "setup_required"
   ) {
+    const isFirecrawl = toolName.startsWith("firecrawl");
     const isGithub = toolName.startsWith("github");
-    const provider = isGithub ? "github" : "google";
+    const provider = isFirecrawl ? "firecrawl" : isGithub ? "github" : "google";
     const enrichedOutput = {
       ...(rawOutput as Record<string, unknown>),
       connectProvider: provider,
@@ -495,9 +505,11 @@ export async function executeSharedVoiceToolCall(opts: {
       voiceResult: {
         status: "setup_required",
         provider,
-        spokenInstruction: isGithub
-          ? "Tell the owner in ONE sentence that GitHub isn't connected yet and they can tap the Connect GitHub button you just placed in the chat. Never say 'I don't have access'."
-          : "Tell the owner in ONE sentence that Google isn't connected yet and they can tap the Connect Google button you just placed in the chat. Never say 'I don't have access'.",
+        spokenInstruction: isFirecrawl
+          ? "Tell the owner in ONE sentence that Firecrawl isn't connected yet and point them to the Setup checklist card you placed in the chat (/setup#setup-firecrawl)."
+          : isGithub
+            ? "Tell the owner in ONE sentence that GitHub isn't connected yet and they can tap the Connect GitHub button you just placed in the chat. Never say 'I don't have access'."
+            : "Tell the owner in ONE sentence that Google isn't connected yet and they can tap the Connect Google button you just placed in the chat. Never say 'I don't have access'.",
       },
     };
   }
