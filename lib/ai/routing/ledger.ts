@@ -84,7 +84,7 @@ export function createUsageLedger(
         usage?.outputTokens.reasoning ?? cost?.reasoning ?? null;
       const hasRealTokens =
         Boolean(cost) || (rawInput !== null && rawOutput !== null);
-      const estimatedUsd = settledEstimate(cost?.usd, extraUsd) ?? 0;
+      const estimatedUsd = settledEstimate(cost?.usd, extraUsd);
       const parts = id.split(":");
       const rawId =
         parts.length >= 2 && parts[1] ? parts[1] : crypto.randomUUID();
