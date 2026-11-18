@@ -64,9 +64,26 @@ export function applyApprovalResponses(
   editedDraft?: EditedDraftApproval
 ) {
   let count = 0;
+  let sawExpiredTarget = false;
   const messages = saved.map((message) => ({
     ...message,
     parts: message.parts.map((part) => {
+      if ("state" in part && part.state === "output-denied") {
+        const attemptedOnDenied = submitted
+          .find((m) => m.id === message.id)
+          ?.parts.find(
+            (p) =>
+              "toolCallId" in p &&
+              "toolCallId" in part &&
+              p.toolCallId === part.toolCallId &&
+              "state" in p &&
+              p.state === "approval-responded"
+          );
+        if (attemptedOnDenied) {
+          sawExpiredTarget = true;
+        }
+        return part;
+      }
       if (!("state" in part) || part.state !== "approval-requested") {
         return part;
       }
@@ -124,9 +141,138 @@ export function applyApprovalResponses(
     }),
   }));
   if (!count) {
+    if (sawExpiredTarget) {
+      throw new Error("approval_expired");
+    }
     throw new Error("invalid_approval_response");
   }
   return messages as ChatMessage[];
+}
+
+/**
+ * Item 7: When the user sends a new message while one or more tool approvals
+ * are still waiting (`state === "approval-requested"`), expire those pending
+ * approvals immediately (`state: "output-denied"`, `reason: "expired_by_new_message"`).
+ */
+export function expirePendingApprovalsOnNewUserTurn(
+  savedMessages: ChatMessage[]
+): {
+  messages: ChatMessage[];
+  expiredMessages: ChatMessage[];
+} {
+  const expiredMessages: ChatMessage[] = [];
+  const messages = savedMessages.map((message) => {
+    if (message.role !== "assistant") {
+      return message;
+    }
+    let changed = false;
+    const nextParts = message.parts.map((part) => {
+      if (
+        part.type.startsWith("tool-") &&
+        "state" in part &&
+        part.state === "approval-requested"
+      ) {
+        changed = true;
+        const existingApprovalId =
+          "approval" in part &&
+          part.approval &&
+          typeof part.approval === "object" &&
+          "id" in part.approval
+            ? String((part.approval as { id: unknown }).id)
+            : "expired";
+        return {
+          ...part,
+          state: "output-denied" as const,
+          approval: {
+            id: existingApprovalId,
+            approved: false,
+            reason: "expired_by_new_message",
+          },
+        } as unknown as ChatMessage["parts"][number];
+      }
+      return part;
+    });
+    if (!changed) {
+      return message;
+    }
+    const updatedMessage: ChatMessage = { ...message, parts: nextParts };
+    expiredMessages.push(updatedMessage);
+    return updatedMessage;
+  });
+
+  return { messages, expiredMessages };
+}
+
+/**
+ * Item 6: After a server restart/redeploy (when no live turn holds the chat lock),
+ * mark any mid-flight tool call (`input-streaming`, `input-available`, or
+ * `approval-responded` without an output) as interrupted so side-effecting
+ * actions (emails, drafts, commands) are NEVER replayed twice.
+ */
+export function markMidFlightToolsInterrupted(savedMessages: ChatMessage[]): {
+  messages: ChatMessage[];
+  interruptedMessages: ChatMessage[];
+} {
+  const interruptedMessages: ChatMessage[] = [];
+  const messages = savedMessages.map((message) => {
+    if (message.role !== "assistant") {
+      return message;
+    }
+    let hadMidFlight = false;
+    let hadSideEffectMidFlight = false;
+    const nextParts = message.parts.map((part) => {
+      if (!part.type.startsWith("tool-") || !("state" in part)) {
+        return part;
+      }
+      const isMidFlight =
+        part.state === "input-streaming" ||
+        part.state === "input-available" ||
+        part.state === "approval-responded";
+      if (!isMidFlight) {
+        return part;
+      }
+      hadMidFlight = true;
+      if (!SAFE_RETRY_READ_ONLY_TOOL_TYPES.has(String(part.type))) {
+        hadSideEffectMidFlight = true;
+      }
+      return {
+        ...part,
+        state: "output-error" as const,
+        errorText:
+          "Interrupted during server restart — mid-flight action was NOT replayed so nothing is sent twice.",
+      } as unknown as ChatMessage["parts"][number];
+    });
+
+    if (!hadMidFlight) {
+      return message;
+    }
+
+    const filteredParts = nextParts.filter(
+      (p) => p.type !== "data-reply-status" && p.type !== "data-turn-status"
+    );
+    const updatedMessage: ChatMessage = {
+      ...message,
+      parts: [
+        ...filteredParts,
+        {
+          type: "data-reply-status",
+          data: {
+            status: "interrupted",
+            retryable:
+              !hadSideEffectMidFlight &&
+              !hasNonRetryableToolExecution({
+                ...message,
+                parts: filteredParts,
+              }),
+          },
+        },
+      ],
+    };
+    interruptedMessages.push(updatedMessage);
+    return updatedMessage;
+  });
+
+  return { messages, interruptedMessages };
 }
 
 /** Sanitize tool failures too, and emit at most one fatal `error` chunk per turn. */

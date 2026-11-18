@@ -42,6 +42,7 @@ export type LiveToolDoneEvent = {
   name: string;
   assistantMessageId: string;
   toolPart: Record<string, unknown>;
+  parts?: Record<string, unknown>[];
   voiceResult: Record<string, unknown>;
   blocked: boolean;
 };
@@ -58,6 +59,7 @@ export type LiveEngineCallbacks = {
 };
 
 const CLIENT_FILLERS_EN: Record<string, string> = {
+  handOffToTextAgent: "Working with your assistant…",
   gmailReadMessages: "Checking your inbox…",
   calendarReadEvents: "Checking your calendar…",
   driveReadFiles: "Searching Google Drive…",
@@ -79,6 +81,7 @@ const CLIENT_FILLERS_EN: Record<string, string> = {
 };
 
 const CLIENT_FILLERS_TR: Record<string, string> = {
+  handOffToTextAgent: "Asistanla kontrol ediyorum…",
   gmailReadMessages: "Gelen kutuna bakıyorum…",
   calendarReadEvents: "Takvimine bakıyorum…",
   driveReadFiles: "Drive'da arıyorum…",
@@ -800,6 +803,7 @@ export class LiveVoiceEngine {
       const data = (await res.json().catch(() => ({}))) as {
         assistantMessageId?: string;
         toolPart?: Record<string, unknown>;
+        parts?: Record<string, unknown>[];
         voiceResult?: Record<string, unknown>;
         blocked?: boolean;
       };
@@ -820,6 +824,7 @@ export class LiveVoiceEngine {
           name,
           assistantMessageId: data.assistantMessageId,
           toolPart: data.toolPart,
+          parts: data.parts,
           voiceResult,
           blocked: data.blocked === true,
         });

@@ -1,5 +1,6 @@
 "use client";
 import type { UseChatHelpers } from "@ai-sdk/react";
+import { isScreenHandoffPayload } from "@/lib/cloud-computer/screen-handoff";
 import type { Vote } from "@/lib/db/schema";
 import { readFixturePayload } from "@/lib/fixtures";
 import type { MascotState } from "@/lib/mascot";
@@ -41,6 +42,7 @@ import { OutboundDraftCard } from "./outbound-draft-card";
 import { PreviewAttachment } from "./preview-attachment";
 import { QuestionCard } from "./question-card";
 import { SavedMemoryCard } from "./saved-memory-card";
+import { ScreenHandoffCard } from "./screen-handoff-card";
 import {
   type AgentLoopStepItem,
   AgentLoopStepStrip,
@@ -350,7 +352,7 @@ const PurePreviewMessage = ({
             key={toolCallId}
             locale={locale}
             state={state}
-            title="Hava durumu sorgusunu onayla"
+            title={getCopy(locale).titleWeatherApproval}
             toolName="getWeather"
           />
         );
@@ -453,12 +455,15 @@ const PurePreviewMessage = ({
 
     if (type === "tool-draftOutboundMessage") {
       const approval = (
-        part as { approval?: { id?: string; approved?: boolean } }
+        part as {
+          approval?: { id?: string; approved?: boolean; reason?: string };
+        }
       ).approval;
       return (
         <OutboundDraftCard
           addToolApprovalResponse={addToolApprovalResponse}
           approvalId={approval?.id}
+          approvalReason={approval?.reason}
           approved={approval?.approved}
           input={"input" in part ? part.input : undefined}
           isReadonly={isReadonly}
@@ -526,7 +531,9 @@ const PurePreviewMessage = ({
       };
       const toolName = type.slice(5);
       const approval = (
-        part as { approval?: { id?: string; approved?: boolean } }
+        part as {
+          approval?: { id?: string; approved?: boolean; reason?: string };
+        }
       ).approval;
       const input =
         "input" in part ? (part.input as Record<string, unknown>) : undefined;
@@ -542,28 +549,35 @@ const PurePreviewMessage = ({
         toolName === "calendarCreateDraftEvent" ||
         toolName === "githubCreateDraftReview" ||
         toolName === "scheduleTask";
+      const isPolicyReceipt =
+        output &&
+        typeof output === "object" &&
+        ((output as { status?: string }).status === "blocked_by_owner_rule" ||
+          (output as { status?: string }).status === "interrupted_on_restart");
 
       if (
         state === "approval-requested" ||
         state === "approval-responded" ||
         state === "output-denied" ||
         (state === "output-available" &&
-          isDraftApprovalTool &&
+          (isDraftApprovalTool || isPolicyReceipt) &&
           !isDisabledApiOutput(output) &&
           !isSetupRequiredOutput(output))
       ) {
+        const cardCopy = getCopy(locale);
         const friendlyTitles: Record<string, string> = {
-          gmailCreateDraft: "Gmail taslağı kaydet",
-          driveCreateDraftDoc: "Google Drive taslak belgesi",
-          calendarCreateDraftEvent: "Takvim taslak etkinliği",
-          githubCreateDraftReview: "GitHub PR taslak incelemesi",
-          generateVideoClip: "Video klibi oluştur",
-          scheduleTask: "Zamanlanmış rutin oluştur",
+          gmailCreateDraft: cardCopy.titleGmailDraft,
+          driveCreateDraftDoc: cardCopy.titleDriveDraft,
+          calendarCreateDraftEvent: cardCopy.titleCalendarDraft,
+          githubCreateDraftReview: cardCopy.titleGithubDraft,
+          generateVideoClip: cardCopy.titleVideoClip,
+          scheduleTask: cardCopy.titleScheduleTask,
         };
         return (
           <ApprovalCard
             addToolApprovalResponse={addToolApprovalResponse}
             approvalId={approval?.id}
+            approvalReason={approval?.reason}
             approved={approval?.approved}
             input={input}
             isReadonly={isReadonly}
@@ -708,6 +722,26 @@ const PurePreviewMessage = ({
         );
       }
 
+      if (state === "output-available" && isScreenHandoffPayload(output)) {
+        return (
+          <ScreenHandoffCard
+            isReadonly={isReadonly}
+            key={toolCallId}
+            locale={locale}
+            onRespond={(decision) => {
+              if (decision === "im_here" && onSelectQuestionOption) {
+                onSelectQuestionOption(
+                  locale === "tr"
+                    ? "Bulut Bilgisayar ekranındayım, devam edebilirsin."
+                    : "I'm on the Cloud Computer screen — go ahead and continue."
+                );
+              }
+            }}
+            payload={output}
+          />
+        );
+      }
+
       if (
         state === "output-available" &&
         output &&
@@ -780,9 +814,7 @@ const PurePreviewMessage = ({
                     data-testid="tool-input-details"
                   >
                     <summary className="cursor-pointer select-none font-medium text-muted-foreground hover:text-foreground">
-                      {locale === "tr"
-                        ? "Parametre detayları"
-                        : "Parameter details"}
+                      {getCopy(locale).parameterDetails}
                     </summary>
                     <div className="mt-2">
                       <ToolInput input={input} />

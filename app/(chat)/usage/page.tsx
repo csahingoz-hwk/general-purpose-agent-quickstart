@@ -4,8 +4,11 @@ import {
   BookOpenIcon,
   CheckCircle2Icon,
   ChevronRightIcon,
+  GlobeIcon,
   MonitorIcon,
   MoonIcon,
+  RotateCcwIcon,
+  ShieldCheckIcon,
   SunIcon,
 } from "lucide-react";
 import Link from "next/link";
@@ -17,6 +20,7 @@ import { HomeLocationPanel } from "@/components/chat/home-location";
 import { MascotPicker } from "@/components/chat/mascot-preference";
 import { SubpageHeader } from "@/components/chat/subpage-header";
 import { toast } from "@/components/chat/toast";
+import { type UiLocalePreference, useUiLocale } from "@/hooks/use-ui-locale";
 import { cn, fetcher } from "@/lib/utils";
 
 type UsageCall = {
@@ -142,8 +146,77 @@ function UsagePageContent() {
   const searchParams = useSearchParams();
   const { mutate: globalMutate } = useSWRConfig();
   const { theme, setTheme } = useTheme();
+  const { preference: localePref, copy, setLocalePreference } = useUiLocale();
   const [hasSpeechApi, setHasSpeechApi] = useState(false);
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
+  const [savingApprovalSetting, setSavingApprovalSetting] = useState(false);
+
+  const { data: approvalPrefs, mutate: mutateApprovalPrefs } = useSWR<{
+    approvalMode?: "ask_every_time" | "draft_without_asking";
+    uiLocale?: UiLocalePreference;
+    rules?: Array<{
+      id: string;
+      toolName: string;
+      decision: "always_allow" | "never_allow";
+      updatedAt: string;
+    }>;
+  }>(`${basePath}/api/settings/approvals`, fetcher, {
+    revalidateOnFocus: false,
+    shouldRetryOnError: false,
+  });
+
+  async function handleSelectApprovalMode(
+    nextMode: "ask_every_time" | "draft_without_asking"
+  ) {
+    setSavingApprovalSetting(true);
+    try {
+      const res = await fetch(`${basePath}/api/settings/approvals`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approvalMode: nextMode }),
+      });
+      if (res.ok) {
+        await mutateApprovalPrefs();
+        toast({
+          type: "success",
+          description:
+            nextMode === "draft_without_asking"
+              ? copy.approvalModeDraftFirst
+              : copy.approvalModeAskEveryTime,
+        });
+      }
+    } finally {
+      setSavingApprovalSetting(false);
+    }
+  }
+
+  async function handleUndoToolRule(toolName: string) {
+    setSavingApprovalSetting(true);
+    try {
+      const res = await fetch(
+        `${basePath}/api/settings/approvals?toolName=${encodeURIComponent(toolName)}`,
+        { method: "DELETE" }
+      );
+      if (res.ok) {
+        await mutateApprovalPrefs();
+        toast({
+          type: "success",
+          description: `${toolName}: ${copy.undoRule}`,
+        });
+      }
+    } finally {
+      setSavingApprovalSetting(false);
+    }
+  }
+
+  async function handleSelectLanguage(nextLocale: UiLocalePreference) {
+    setLocalePreference(nextLocale);
+    await fetch(`${basePath}/api/settings/approvals`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uiLocale: nextLocale }),
+    }).catch(() => null);
+  }
 
   useEffect(() => {
     if (searchParams.get("connected") === "google") {
@@ -287,6 +360,166 @@ function UsagePageContent() {
 
             <div className="p-4">
               <HomeLocationPanel />
+            </div>
+
+            <div
+              className="space-y-2.5 p-4"
+              data-testid="settings-language-picker"
+            >
+              <div className="flex items-center gap-1.5 text-[13px] text-muted-foreground">
+                <GlobeIcon className="size-3.5" />
+                <span>{copy.languageLabel}</span>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {(
+                  [
+                    { id: "auto", label: copy.languageAuto },
+                    { id: "en", label: copy.languageEnglish },
+                    { id: "tr", label: copy.languageTurkish },
+                  ] as const
+                ).map((item) => {
+                  const active = localePref === item.id;
+                  return (
+                    <button
+                      aria-pressed={active}
+                      className={cn(
+                        "inline-flex min-h-11 items-center justify-center rounded-full border px-3 font-medium text-sm transition-colors",
+                        active
+                          ? "border-transparent bg-foreground text-background"
+                          : "border-[color:var(--hairline)] bg-background text-foreground hover:bg-muted"
+                      )}
+                      data-testid={`language-option-${item.id}`}
+                      key={item.id}
+                      onClick={() => handleSelectLanguage(item.id)}
+                      type="button"
+                    >
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section
+          className="space-y-3"
+          data-testid="settings-approval-preferences"
+        >
+          <div>
+            <h2 className="font-semibold text-xl tracking-tight">
+              {copy.approvalSettingsHeading}
+            </h2>
+            <p className="mt-1 text-muted-foreground text-sm">
+              {copy.approvalSettingsDescription}
+            </p>
+          </div>
+
+          <div className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card">
+            <div className="space-y-2.5 p-4">
+              {(
+                [
+                  {
+                    id: "ask_every_time",
+                    title: copy.approvalModeAskEveryTime,
+                    desc: copy.approvalModeAskEveryTimeDesc,
+                    testId: "approval-mode-ask-every-time",
+                  },
+                  {
+                    id: "draft_without_asking",
+                    title: copy.approvalModeDraftFirst,
+                    desc: copy.approvalModeDraftFirstDesc,
+                    testId: "approval-mode-draft-first",
+                  },
+                ] as const
+              ).map((option) => {
+                const currentMode =
+                  approvalPrefs?.approvalMode ?? "ask_every_time";
+                const active = currentMode === option.id;
+                return (
+                  <button
+                    aria-pressed={active}
+                    className={cn(
+                      "flex w-full items-start justify-between gap-3 rounded-xl border p-3.5 text-left transition-colors",
+                      active
+                        ? "border-primary bg-primary/5"
+                        : "border-[color:var(--hairline)] bg-background hover:bg-muted/40"
+                    )}
+                    data-testid={option.testId}
+                    disabled={savingApprovalSetting}
+                    key={option.id}
+                    onClick={() => handleSelectApprovalMode(option.id)}
+                    type="button"
+                  >
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="font-medium text-foreground text-sm">
+                        {option.title}
+                      </p>
+                      <p className="text-muted-foreground text-xs">
+                        {option.desc}
+                      </p>
+                    </div>
+                    <ShieldCheckIcon
+                      className={cn(
+                        "mt-0.5 size-4 shrink-0",
+                        active ? "text-primary" : "text-muted-foreground/40"
+                      )}
+                    />
+                  </button>
+                );
+              })}
+            </div>
+
+            <div
+              className="space-y-2.5 p-4"
+              data-testid="settings-tool-rules-list"
+            >
+              <p className="font-medium text-foreground text-sm">
+                {copy.toolRulesHeading}
+              </p>
+              {!approvalPrefs?.rules || approvalPrefs.rules.length === 0 ? (
+                <p className="text-muted-foreground text-xs">
+                  {copy.toolRulesEmpty}
+                </p>
+              ) : (
+                <ul className="divide-y divide-[color:var(--hairline)] rounded-xl border border-[color:var(--hairline)] bg-background text-sm">
+                  {approvalPrefs.rules.map((rule) => (
+                    <li
+                      className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5"
+                      data-testid={`tool-rule-row-${rule.toolName}`}
+                      key={rule.id}
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="truncate font-mono text-foreground text-xs">
+                          {rule.toolName}
+                        </span>
+                        <span
+                          className={cn(
+                            "inline-flex items-center rounded-full px-2 py-0.5 font-medium text-[11px]",
+                            rule.decision === "always_allow"
+                              ? "bg-emerald-500/12 text-emerald-700 dark:text-emerald-300"
+                              : "bg-destructive/12 text-destructive"
+                          )}
+                        >
+                          {rule.decision === "always_allow"
+                            ? copy.ruleBadgeAlwaysAllow
+                            : copy.ruleBadgeNeverAllow}
+                        </span>
+                      </div>
+                      <button
+                        className="inline-flex min-h-9 items-center gap-1 rounded-full border border-[color:var(--hairline)] px-3 font-medium text-foreground text-xs hover:bg-muted disabled:opacity-50"
+                        data-testid={`undo-tool-rule-${rule.toolName}`}
+                        disabled={savingApprovalSetting}
+                        onClick={() => handleUndoToolRule(rule.toolName)}
+                        type="button"
+                      >
+                        <RotateCcwIcon className="size-3" />
+                        {copy.undoRule}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           </div>
         </section>

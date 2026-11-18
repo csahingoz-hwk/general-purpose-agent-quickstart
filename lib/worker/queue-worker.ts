@@ -1,6 +1,17 @@
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
+import {
+  type CloudComputerLifecycleStore,
+  resolveCloudLifecycleStore,
+} from "@/lib/cloud-computer/lifecycle";
 import { computeNextRunAt } from "@/lib/cron/cron-utils";
+import {
+  ACTIVE_CHAT_SKIP_WINDOW_MS,
+  type CheckInStateStore,
+  computeBackedOffNextRunAt,
+  computeSilentBackoffMultiplier,
+  isSilentCheckInOutput,
+} from "@/lib/cron/smart-checkin";
 import type {
   BackgroundTaskRecord,
   BackgroundTaskStatus,
@@ -114,6 +125,7 @@ export function createInMemoryWorkerAdapter(seed?: {
     nextRunAt: Date;
   }>;
   tasks?: BackgroundTaskRecord[];
+  checkInStore?: CheckInStateStore;
 }): WorkerQueueAdapter & {
   getTasks: () => BackgroundTaskRecord[];
   getRoutines: () => Array<{
@@ -133,9 +145,10 @@ export function createInMemoryWorkerAdapter(seed?: {
   const tasks = new Map<string, BackgroundTaskRecord>(
     (seed?.tasks ?? []).map((t) => [t.id, { ...t, steps: [...t.steps] }])
   );
+  const checkInStore = seed?.checkInStore;
 
   return {
-    claimDueRoutinesAndEnqueue({ now, maxBatch }) {
+    async claimDueRoutinesAndEnqueue({ now, maxBatch }) {
       let count = 0;
       for (const r of routines) {
         if (count >= maxBatch) {
@@ -145,6 +158,35 @@ export function createInMemoryWorkerAdapter(seed?: {
           continue;
         }
         try {
+          if (checkInStore) {
+            const existingState = await checkInStore.getState(r.id);
+            if (
+              existingState?.nextEligibleAt &&
+              new Date(existingState.nextEligibleAt).getTime() > now.getTime()
+            ) {
+              r.nextRunAt = new Date(existingState.nextEligibleAt);
+              continue;
+            }
+            const lastChat = await checkInStore.getLastUserChatAt(r.userId);
+            if (
+              lastChat &&
+              now.getTime() >= lastChat.getTime() &&
+              now.getTime() - lastChat.getTime() < ACTIVE_CHAT_SKIP_WINDOW_MS
+            ) {
+              r.nextRunAt = computeNextRunAt(r.cronExpression, r.timezone, now);
+              await checkInStore.saveState({
+                scheduleId: r.id,
+                userId: r.userId,
+                consecutiveSilentRuns:
+                  existingState?.consecutiveSilentRuns ?? 0,
+                backoffMultiplier: existingState?.backoffMultiplier ?? 1,
+                lastOutcome: "skipped_active_chat",
+                lastCheckedAt: now.toISOString(),
+                nextEligibleAt: existingState?.nextEligibleAt ?? null,
+              });
+              continue;
+            }
+          }
           const next = computeNextRunAt(r.cronExpression, r.timezone, now);
           r.nextRunAt = next;
           r.lastError = null;
@@ -179,7 +221,7 @@ export function createInMemoryWorkerAdapter(seed?: {
             err instanceof Error ? err.message : "Invalid cron schedule";
         }
       }
-      return Promise.resolve(count);
+      return count;
     },
 
     recoverStaleRunningTasks({ now, staleAfterMs }) {
@@ -248,8 +290,46 @@ export function createInMemoryWorkerAdapter(seed?: {
       if (existing.scheduleId) {
         const parent = routines.find((r) => r.id === existing.scheduleId);
         if (parent) {
-          parent.lastOutput = existing.output;
+          const silent =
+            status === "succeeded" && isSilentCheckInOutput(existing.output);
+          parent.lastOutput = silent ? null : existing.output;
           parent.lastError = existing.error;
+          if (checkInStore && status === "succeeded") {
+            return checkInStore.getState(parent.id).then(async (prev) => {
+              if (silent) {
+                const nextSilent = (prev?.consecutiveSilentRuns ?? 0) + 1;
+                const mult = computeSilentBackoffMultiplier(nextSilent);
+                const backedOffNext = computeBackedOffNextRunAt({
+                  cronExpression: parent.cronExpression,
+                  timezone: parent.timezone,
+                  from: now,
+                  multiplier: mult,
+                });
+                parent.nextRunAt = backedOffNext;
+                await checkInStore.saveState({
+                  scheduleId: parent.id,
+                  userId: parent.userId,
+                  consecutiveSilentRuns: nextSilent,
+                  backoffMultiplier: mult,
+                  lastOutcome: "silent",
+                  lastCheckedAt: nowIso,
+                  nextEligibleAt: mult > 1 ? backedOffNext.toISOString() : null,
+                });
+              } else {
+                await checkInStore.saveState({
+                  scheduleId: parent.id,
+                  userId: parent.userId,
+                  consecutiveSilentRuns: 0,
+                  backoffMultiplier: 1,
+                  lastOutcome: "delivered",
+                  lastCheckedAt: nowIso,
+                  nextEligibleAt: null,
+                });
+              }
+              tasks.set(existing.id, existing);
+              return { ...existing, steps: [...existing.steps] };
+            });
+          }
         }
       }
       tasks.set(existing.id, existing);
@@ -514,6 +594,7 @@ export function createPostgresWorkerAdapter(
 
 export class QueueWorkerEngine {
   private readonly adapter: WorkerQueueAdapter;
+  private readonly cloudLifecycle?: CloudComputerLifecycleStore;
   private readonly logger?: RotatingFileLogger;
   private readonly rssCapMb: number;
   private readonly heapCapMb: number;
@@ -533,6 +614,7 @@ export class QueueWorkerEngine {
 
   constructor(opts: {
     adapter: WorkerQueueAdapter;
+    cloudLifecycle?: CloudComputerLifecycleStore;
     logger?: RotatingFileLogger;
     rssCapMb?: number;
     heapCapMb?: number;
@@ -541,6 +623,7 @@ export class QueueWorkerEngine {
     readMemory?: () => MemorySample;
   }) {
     this.adapter = opts.adapter;
+    this.cloudLifecycle = opts.cloudLifecycle;
     this.logger = opts.logger;
     this.rssCapMb = opts.rssCapMb ?? DEFAULT_TARGET_RSS_CAP_MB;
     this.heapCapMb = opts.heapCapMb ?? DEFAULT_HEAP_CAP_MB;
@@ -566,6 +649,12 @@ export class QueueWorkerEngine {
       now,
       staleAfterMs: this.staleRunningMs,
     });
+
+    if (this.cloudLifecycle || process.env.POSTGRES_URL?.trim()) {
+      await resolveCloudLifecycleStore(this.cloudLifecycle)
+        .sleepIdleSessions({ now })
+        .catch(() => null);
+    }
 
     const enqueuedRoutines = await this.adapter.claimDueRoutinesAndEnqueue({
       now,

@@ -1,13 +1,16 @@
 "use client";
 
 import {
+  BellOffIcon,
   CheckCircle2Icon,
   ClockIcon,
   KeyRoundIcon,
   LayersIcon,
+  MailIcon,
   PauseIcon,
   PlayIcon,
   PlusIcon,
+  RefreshCwIcon,
   Trash2Icon,
   XCircleIcon,
 } from "lucide-react";
@@ -17,6 +20,7 @@ import { Suspense, useEffect, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
 import { SubpageHeader } from "@/components/chat/subpage-header";
 import { toast } from "@/components/chat/toast";
+import { useUiLocale } from "@/hooks/use-ui-locale";
 import { cn, fetcher } from "@/lib/utils";
 
 type ScheduleRow = {
@@ -78,6 +82,28 @@ type VaultResponse = {
   secrets: VaultItem[];
 };
 
+type EventTriggerCatalogItem = {
+  source: string;
+  label: { en: string; tr: string };
+  status: "active" | "webhook_ready" | "extensible";
+  supportedEvents: string[];
+};
+
+type EventTriggerItem = {
+  id: string;
+  source: string;
+  eventFilter: string;
+  title: string;
+  promptTemplate: string;
+  enabled: boolean;
+  createdAt: string;
+};
+
+type EventTriggersResponse = {
+  catalog: EventTriggerCatalogItem[];
+  triggers: EventTriggerItem[];
+};
+
 const SCHEDULE_OPTIONS = [
   { label: "Weekdays at 08:00", cron: "0 8 * * 1-5" },
   { label: "Weekdays at 07:30", cron: "30 7 * * 1-5" },
@@ -122,6 +148,13 @@ function RoutinesPageContent() {
   const [timezone, setTimezone] = useState("Europe/London");
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
+  const { locale, copy } = useUiLocale();
+
+  const [eventSource, setEventSource] = useState("gmail");
+  const [eventFilter, setEventFilter] = useState("*");
+  const [eventTitle, setEventTitle] = useState("");
+  const [eventPrompt, setEventPrompt] = useState("");
+  const [eventBusy, setEventBusy] = useState(false);
 
   useEffect(() => {
     try {
@@ -146,6 +179,8 @@ function RoutinesPageContent() {
     `${basePath}/api/vault`,
     fetcher
   );
+  const { data: triggersData, mutate: mutateTriggers } =
+    useSWR<EventTriggersResponse>(`${basePath}/api/routines/triggers`, fetcher);
   const { data: connectorsData, mutate: mutateConnectors } = useSWR<{
     gmailReady?: boolean;
     githubReady?: boolean;
@@ -245,6 +280,86 @@ function RoutinesPageContent() {
     });
     if (response.ok) {
       await mutateSchedules();
+    }
+  }
+
+  async function handleCreateEventTrigger(event: React.FormEvent) {
+    event.preventDefault();
+    if (!eventPrompt.trim()) {
+      return;
+    }
+    setEventBusy(true);
+    try {
+      const response = await fetch(`${basePath}/api/routines/triggers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: eventSource,
+          eventFilter: eventFilter.trim() || "*",
+          title:
+            eventTitle.trim() ||
+            `On ${eventSource}: ${eventPrompt.trim().slice(0, 60)}`,
+          promptTemplate: eventPrompt.trim(),
+        }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? "Could not create event trigger");
+      }
+      setEventTitle("");
+      setEventPrompt("");
+      await mutateTriggers();
+      toast({ type: "success", description: copy.saveEventTrigger });
+    } catch (err) {
+      toast({
+        type: "error",
+        description:
+          err instanceof Error ? err.message : "Could not save event trigger",
+      });
+    } finally {
+      setEventBusy(false);
+    }
+  }
+
+  async function handlePollEventTriggersNow() {
+    setEventBusy(true);
+    try {
+      const res = await fetch(`${basePath}/api/routines/triggers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "poll_now" }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { enqueuedCount?: number };
+        await mutateTasks();
+        toast({
+          type: "success",
+          description: `Checked inbox — ${data.enqueuedCount ?? 0} routine(s) triggered.`,
+        });
+      }
+    } finally {
+      setEventBusy(false);
+    }
+  }
+
+  async function handleToggleEventTrigger(id: string, enabled: boolean) {
+    const res = await fetch(`${basePath}/api/routines/triggers`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, enabled }),
+    });
+    if (res.ok) {
+      await mutateTriggers();
+    }
+  }
+
+  async function handleDeleteEventTrigger(id: string) {
+    const res = await fetch(
+      `${basePath}/api/routines/triggers?id=${encodeURIComponent(id)}`,
+      { method: "DELETE" }
+    );
+    if (res.ok) {
+      await mutateTriggers();
     }
   }
 
@@ -369,7 +484,16 @@ function RoutinesPageContent() {
               className="space-y-4 rounded-2xl border border-[color:var(--hairline)] bg-card p-4"
               onSubmit={handleCreateRoutine}
             >
-              <h2 className="font-semibold text-[15px]">New routine</h2>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="font-semibold text-[15px]">New routine</h2>
+                <span
+                  className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 font-medium text-[11px] text-emerald-700 dark:text-emerald-300"
+                  data-testid="quiet-checkin-badge"
+                >
+                  <BellOffIcon className="size-3" />
+                  {copy.quietCheckInBadge}
+                </span>
+              </div>
 
               <label className="block space-y-1.5 text-sm">
                 <span className="text-muted-foreground text-xs">
@@ -526,6 +650,182 @@ function RoutinesPageContent() {
                 ))}
               </div>
             )}
+
+            <section
+              className="space-y-3 pt-2"
+              data-testid="event-triggered-routines-section"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h2 className="font-semibold text-lg tracking-tight">
+                    {copy.eventTriggersHeading}
+                  </h2>
+                  <p className="text-muted-foreground text-xs">
+                    {copy.eventTriggersDescription}
+                  </p>
+                </div>
+                <button
+                  className="inline-flex min-h-10 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-card px-3.5 font-medium text-foreground text-xs hover:bg-muted disabled:opacity-50"
+                  data-testid="poll-event-triggers-button"
+                  disabled={eventBusy}
+                  onClick={handlePollEventTriggersNow}
+                  type="button"
+                >
+                  <RefreshCwIcon className="size-3.5" />
+                  {copy.checkNowButton}
+                </button>
+              </div>
+
+              <form
+                className="space-y-3.5 rounded-2xl border border-[color:var(--hairline)] bg-card p-4"
+                onSubmit={handleCreateEventTrigger}
+              >
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block space-y-1.5 text-sm">
+                    <span className="text-muted-foreground text-xs">
+                      Source
+                    </span>
+                    <select
+                      className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[15px] text-foreground"
+                      data-testid="event-trigger-source-select"
+                      onChange={(e) => setEventSource(e.target.value)}
+                      value={eventSource}
+                    >
+                      {(
+                        triggersData?.catalog ?? [
+                          {
+                            source: "gmail",
+                            label: {
+                              en: copy.eventSourceGmail,
+                              tr: copy.eventSourceGmail,
+                            },
+                            status: "active" as const,
+                            supportedEvents: ["email.received"],
+                          },
+                          {
+                            source: "github",
+                            label: {
+                              en: copy.eventSourceGithub,
+                              tr: copy.eventSourceGithub,
+                            },
+                            status: "webhook_ready" as const,
+                            supportedEvents: ["pull_request.opened"],
+                          },
+                          {
+                            source: "slack",
+                            label: {
+                              en: copy.eventSourceSlack,
+                              tr: copy.eventSourceSlack,
+                            },
+                            status: "extensible" as const,
+                            supportedEvents: ["app_mention"],
+                          },
+                        ]
+                      ).map((item) => (
+                        <option key={item.source} value={item.source}>
+                          {item.label[locale]} ({item.status})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="block space-y-1.5 text-sm">
+                    <span className="text-muted-foreground text-xs">
+                      {copy.eventFilterLabel}
+                    </span>
+                    <input
+                      className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 font-mono text-[15px] text-foreground"
+                      data-testid="event-trigger-filter-input"
+                      onChange={(e) => setEventFilter(e.target.value)}
+                      placeholder="from:x.ai or *"
+                      value={eventFilter}
+                    />
+                  </label>
+                </div>
+
+                <label className="block space-y-1.5 text-sm">
+                  <span className="text-muted-foreground text-xs">
+                    Title (optional)
+                  </span>
+                  <input
+                    className="min-h-11 w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 text-[15px] text-foreground"
+                    onChange={(e) => setEventTitle(e.target.value)}
+                    placeholder="e.g. Draft reply when x.ai emails me"
+                    value={eventTitle}
+                  />
+                </label>
+
+                <label className="block space-y-1.5 text-sm">
+                  <span className="text-muted-foreground text-xs">
+                    Instructions when triggered
+                  </span>
+                  <textarea
+                    className="min-h-20 w-full rounded-xl border border-[color:var(--hairline)] bg-background p-3 text-[15px] text-foreground"
+                    data-testid="event-trigger-prompt-input"
+                    onChange={(e) => setEventPrompt(e.target.value)}
+                    placeholder="Summarize the incoming email and prepare a short unsent reply draft if needed."
+                    required
+                    value={eventPrompt}
+                  />
+                </label>
+
+                <div className="flex justify-end">
+                  <button
+                    className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-5 font-medium text-primary-foreground text-sm disabled:opacity-50"
+                    data-testid="save-event-trigger-button"
+                    disabled={eventBusy}
+                    type="submit"
+                  >
+                    <MailIcon className="size-4" />
+                    {copy.saveEventTrigger}
+                  </button>
+                </div>
+              </form>
+
+              {(triggersData?.triggers ?? []).length > 0 && (
+                <div className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card">
+                  {triggersData?.triggers.map((trig) => (
+                    <article className="space-y-2 p-4" key={trig.id}>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-primary/10 px-2.5 py-0.5 font-medium text-primary text-xs uppercase">
+                            {trig.source}
+                          </span>
+                          <span className="font-medium text-foreground text-sm">
+                            {trig.title}
+                          </span>
+                          <span className="font-mono text-muted-foreground text-xs">
+                            filter: {trig.eventFilter}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            className="inline-flex min-h-9 items-center rounded-full border border-[color:var(--hairline)] px-3 text-xs hover:bg-muted"
+                            onClick={() =>
+                              handleToggleEventTrigger(trig.id, !trig.enabled)
+                            }
+                            type="button"
+                          >
+                            {trig.enabled ? "Pause" : "Resume"}
+                          </button>
+                          <button
+                            aria-label="Delete event trigger"
+                            className="inline-flex size-9 items-center justify-center rounded-full text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => handleDeleteEventTrigger(trig.id)}
+                            type="button"
+                          >
+                            <Trash2Icon className="size-4" />
+                          </button>
+                        </div>
+                      </div>
+                      <p className="whitespace-pre-wrap text-muted-foreground text-xs">
+                        {trig.promptTemplate}
+                      </p>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
           </div>
         )}
 

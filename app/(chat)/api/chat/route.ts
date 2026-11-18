@@ -30,8 +30,11 @@ import {
   selectActiveTools,
   selectToolsWithRanking,
 } from "@/lib/ai/context/select-tools";
+import { syncThreadSummary } from "@/lib/ai/context/thread-summary";
 import {
   applyApprovalResponses,
+  expirePendingApprovalsOnNewUserTurn,
+  markMidFlightToolsInterrupted,
   prepareRetry,
   replyForStorage,
   safeUIStream,
@@ -128,6 +131,10 @@ import { attachOpenUiPart } from "@/lib/openui/attach";
 import { isVisualCandidateTurn } from "@/lib/openui/structured-answer";
 import { checkIpRateLimit } from "@/lib/ratelimit";
 import {
+  applyOwnerPoliciesToToolSet,
+  resolveApprovalPreferencesStore,
+} from "@/lib/safety/approval-preferences";
+import {
   createPostgresSkillStore,
   extractRequestedSkillSlug,
   formatSkillPromptBlock,
@@ -180,7 +187,8 @@ function dropWebSearchHistory(messages: ChatMessage[]): ChatMessage[] {
         part.type !== "data-openui" &&
         part.type !== "data-turn-status" &&
         part.type !== "data-task-step" &&
-        part.type !== "data-model-used"
+        part.type !== "data-model-used" &&
+        part.type !== "data-earlier-summary"
     ),
   }));
 }
@@ -253,6 +261,12 @@ export async function POST(request: Request) {
     }
     let chatModel = selectedChatModel;
 
+    const memoryStore =
+      session.user.type !== "guest" && isMemoryToolsEnabled()
+        ? createPostgresMemoryStore()
+        : null;
+    const approvalPrefsStore =
+      session.user.type !== "guest" ? resolveApprovalPreferencesStore() : null;
     const [
       ,
       acquiredLock,
@@ -260,16 +274,24 @@ export async function POST(request: Request) {
       soul,
       homeLocation,
       storedFacts,
+      storedJournalEntries,
       capabilityManifest,
+      ownerApprovalSettings,
+      ownerToolRules,
     ] = await Promise.all([
       checkIpRateLimit(ipAddress(request)),
       acquireChatLock(id),
       getChatById({ id }),
       getUserSoul({ userId: session.user.id }),
       getUserHomeLocation({ userId: session.user.id }),
-      session.user.type !== "guest" && isMemoryToolsEnabled()
-        ? createPostgresMemoryStore()
+      memoryStore
+        ? memoryStore
             .listProfileFacts({ userId: session.user.id })
+            .catch(() => [])
+        : Promise.resolve([]),
+      memoryStore
+        ? memoryStore
+            .listJournalEntries({ userId: session.user.id, limit: 25 })
             .catch(() => [])
         : Promise.resolve([]),
       isSyntheticSdk7FixtureMode()
@@ -279,6 +301,22 @@ export async function POST(request: Request) {
             isGuest: session.user.type === "guest",
             webSearchAvailable: webSearchLane(chatModel),
           }),
+      approvalPrefsStore
+        ? approvalPrefsStore.getSettings(session.user.id).catch(() => ({
+            userId: session.user.id,
+            approvalMode: "ask_every_time" as const,
+            uiLocale: "auto" as const,
+            updatedAt: new Date(0).toISOString(),
+          }))
+        : Promise.resolve({
+            userId: session.user.id,
+            approvalMode: "ask_every_time" as const,
+            uiLocale: "auto" as const,
+            updatedAt: new Date(0).toISOString(),
+          }),
+      approvalPrefsStore
+        ? approvalPrefsStore.listToolRules(session.user.id).catch(() => [])
+        : Promise.resolve([]),
     ]);
     const googleConnectedAndHealthy =
       capabilityManifest?.entries.find((e) => e.id === "gmail")?.state ===
@@ -322,11 +360,22 @@ export async function POST(request: Request) {
     );
 
     let uiMessages: ChatMessage[];
+    const midFlightSweep = markMidFlightToolsInterrupted(
+      convertToUIMessages(messagesFromDb)
+    );
+    if (midFlightSweep.interruptedMessages.length > 0) {
+      await Promise.all(
+        midFlightSweep.interruptedMessages.map((msg) =>
+          updateMessage({ id: msg.id, parts: msg.parts }).catch(() => null)
+        )
+      );
+    }
+    const baseSavedUiMessages = midFlightSweep.messages;
 
     if (isToolApprovalFlow && messages) {
       try {
         uiMessages = applyApprovalResponses(
-          convertToUIMessages(messagesFromDb),
+          baseSavedUiMessages,
           messages as ChatMessage[],
           editedDraftApproval
         );
@@ -335,10 +384,7 @@ export async function POST(request: Request) {
       }
     } else if (retryAlreadyPersisted && message) {
       try {
-        const preparedRetry = prepareRetry(
-          convertToUIMessages(messagesFromDb),
-          message.id
-        );
+        const preparedRetry = prepareRetry(baseSavedUiMessages, message.id);
         uiMessages = preparedRetry.messages;
         replacementReplyId = preparedRetry.replaceId;
       } catch {
@@ -349,10 +395,16 @@ export async function POST(request: Request) {
       if (messagesFromDb.some((saved) => saved.id === message?.id)) {
         return new ChatbotError("bad_request:api").toResponse();
       }
-      uiMessages = [
-        ...convertToUIMessages(messagesFromDb),
-        message as ChatMessage,
-      ];
+      const expiredSweep =
+        expirePendingApprovalsOnNewUserTurn(baseSavedUiMessages);
+      if (expiredSweep.expiredMessages.length > 0) {
+        await Promise.all(
+          expiredSweep.expiredMessages.map((msg) =>
+            updateMessage({ id: msg.id, parts: msg.parts }).catch(() => null)
+          )
+        );
+      }
+      uiMessages = [...expiredSweep.messages, message as ChatMessage];
     }
 
     const modelConfig =
@@ -415,40 +467,48 @@ export async function POST(request: Request) {
         ? extractExplicitRememberFact(finalUserText)
         : null;
 
-    const [, activeTeammate, explicitSavedFact] = await Promise.all([
-      message?.role === "user" && !retryAlreadyPersisted
-        ? saveMessages({
-            messages: [
-              {
-                chatId: id,
-                id: message.id,
-                role: "user",
-                parts: message.parts,
-                attachments: [],
-                createdAt: new Date(),
-              },
-            ],
-          })
-        : Promise.resolve(),
-      requestedBotSlug
-        ? createPostgresBotRosterStore()
-            .getBotBySlug(session.user.id, requestedBotSlug)
-            .catch(() => null)
-        : Promise.resolve(null),
-      explicitRemember?.kind === "ok"
-        ? createPostgresMemoryStore()
-            .upsertProfileFact({
-              userId: session.user.id,
-              category: explicitRemember.category,
-              key: explicitRemember.key,
-              value: explicitRemember.value,
-              source: "chat",
-              pinned: explicitRemember.pinned,
-              sharedAcrossBots: true,
+    const [, activeTeammate, explicitSavedFact, threadSummary] =
+      await Promise.all([
+        message?.role === "user" && !retryAlreadyPersisted
+          ? saveMessages({
+              messages: [
+                {
+                  chatId: id,
+                  id: message.id,
+                  role: "user",
+                  parts: message.parts,
+                  attachments: [],
+                  createdAt: new Date(),
+                },
+              ],
             })
-            .catch((): ProfileFact | null => null)
-        : Promise.resolve(null),
-    ]);
+          : Promise.resolve(),
+        requestedBotSlug
+          ? createPostgresBotRosterStore()
+              .getBotBySlug(session.user.id, requestedBotSlug)
+              .catch(() => null)
+          : Promise.resolve(null),
+        explicitRemember?.kind === "ok"
+          ? createPostgresMemoryStore()
+              .upsertProfileFact({
+                userId: session.user.id,
+                category: explicitRemember.category,
+                key: explicitRemember.key,
+                value: explicitRemember.value,
+                source: "chat",
+                pinned: explicitRemember.pinned,
+                sharedAcrossBots: true,
+              })
+              .catch((): ProfileFact | null => null)
+          : Promise.resolve(null),
+        session.user.type !== "guest" && !isSyntheticSdk7FixtureMode()
+          ? syncThreadSummary({
+              chatId: id,
+              userId: session.user.id,
+              messages: uiMessages,
+            }).catch(() => ({ record: null, promptBlock: "" }))
+          : Promise.resolve({ record: null, promptBlock: "" }),
+      ]);
 
     const mergedFacts = explicitSavedFact
       ? [
@@ -485,7 +545,7 @@ export async function POST(request: Request) {
     const memoryContextBlock = buildGroupedMemoryPromptBlock(
       safeBotFacts,
       finalUserText,
-      { maxFacts: 80, maxChars: 6000 }
+      { maxFacts: 80, maxChars: 6000, journalEntries: storedJournalEntries }
     );
     const ownerDisplayName =
       session.user.type !== "guest"
@@ -496,7 +556,12 @@ export async function POST(request: Request) {
     const premium = isPremiumModel(chatModel) ? premiumModels[chatModel] : null;
     const ownerHeader =
       ownerDisplayName && premium ? `Owner: ${ownerDisplayName}` : "";
-    const baseContext = [ownerHeader, rawBaseContext, memoryContextBlock]
+    const baseContext = [
+      ownerHeader,
+      rawBaseContext,
+      memoryContextBlock,
+      threadSummary.promptBlock,
+    ]
       .filter(Boolean)
       .join("\n\n");
     const hasOperatorToolOnTurn = requestedTools.some((name) =>
@@ -626,6 +691,12 @@ export async function POST(request: Request) {
               escalated: turnEscalation.escalated,
             },
           });
+          if (threadSummary.record?.summaryText) {
+            dataStream.write({
+              type: "data-earlier-summary",
+              data: threadSummary.record.summaryText,
+            });
+          }
           if (explicitSavedFact) {
             const memCallId = `mem-${explicitSavedFact.id.slice(0, 12)}`;
             dataStream.write({
@@ -796,7 +867,34 @@ export async function POST(request: Request) {
           };
 
           // Only reviewed local tools are available. External integrations stay disconnected.
-          const tools = localTools;
+          const turnHasUntrustedContext =
+            intentMatchedTools.includes("webSearch") ||
+            intentMatchedTools.includes("gmailReadMessages") ||
+            intentMatchedTools.includes("driveReadFiles") ||
+            intentMatchedTools.includes("calendarReadEvents") ||
+            intentMatchedTools.includes("githubReadPullRequests") ||
+            intentMatchedTools.includes("cloudBrowseUrl") ||
+            attachmentPrep.hasUntrustedAttachment ||
+            uiMessages.some((m) =>
+              m.parts.some(
+                (p) =>
+                  (p.type as string) === "tool-gmailReadMessages" ||
+                  (p.type as string) === "tool-driveReadFiles" ||
+                  (p.type as string) === "tool-calendarReadEvents" ||
+                  (p.type as string) === "tool-githubReadPullRequests" ||
+                  (p.type as string) === "tool-cloudBrowseUrl"
+              )
+            );
+          const tools =
+            session.user.type !== "guest"
+              ? applyOwnerPoliciesToToolSet(localTools, {
+                  userId: session.user.id,
+                  chatId: id,
+                  approvalMode: ownerApprovalSettings.approvalMode,
+                  rules: ownerToolRules,
+                  hasUntrustedContext: turnHasUntrustedContext,
+                })
+              : localTools;
           // If explicit "remember this: ..." was already handled deterministically above,
           // remove saveProfileFact from activeTools on this turn so we don't render two cards.
           const activeTools = requestedTools.filter(

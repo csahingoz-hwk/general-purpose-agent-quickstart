@@ -13,6 +13,7 @@ import {
 } from "@/lib/db/queries";
 import { validTimeZone } from "@/lib/temporal";
 import { generateUUID } from "@/lib/utils";
+import { executeVoiceTextAgentHandoff } from "@/lib/voice/text-agent-handoff";
 
 const requestSchema = z.object({
   chatId: z.string().uuid(),
@@ -48,17 +49,41 @@ export async function POST(request: Request) {
     ? await getUserHomeLocation({ userId }).catch(() => null)
     : null;
 
-  const outcome = await executeSharedVoiceToolCall({
-    session,
-    userId,
-    timeZone: resolvedTz,
-    homeLocation,
-    toolCallId: body.toolCallId.replace(/[^a-zA-Z0-9_-]/g, "_"),
-    toolName: body.toolName,
-    args: body.args,
-  });
+  const isTextAgentHandoff = body.toolName === "handOffToTextAgent";
+  const handoffOutcome = isTextAgentHandoff
+    ? await executeVoiceTextAgentHandoff({
+        session,
+        userId,
+        chatId: body.chatId,
+        request: typeof body.args.request === "string" ? body.args.request : "",
+        locale: body.locale,
+        timeZone: resolvedTz,
+        homeLocation,
+      })
+    : null;
+
+  const outcome = handoffOutcome
+    ? {
+        blocked: handoffOutcome.blocked,
+        toolPart: handoffOutcome.toolPart,
+        parts: handoffOutcome.parts,
+        voiceResult: handoffOutcome.voiceResult,
+      }
+    : {
+        ...(await executeSharedVoiceToolCall({
+          session,
+          userId,
+          timeZone: resolvedTz,
+          homeLocation,
+          toolCallId: body.toolCallId.replace(/[^a-zA-Z0-9_-]/g, "_"),
+          toolName: body.toolName,
+          args: body.args,
+        })),
+        parts: undefined as Record<string, unknown>[] | undefined,
+      };
 
   const assistantMessageId = generateUUID();
+  const persistedParts = outcome.parts ?? [outcome.toolPart];
 
   if (hasDb && !outcome.blocked) {
     try {
@@ -85,7 +110,7 @@ export async function POST(request: Request) {
               id: assistantMessageId,
               chatId: body.chatId,
               role: "assistant",
-              parts: [outcome.toolPart],
+              parts: persistedParts,
               attachments: [],
               createdAt: new Date(),
             },
@@ -103,6 +128,7 @@ export async function POST(request: Request) {
       assistantMessageId,
       filler: fillerPhraseForTool(body.toolName, body.locale),
       toolPart: outcome.toolPart,
+      parts: persistedParts,
       voiceResult: outcome.voiceResult,
       blocked: outcome.blocked === true,
     },

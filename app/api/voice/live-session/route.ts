@@ -77,61 +77,68 @@ export async function POST(request: Request) {
   }
 
   const hasDb = Boolean(process.env.POSTGRES_URL?.trim());
-  const [teammate, facts, recentTurns, capabilityManifest] = await Promise.all([
-    body.selectedBotSlug && hasDb
-      ? createPostgresBotRosterStore()
-          .getBotBySlug(userId, body.selectedBotSlug)
-          .catch(() => null)
-      : Promise.resolve(null),
-    hasDb
-      ? createPostgresMemoryStore()
-          .listProfileFacts({ userId })
-          .catch(() => [])
-      : Promise.resolve([]),
-    body.chatId && hasDb
-      ? (async () => {
-          const chat = await getChatById({ id: body.chatId as string }).catch(
-            () => null
-          );
-          if (!chat || chat.userId !== userId) {
-            return [];
-          }
-          const rows = await getMessagesByChatId({
-            id: body.chatId as string,
-          }).catch(() => []);
-          return rows
-            .slice(-8)
-            .map((row) => {
-              const parts = Array.isArray(row.parts)
-                ? (row.parts as Array<{ type?: string; text?: string }>)
-                : [];
-              const text = parts
-                .filter((p) => p.type === "text" && typeof p.text === "string")
-                .map((p) => p.text)
-                .join(" ")
-                .trim();
-              return text
-                ? {
-                    role:
-                      row.role === "assistant"
-                        ? ("assistant" as const)
-                        : ("user" as const),
-                    text,
-                  }
-                : null;
-            })
-            .filter(
-              (t): t is { role: "user" | "assistant"; text: string } =>
-                t !== null
+  const voiceMemoryStore = hasDb ? createPostgresMemoryStore() : null;
+  const [teammate, facts, journalEntries, recentTurns, capabilityManifest] =
+    await Promise.all([
+      body.selectedBotSlug && hasDb
+        ? createPostgresBotRosterStore()
+            .getBotBySlug(userId, body.selectedBotSlug)
+            .catch(() => null)
+        : Promise.resolve(null),
+      voiceMemoryStore
+        ? voiceMemoryStore.listProfileFacts({ userId }).catch(() => [])
+        : Promise.resolve([]),
+      voiceMemoryStore
+        ? voiceMemoryStore
+            .listJournalEntries({ userId, limit: 25 })
+            .catch(() => [])
+        : Promise.resolve([]),
+      body.chatId && hasDb
+        ? (async () => {
+            const chat = await getChatById({ id: body.chatId as string }).catch(
+              () => null
             );
-        })()
-      : Promise.resolve([]),
-    resolveLiveCapabilityManifest({
-      userId,
-      isGuest: false,
-      webSearchAvailable: useVertex,
-    }),
-  ]);
+            if (!chat || chat.userId !== userId) {
+              return [];
+            }
+            const rows = await getMessagesByChatId({
+              id: body.chatId as string,
+            }).catch(() => []);
+            return rows
+              .slice(-8)
+              .map((row) => {
+                const parts = Array.isArray(row.parts)
+                  ? (row.parts as Array<{ type?: string; text?: string }>)
+                  : [];
+                const text = parts
+                  .filter(
+                    (p) => p.type === "text" && typeof p.text === "string"
+                  )
+                  .map((p) => p.text)
+                  .join(" ")
+                  .trim();
+                return text
+                  ? {
+                      role:
+                        row.role === "assistant"
+                          ? ("assistant" as const)
+                          : ("user" as const),
+                      text,
+                    }
+                  : null;
+              })
+              .filter(
+                (t): t is { role: "user" | "assistant"; text: string } =>
+                  t !== null
+              );
+          })()
+        : Promise.resolve([]),
+      resolveLiveCapabilityManifest({
+        userId,
+        isGuest: false,
+        webSearchAvailable: useVertex,
+      }),
+    ]);
 
   const latestRecentText = recentTurns.at(-1)?.text ?? "";
   const safeVoiceFacts = filterFactsForBot(
@@ -145,7 +152,7 @@ export async function POST(request: Request) {
   const groupedMemoryBlock = buildGroupedMemoryPromptBlock(
     safeVoiceFacts,
     latestRecentText,
-    { maxFacts: 80, maxChars: 6000 }
+    { maxFacts: 80, maxChars: 6000, journalEntries }
   );
 
   const systemInstruction = buildVoiceSystemInstruction({
