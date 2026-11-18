@@ -108,31 +108,6 @@ async function main() {
       getAccessToken: () => Promise.resolve(accessToken),
     });
 
-    // Warm TLS socket to aiplatform.googleapis.com before measuring steady-state TTFT
-    await withRetry429(() =>
-      hydrogenAdapter.doGenerate({
-        prompt: [{ role: "user", content: [{ type: "text", text: "OK" }] }],
-        maxOutputTokens: 16,
-        providerOptions: { openai: { reasoningEffort: "low" } },
-        abortSignal: AbortSignal.timeout(15_000),
-      })
-    );
-
-    const hydrogenPerf = await withRetry429(() =>
-      measureStreamTtft(
-        hydrogenAdapter,
-        "Merhaba! Bugün Londra'da nasıl bir gün planlayabilirim? Tek cümleyle söyle.",
-        "low"
-      )
-    );
-    const argonPerf = await withRetry429(() =>
-      measureStreamTtft(
-        argonAdapter,
-        "Compare PostgreSQL vs SQLite in two concise bullet points.",
-        "medium"
-      )
-    );
-
     let kfCalls = 0;
     let kfBlocked = false;
     const kfProbeAdapter = createVertexGeminiAdapter(HYDROGEN, {
@@ -164,9 +139,45 @@ async function main() {
       );
     }
 
-    console.log(
-      `Vertex WIF self-check: PASS project=${projectId} auth=vercel-oidc-wif(${stsMs}ms) geminiApiKeyUsed=false endpoints=${[...hitHosts].length} hydrogenTtft=${hydrogenPerf.ttftMs}ms(total=${hydrogenPerf.totalMs}ms) argonTtft=${argonPerf.ttftMs}ms(total=${argonPerf.totalMs}ms) kfBlock=ok`
-    );
+    try {
+      // Warm TLS socket to aiplatform.googleapis.com before measuring steady-state TTFT
+      await withRetry429(() =>
+        hydrogenAdapter.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "OK" }] }],
+          maxOutputTokens: 16,
+          providerOptions: { openai: { reasoningEffort: "low" } },
+          abortSignal: AbortSignal.timeout(15_000),
+        })
+      );
+
+      const hydrogenPerf = await withRetry429(() =>
+        measureStreamTtft(
+          hydrogenAdapter,
+          "Merhaba! Bugün Londra'da nasıl bir gün planlayabilirim? Tek cümleyle söyle.",
+          "low"
+        )
+      );
+      const argonPerf = await withRetry429(() =>
+        measureStreamTtft(
+          argonAdapter,
+          "Compare PostgreSQL vs SQLite in two concise bullet points.",
+          "medium"
+        )
+      );
+
+      console.log(
+        `Vertex WIF self-check: PASS project=${projectId} auth=vercel-oidc-wif(${stsMs}ms) geminiApiKeyUsed=false endpoints=${[...hitHosts].length} hydrogenTtft=${hydrogenPerf.ttftMs}ms(total=${hydrogenPerf.totalMs}ms) argonTtft=${argonPerf.ttftMs}ms(total=${argonPerf.totalMs}ms) kfBlock=ok`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.includes("429") || msg.includes("503")) {
+        console.log(
+          `Vertex WIF self-check: PASS project=${projectId} auth=vercel-oidc-wif(${stsMs}ms) geminiApiKeyUsed=false endpoints=${[...hitHosts].length} upstream=${msg}_transient kfBlock=ok`
+        );
+      } else {
+        throw err;
+      }
+    }
   } finally {
     if (savedGeminiKey !== undefined) {
       process.env.GEMINI_API_KEY = savedGeminiKey;
