@@ -43,6 +43,25 @@ async function measureStreamTtft(
   return { ttftMs, totalMs, chars };
 }
 
+async function withRetry429<T>(fn: () => PromiseLike<T>): Promise<T> {
+  let lastErr: unknown;
+  for (const delayMs of [0, 3000, 7000, 14_000]) {
+    if (delayMs > 0) {
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : "";
+      if (!msg.includes("429") && !msg.includes("503")) {
+        throw err;
+      }
+    }
+  }
+  throw lastErr;
+}
+
 async function main() {
   if (!isVertexWifConfigured()) {
     console.log(
@@ -90,22 +109,28 @@ async function main() {
     });
 
     // Warm TLS socket to aiplatform.googleapis.com before measuring steady-state TTFT
-    await hydrogenAdapter.doGenerate({
-      prompt: [{ role: "user", content: [{ type: "text", text: "OK" }] }],
-      maxOutputTokens: 16,
-      providerOptions: { openai: { reasoningEffort: "low" } },
-      abortSignal: AbortSignal.timeout(15_000),
-    });
-
-    const hydrogenPerf = await measureStreamTtft(
-      hydrogenAdapter,
-      "Merhaba! Bugün Londra'da nasıl bir gün planlayabilirim? Tek cümleyle söyle.",
-      "low"
+    await withRetry429(() =>
+      hydrogenAdapter.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "OK" }] }],
+        maxOutputTokens: 16,
+        providerOptions: { openai: { reasoningEffort: "low" } },
+        abortSignal: AbortSignal.timeout(15_000),
+      })
     );
-    const argonPerf = await measureStreamTtft(
-      argonAdapter,
-      "Compare PostgreSQL vs SQLite in two concise bullet points.",
-      "medium"
+
+    const hydrogenPerf = await withRetry429(() =>
+      measureStreamTtft(
+        hydrogenAdapter,
+        "Merhaba! Bugün Londra'da nasıl bir gün planlayabilirim? Tek cümleyle söyle.",
+        "low"
+      )
+    );
+    const argonPerf = await withRetry429(() =>
+      measureStreamTtft(
+        argonAdapter,
+        "Compare PostgreSQL vs SQLite in two concise bullet points.",
+        "medium"
+      )
     );
 
     let kfCalls = 0;
