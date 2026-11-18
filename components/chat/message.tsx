@@ -60,7 +60,7 @@ const PurePreviewMessage = ({
   message,
   vote,
   isLoading,
-  setMessages: _setMessages,
+  setMessages,
   regenerate,
   isReadonly,
   requiresScrollPadding: _requiresScrollPadding,
@@ -337,57 +337,31 @@ const PurePreviewMessage = ({
         );
       }
 
-      if (state === "approval-responded") {
+      if (state === "approval-requested" || state === "approval-responded") {
         return (
-          <div className={widthClass} key={toolCallId}>
-            <Tool className="w-full" defaultOpen={false}>
-              <ToolHeader state={state} type="tool-getWeather" />
-              <ToolContent>
-                <ToolInput input={part.input} />
-              </ToolContent>
-            </Tool>
-          </div>
+          <ApprovalCard
+            addToolApprovalResponse={addToolApprovalResponse}
+            approvalId={approvalId}
+            approved={
+              (part as { approval?: { approved?: boolean } }).approval?.approved
+            }
+            input={part.input}
+            isReadonly={isReadonly}
+            key={toolCallId}
+            locale={locale}
+            state={state}
+            title="Hava durumu sorgusunu onayla"
+            toolName="getWeather"
+          />
         );
       }
 
       return (
         <div className={widthClass} key={toolCallId}>
-          <Tool className="w-full" defaultOpen={state === "approval-requested"}>
+          <Tool className="w-full" defaultOpen={false}>
             <ToolHeader state={state} type="tool-getWeather" />
             <ToolContent>
-              {(state === "input-available" ||
-                state === "approval-requested") && (
-                <ToolInput input={part.input} />
-              )}
-              {state === "approval-requested" && approvalId && (
-                <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
-                  <button
-                    className="rounded-md px-3 py-1.5 text-muted-foreground text-sm transition-colors hover:bg-muted hover:text-foreground"
-                    onClick={() => {
-                      addToolApprovalResponse({
-                        id: approvalId,
-                        approved: false,
-                        reason: "User denied weather lookup",
-                      });
-                    }}
-                    type="button"
-                  >
-                    Deny
-                  </button>
-                  <button
-                    className="rounded-md bg-primary px-3 py-1.5 text-primary-foreground text-sm transition-colors hover:bg-primary/90"
-                    onClick={() => {
-                      addToolApprovalResponse({
-                        id: approvalId,
-                        approved: true,
-                      });
-                    }}
-                    type="button"
-                  >
-                    Allow
-                  </button>
-                </div>
-              )}
+              {state === "input-available" && <ToolInput input={part.input} />}
             </ToolContent>
           </Tool>
         </div>
@@ -490,6 +464,32 @@ const PurePreviewMessage = ({
           isReadonly={isReadonly}
           key={part.toolCallId}
           locale={locale}
+          onUpdateDraftInput={(patch) => {
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.id !== message.id
+                  ? m
+                  : {
+                      ...m,
+                      parts: m.parts.map((p) =>
+                        "toolCallId" in p && p.toolCallId === part.toolCallId
+                          ? ({
+                              ...p,
+                              input: {
+                                ...("input" in p &&
+                                typeof p.input === "object" &&
+                                p.input !== null
+                                  ? p.input
+                                  : {}),
+                                ...patch,
+                              },
+                            } as typeof p)
+                          : p
+                      ),
+                    }
+              )
+            );
+          }}
           output={
             part.state === "output-available" && "output" in part
               ? part.output
@@ -536,34 +536,29 @@ const PurePreviewMessage = ({
           ? "This tool could not finish. Please try again later."
           : undefined;
 
+      const isDraftApprovalTool =
+        toolName === "gmailCreateDraft" ||
+        toolName === "driveCreateDraftDoc" ||
+        toolName === "calendarCreateDraftEvent" ||
+        toolName === "githubCreateDraftReview" ||
+        toolName === "scheduleTask";
+
       if (
         state === "approval-requested" ||
         state === "approval-responded" ||
-        state === "output-denied"
+        state === "output-denied" ||
+        (state === "output-available" &&
+          isDraftApprovalTool &&
+          !isDisabledApiOutput(output) &&
+          !isSetupRequiredOutput(output))
       ) {
         const friendlyTitles: Record<string, string> = {
-          gmailCreateDraft:
-            locale === "tr"
-              ? "Gmail taslağı kaydet (asla göndermez)"
-              : "Save unsent Gmail draft (never sends)",
-          driveCreateDraftDoc:
-            locale === "tr"
-              ? "Google Drive özel [DRAFT] belgesi oluştur"
-              : "Save private Google Drive [DRAFT] doc",
-          calendarCreateDraftEvent:
-            locale === "tr"
-              ? "Özel [DRAFT] takvim etkinliği kaydet (davet göndermez)"
-              : "Save private [DRAFT] Calendar event (no invites)",
-          githubCreateDraftReview:
-            locale === "tr"
-              ? "Yayınlanmamış GitHub PR taslak incelemesi kaydet"
-              : "Save unpublished GitHub PR draft review",
-          generateVideoClip:
-            locale === "tr"
-              ? "Google Veo video klibi üret ($0.35 kota rezervasyonu)"
-              : "Queue Google Veo video clip ($0.35 spend reservation)",
-          scheduleTask:
-            locale === "tr" ? "Zamanlanmış rutin oluştur" : "Create routine",
+          gmailCreateDraft: "Gmail taslağı kaydet",
+          driveCreateDraftDoc: "Google Drive taslak belgesi",
+          calendarCreateDraftEvent: "Takvim taslak etkinliği",
+          githubCreateDraftReview: "GitHub PR taslak incelemesi",
+          generateVideoClip: "Video klibi oluştur",
+          scheduleTask: "Zamanlanmış rutin oluştur",
         };
         return (
           <ApprovalCard
@@ -574,6 +569,29 @@ const PurePreviewMessage = ({
             isReadonly={isReadonly}
             key={toolCallId}
             locale={locale}
+            onUpdateDraftInput={(patch) => {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id !== message.id
+                    ? m
+                    : {
+                        ...m,
+                        parts: m.parts.map((p) =>
+                          "toolCallId" in p && p.toolCallId === toolCallId
+                            ? ({
+                                ...p,
+                                input: {
+                                  ...(input ?? {}),
+                                  ...patch,
+                                },
+                              } as typeof p)
+                            : p
+                        ),
+                      }
+                )
+              );
+            }}
+            output={state === "output-available" ? output : undefined}
             state={state}
             title={friendlyTitles[toolName] ?? toolName}
             toolName={toolName}

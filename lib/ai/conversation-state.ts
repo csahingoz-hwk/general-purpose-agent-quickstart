@@ -46,10 +46,22 @@ export function prepareRetry(messages: ChatMessage[], targetId: string) {
   return { messages: history, replaceId: removable?.id };
 }
 
-/** Only a persisted pending approval may be changed, never its input/output. */
+export type EditedDraftApproval = {
+  approvalId: string;
+  recipient: string;
+  subject?: string;
+  body: string;
+};
+
+/**
+ * Only a persisted pending approval may be changed; submitted message inputs
+ * are never trusted directly. Explicit owner inline draft edits (validated via
+ * editedDraftApprovalSchema) may update only the matching email/message draft tool.
+ */
 export function applyApprovalResponses(
   saved: ChatMessage[],
-  submitted: ChatMessage[]
+  submitted: ChatMessage[],
+  editedDraft?: EditedDraftApproval
 ) {
   let count = 0;
   const messages = saved.map((message) => ({
@@ -76,8 +88,39 @@ export function applyApprovalResponses(
         return part;
       }
       count++;
+      const partType = String(part.type);
+      const dynamicToolName =
+        "toolName" in part ? String(part.toolName) : "";
+      const canApplyDraftEdit =
+        Boolean(editedDraft) &&
+        update.approval.approved === true &&
+        editedDraft?.approvalId === part.approval.id &&
+        (partType === "tool-gmailCreateDraft" ||
+          partType === "tool-draftOutboundMessage" ||
+          dynamicToolName === "gmailCreateDraft" ||
+          dynamicToolName === "draftOutboundMessage");
+      const baseInput =
+        "input" in part &&
+        typeof part.input === "object" &&
+        part.input !== null
+          ? (part.input as Record<string, unknown>)
+          : {};
+      const nextInput =
+        canApplyDraftEdit && editedDraft
+          ? {
+              ...baseInput,
+              recipient: editedDraft.recipient.trim(),
+              ...(editedDraft.subject !== undefined
+                ? { subject: editedDraft.subject.trim() }
+                : {}),
+              body: editedDraft.body,
+            }
+          : "input" in part
+            ? part.input
+            : undefined;
       return {
         ...part,
+        ...(nextInput !== undefined ? { input: nextInput } : {}),
         state: "approval-responded" as const,
         approval: { id: part.approval.id, approved: update.approval.approved },
       };

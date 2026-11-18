@@ -217,6 +217,7 @@ export async function POST(request: Request) {
       id,
       message,
       messages,
+      editedDraftApproval,
       selectedChatModel,
       selectedBotSlug,
       selectedVisibilityType,
@@ -302,7 +303,8 @@ export async function POST(request: Request) {
       try {
         uiMessages = applyApprovalResponses(
           convertToUIMessages(messagesFromDb),
-          messages as ChatMessage[]
+          messages as ChatMessage[],
+          editedDraftApproval
         );
       } catch {
         return new ChatbotError("bad_request:api").toResponse();

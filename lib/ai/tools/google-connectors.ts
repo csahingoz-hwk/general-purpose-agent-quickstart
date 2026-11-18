@@ -230,6 +230,7 @@ export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
           draftId: created.draftId,
           recipient,
           subject,
+          body,
           digest: review.digest,
           riskLevel: review.riskLevel,
           note: "Saved strictly as an UNSENT Gmail draft. Nothing was sent.",

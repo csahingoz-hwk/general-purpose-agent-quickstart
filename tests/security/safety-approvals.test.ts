@@ -212,3 +212,87 @@ test("askUserQuestion returns validated clickable options", async () => {
   assert.equal(result.kind, "clarifying-question");
   assert.equal(result.options.length, 2);
 });
+
+test("applyApprovalResponses applies explicit validated owner inline draft edits (Kime/Konu/body) only on matching approved email drafts", () => {
+  const assistantId = crypto.randomUUID();
+  const saved: ChatMessage[] = [
+    userMsg("Prepare Gmail draft to Mert"),
+    {
+      id: assistantId,
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-gmailCreateDraft",
+          toolCallId: "call_gm_1",
+          state: "approval-requested",
+          input: {
+            recipient: "mert@old.example",
+            subject: "İlk konu",
+            body: "Merhaba Mert,\nİlk taslak.",
+          },
+          approval: { id: "appr_gm_1" },
+        } as any,
+        {
+          type: "tool-scheduleTask",
+          toolCallId: "call_sched_1",
+          state: "approval-requested",
+          input: {
+            cronExpression: "0 8 * * 1-5",
+            timezone: "Europe/London",
+            prompt: "Morning summary",
+          },
+          approval: { id: "appr_sched_1" },
+        } as any,
+      ],
+    },
+  ];
+
+  const submitted: ChatMessage[] = [
+    saved[0],
+    {
+      id: assistantId,
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-gmailCreateDraft",
+          toolCallId: "call_gm_1",
+          state: "approval-responded",
+          approval: { id: "appr_gm_1", approved: true },
+        } as any,
+        {
+          type: "tool-scheduleTask",
+          toolCallId: "call_sched_1",
+          state: "approval-responded",
+          approval: { id: "appr_sched_1", approved: true },
+        } as any,
+      ],
+    },
+  ];
+
+  const merged = applyApprovalResponses(saved, submitted, {
+    approvalId: "appr_gm_1",
+    recipient: "mert.yeni@example.com",
+    subject: "Güncellenmiş Londra Toplantısı",
+    body: "Merhaba Mert,\n\nSaat 15:00 uygun.\nSelamlar,\nÇağlar",
+  });
+
+  const gmailPart = merged[1].parts[0] as any;
+  assert.equal(gmailPart.input.recipient, "mert.yeni@example.com");
+  assert.equal(gmailPart.input.subject, "Güncellenmiş Londra Toplantısı");
+  assert.equal(
+    gmailPart.input.body,
+    "Merhaba Mert,\n\nSaat 15:00 uygun.\nSelamlar,\nÇağlar"
+  );
+
+  // Non-email tools ignore editedDraftApproval even if approvalId were targeted
+  const nonDraftAttempt = applyApprovalResponses(saved, submitted, {
+    approvalId: "appr_sched_1",
+    recipient: "mert.yeni@example.com",
+    subject: "Ignored",
+    body: "Ignored",
+  });
+  assert.equal(
+    (nonDraftAttempt[1].parts[1] as any).input.prompt,
+    "Morning summary"
+  );
+});

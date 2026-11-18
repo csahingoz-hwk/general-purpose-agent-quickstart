@@ -26,11 +26,19 @@ const toolApprovalMessageSchema = z.object({
   parts: z.array(z.record(z.string(), z.unknown())),
 });
 
+export const editedDraftApprovalSchema = z.object({
+  approvalId: z.string().min(1).max(160),
+  recipient: z.string().trim().email().max(320),
+  subject: z.string().trim().max(200).optional(),
+  body: z.string().trim().min(1).max(4000),
+});
+
 export const postRequestBodySchema = z
   .object({
     id: z.string().uuid(),
     message: userMessageSchema.optional(),
     messages: z.array(toolApprovalMessageSchema).optional(),
+    editedDraftApproval: editedDraftApprovalSchema.optional(),
     retry: z.boolean().optional(),
     selectedChatModel: z.string(),
     selectedBotSlug: z.string().max(64).optional(),
