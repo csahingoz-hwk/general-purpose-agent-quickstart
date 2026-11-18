@@ -1,3 +1,7 @@
+import {
+  buildGoogleWorkspaceEnableApiUrl,
+  extractGoogleClientProjectNumber,
+} from "@/lib/connectors/card-state";
 import { fenceUntrustedContent } from "@/lib/safety/untrusted-content";
 
 const WORK_DATA_BOUNDARY_PATTERN =
@@ -144,28 +148,125 @@ export type GoogleConnectorErrorReason =
   | "service_disabled"
   | "upstream_error";
 
+export type ParsedGoogleApiErrorDiagnostics = {
+  googleStatus: string | null;
+  googleReasons: string[];
+  errorProjectNumber: string | null;
+  activationUrl: string | null;
+};
+
+export function parseGoogleApiErrorDiagnostics(
+  rawBody: string
+): ParsedGoogleApiErrorDiagnostics {
+  let googleStatus: string | null = null;
+  const reasonSet = new Set<string>();
+  let errorProjectNumber: string | null = null;
+  let activationUrl: string | null = null;
+
+  try {
+    const parsed = JSON.parse(rawBody) as {
+      error?: {
+        status?: unknown;
+        message?: unknown;
+        errors?: Array<{ reason?: unknown }>;
+        details?: Array<{
+          reason?: unknown;
+          metadata?: {
+            consumer?: unknown;
+            activationUrl?: unknown;
+          };
+        }>;
+      };
+    };
+    const errObj = parsed?.error;
+    if (errObj && typeof errObj === "object") {
+      if (typeof errObj.status === "string") {
+        googleStatus = errObj.status.slice(0, 64);
+      }
+      for (const item of errObj.errors ?? []) {
+        if (typeof item?.reason === "string" && item.reason.trim()) {
+          reasonSet.add(item.reason.trim().slice(0, 80));
+        }
+      }
+      for (const detail of errObj.details ?? []) {
+        if (typeof detail?.reason === "string" && detail.reason.trim()) {
+          reasonSet.add(detail.reason.trim().slice(0, 80));
+        }
+        const consumer =
+          typeof detail?.metadata?.consumer === "string"
+            ? detail.metadata.consumer
+            : "";
+        const consumerMatch = consumer.match(/projects\/(\d{6,20})\b/i);
+        if (consumerMatch?.[1]) {
+          errorProjectNumber = consumerMatch[1];
+        }
+        const rawAct =
+          typeof detail?.metadata?.activationUrl === "string"
+            ? detail.metadata.activationUrl.trim()
+            : "";
+        if (
+          rawAct &&
+          /^https:\/\/console\.(?:developers|cloud)\.google\.com\//i.test(
+            rawAct
+          )
+        ) {
+          activationUrl = rawAct.slice(0, 300);
+        }
+      }
+      if (!errorProjectNumber && typeof errObj.message === "string") {
+        const msgMatch = errObj.message.match(/\bproject\s+#?(\d{6,20})\b/i);
+        if (msgMatch?.[1]) {
+          errorProjectNumber = msgMatch[1];
+        }
+      }
+    }
+  } catch {
+    const msgMatch = rawBody.match(/\bproject\s+#?(\d{6,20})\b/i);
+    if (msgMatch?.[1]) {
+      errorProjectNumber = msgMatch[1];
+    }
+  }
+
+  return {
+    googleStatus,
+    googleReasons: [...reasonSet],
+    errorProjectNumber,
+    activationUrl,
+  };
+}
+
 export class GoogleConnectorApiError extends Error {
   readonly statusCode: number;
   readonly reason: GoogleConnectorErrorReason;
   readonly friendlyMessage: string;
+  readonly projectNumber: string | null;
+  readonly enableApiUrl: string | null;
+  readonly googleReasons: string[];
 
   constructor(opts: {
     statusCode: number;
     reason: GoogleConnectorErrorReason;
     friendlyMessage: string;
     internalMessage: string;
+    projectNumber?: string | null;
+    enableApiUrl?: string | null;
+    googleReasons?: string[];
   }) {
     super(opts.internalMessage);
     this.name = "GoogleConnectorApiError";
     this.statusCode = opts.statusCode;
     this.reason = opts.reason;
     this.friendlyMessage = opts.friendlyMessage;
+    this.projectNumber = opts.projectNumber ?? null;
+    this.enableApiUrl = opts.enableApiUrl ?? null;
+    this.googleReasons = opts.googleReasons ?? [];
   }
 }
 
-async function buildGoogleApiError(
-  serviceLabel: "Gmail" | "Google Drive",
-  res: Response
+export async function buildGoogleApiError(
+  serviceLabel: "Gmail" | "Google Drive" | "Google Calendar",
+  res: Response,
+  context?: { oauthClientProjectNumber?: string | null }
 ): Promise<GoogleConnectorApiError> {
   let rawBody = "";
   try {
@@ -174,25 +275,69 @@ async function buildGoogleApiError(
     rawBody = "";
   }
   const status = res.status;
+  const diag = parseGoogleApiErrorDiagnostics(rawBody);
+  const oauthClientProjectNumber =
+    context?.oauthClientProjectNumber ??
+    extractGoogleClientProjectNumber(process.env.AUTH_GOOGLE_ID);
+  const resolvedProjectNumber =
+    diag.errorProjectNumber ?? oauthClientProjectNumber ?? null;
+
   if (status === 401) {
+    console.error("[google-connector] api_error", {
+      service: serviceLabel,
+      httpStatus: 401,
+      classifiedReason: "token_expired",
+      googleStatus: diag.googleStatus,
+      googleReasons: diag.googleReasons,
+      errorProjectNumber: diag.errorProjectNumber,
+      oauthClientProjectNumber,
+    });
     return new GoogleConnectorApiError({
       statusCode: 401,
       reason: "token_expired",
       friendlyMessage: `Your Google session expired. Tap Reconnect Google to refresh read-only ${serviceLabel} access.`,
       internalMessage: `${serviceLabel} API unauthorized (HTTP 401)`,
+      projectNumber: resolvedProjectNumber,
+      googleReasons: diag.googleReasons,
     });
   }
   if (status === 403) {
     const isDisabled =
-      /SERVICE_DISABLED|accessNotConfigured|has not been used in project/i.test(
+      diag.googleReasons.includes("SERVICE_DISABLED") ||
+      diag.googleReasons.includes("accessNotConfigured") ||
+      /SERVICE_DISABLED|accessNotConfigured|has not been used in project|it is disabled/i.test(
         rawBody
       );
+    const classifiedReason: GoogleConnectorErrorReason = isDisabled
+      ? "service_disabled"
+      : "scope_missing";
+    const enableApiUrl = isDisabled
+      ? buildGoogleWorkspaceEnableApiUrl(resolvedProjectNumber)
+      : null;
+
+    console.error("[google-connector] api_error", {
+      service: serviceLabel,
+      httpStatus: 403,
+      classifiedReason,
+      googleStatus: diag.googleStatus,
+      googleReasons: diag.googleReasons,
+      errorProjectNumber: diag.errorProjectNumber,
+      oauthClientProjectNumber,
+      activationUrl: diag.activationUrl ?? enableApiUrl,
+    });
+
     if (isDisabled) {
+      const projText = resolvedProjectNumber
+        ? ` on Google Cloud project #${resolvedProjectNumber}`
+        : " on Google Cloud";
       return new GoogleConnectorApiError({
         statusCode: 403,
         reason: "service_disabled",
-        friendlyMessage: `${serviceLabel} API is still activating on Google Cloud — wait a minute or tap Reconnect Google.`,
-        internalMessage: `${serviceLabel} API disabled on GCP project (HTTP 403)`,
+        friendlyMessage: `Your Google account is connected, and ${serviceLabel} API needs to be enabled${projText}. Tap Enable APIs, then Try again.`,
+        internalMessage: `${serviceLabel} API disabled on GCP project ${resolvedProjectNumber ?? "unknown"} (HTTP 403)`,
+        projectNumber: resolvedProjectNumber,
+        enableApiUrl,
+        googleReasons: diag.googleReasons,
       });
     }
     return new GoogleConnectorApiError({
@@ -200,13 +345,26 @@ async function buildGoogleApiError(
       reason: "scope_missing",
       friendlyMessage: `${serviceLabel} read permission isn't granted yet. Tap Reconnect Google and allow ${serviceLabel} access.`,
       internalMessage: `${serviceLabel} API forbidden / missing scope (HTTP 403)`,
+      projectNumber: resolvedProjectNumber,
+      googleReasons: diag.googleReasons,
     });
   }
+  console.error("[google-connector] api_error", {
+    service: serviceLabel,
+    httpStatus: status,
+    classifiedReason: "upstream_error",
+    googleStatus: diag.googleStatus,
+    googleReasons: diag.googleReasons,
+    errorProjectNumber: diag.errorProjectNumber,
+    oauthClientProjectNumber,
+  });
   return new GoogleConnectorApiError({
     statusCode: status,
     reason: "upstream_error",
-    friendlyMessage: `Could not reach ${serviceLabel} right now. Tap Reconnect Google or try again shortly.`,
+    friendlyMessage: `Could not reach ${serviceLabel} right now. Tap Try again shortly.`,
     internalMessage: `${serviceLabel} API failed (HTTP ${status})`,
+    projectNumber: resolvedProjectNumber,
+    googleReasons: diag.googleReasons,
   });
 }
 
@@ -224,6 +382,7 @@ export async function readGmailMessages(opts: {
   accessToken: string;
   query?: string;
   maxResults?: number;
+  oauthClientProjectNumber?: string | null;
   fetchImpl?: typeof fetch;
 }): Promise<FencedGmailMessage[]> {
   const fetchFn = opts.fetchImpl ?? fetch;
@@ -248,7 +407,9 @@ export async function readGmailMessages(opts: {
     signal: AbortSignal.timeout(12_000),
   });
   if (!listRes.ok) {
-    throw await buildGoogleApiError("Gmail", listRes);
+    throw await buildGoogleApiError("Gmail", listRes, {
+      oauthClientProjectNumber: opts.oauthClientProjectNumber,
+    });
   }
 
   const listJson = (await listRes.json()) as {
@@ -403,6 +564,7 @@ export async function readDriveFiles(opts: {
   query?: string;
   maxResults?: number;
   includeExcerpt?: boolean;
+  oauthClientProjectNumber?: string | null;
   fetchImpl?: typeof fetch;
 }): Promise<FencedDriveFile[]> {
   const fetchFn = opts.fetchImpl ?? fetch;
@@ -436,7 +598,9 @@ export async function readDriveFiles(opts: {
   });
 
   if (!listRes.ok) {
-    throw await buildGoogleApiError("Google Drive", listRes);
+    throw await buildGoogleApiError("Google Drive", listRes, {
+      oauthClientProjectNumber: opts.oauthClientProjectNumber,
+    });
   }
 
   const listJson = (await listRes.json()) as {

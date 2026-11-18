@@ -28,14 +28,15 @@ function mapGoogleReadError(
   service: "Gmail" | "Google Drive"
 ) {
   if (err instanceof GoogleConnectorApiError) {
-    if (err.statusCode === 401 || err.statusCode === 403) {
-      invalidateGoogleAccessTokenCache(userId);
-    }
     if (err.reason === "token_expired" || err.reason === "scope_missing") {
+      invalidateGoogleAccessTokenCache(userId);
       return {
         status: "reconnect_required" as const,
         connectProvider: "google" as const,
         code: err.reason,
+        accountConnected: false,
+        projectNumber: err.projectNumber,
+        uiCardRendered: true,
         message: err.friendlyMessage,
       };
     }
@@ -43,6 +44,10 @@ function mapGoogleReadError(
       status: "connector_error" as const,
       connectProvider: "google" as const,
       code: err.reason,
+      accountConnected: true,
+      projectNumber: err.projectNumber,
+      enableApiUrl: err.enableApiUrl,
+      uiCardRendered: true,
       message: err.friendlyMessage,
     };
   }
@@ -50,7 +55,9 @@ function mapGoogleReadError(
     status: "connector_error" as const,
     connectProvider: "google" as const,
     code: "upstream_error" as const,
-    message: `Could not reach ${service} right now. Tap Reconnect Google or try again shortly.`,
+    accountConnected: true,
+    uiCardRendered: true,
+    message: `Could not reach ${service} right now. Tap Try again shortly.`,
   };
 }
 
@@ -94,6 +101,7 @@ export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
           accessToken: auth.accessToken,
           query,
           maxResults: maxResults ?? 10,
+          oauthClientProjectNumber: auth.oauthClientProjectNumber,
           fetchImpl,
         });
         return {
@@ -145,6 +153,7 @@ export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
           accessToken: auth.accessToken,
           query,
           maxResults: maxResults ?? 5,
+          oauthClientProjectNumber: auth.oauthClientProjectNumber,
           fetchImpl,
         });
         return {

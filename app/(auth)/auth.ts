@@ -7,6 +7,7 @@ import { GITHUB_VAULT_SECRET_NAME } from "@/lib/connectors/calendar-and-github";
 import {
   GOOGLE_VAULT_SECRET_NAMES,
   invalidateGoogleAccessTokenCache,
+  isAllowedOwnerGoogleConnectorEmail,
 } from "@/lib/connectors/google-vault-auth";
 import { getOrCreateGoogleOwner } from "@/lib/db/queries";
 import {
@@ -109,18 +110,37 @@ export const {
       if (account?.provider !== "google") {
         return false;
       }
-      const owner = await resolveGoogleOwner(profile, getOrCreateGoogleOwner);
+      const grantedScope = account.scope ?? "";
+      const hasWorkspaceScope =
+        grantedScope.includes("gmail.") ||
+        grantedScope.includes("drive.") ||
+        grantedScope.includes("calendar.");
+
+      const existingSession = hasWorkspaceScope ? await rawAuth() : null;
+      let owner: { id: string; email: string; type: "regular" } | null = null;
+
+      if (
+        hasWorkspaceScope &&
+        existingSession?.user &&
+        isOwnerIdentity(existingSession.user) &&
+        existingSession.user.email &&
+        profile?.email_verified === true &&
+        isAllowedOwnerGoogleConnectorEmail(profile.email)
+      ) {
+        owner = {
+          id: existingSession.user.id,
+          email: existingSession.user.email,
+          type: "regular",
+        };
+      } else {
+        owner = await resolveGoogleOwner(profile, getOrCreateGoogleOwner);
+      }
       if (!owner) {
         return false;
       }
       // Keep database identity stable so existing conversations stay attached.
       Object.assign(user, owner);
 
-      const grantedScope = account.scope ?? "";
-      const hasWorkspaceScope =
-        grantedScope.includes("gmail.") ||
-        grantedScope.includes("drive.") ||
-        grantedScope.includes("calendar.");
       if (hasWorkspaceScope && isVaultConfigured()) {
         try {
           invalidateGoogleAccessTokenCache(owner.id);

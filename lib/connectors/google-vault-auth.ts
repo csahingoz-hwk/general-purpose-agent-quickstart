@@ -1,9 +1,16 @@
 import { createHash } from "node:crypto";
+import { isOwnerEmail } from "@/lib/access-policy";
+import { extractGoogleClientProjectNumber as parseClientProjectNumber } from "@/lib/connectors/card-state";
 import {
   createPostgresVaultStore,
   type SecretVaultStore,
   VaultError,
 } from "@/lib/vault/secret-vault";
+
+export {
+  buildGoogleWorkspaceEnableApiUrl,
+  extractGoogleClientProjectNumber,
+} from "@/lib/connectors/card-state";
 
 export const GOOGLE_VAULT_SECRET_NAMES = {
   accessToken: "GOOGLE_CONNECTOR_ACCESS_TOKEN",
@@ -12,6 +19,11 @@ export const GOOGLE_VAULT_SECRET_NAMES = {
   clientSecret: "GOOGLE_CONNECTOR_CLIENT_SECRET",
 } as const;
 
+export const OWNER_GOOGLE_TEST_USER_EMAILS = [
+  "csahingoz@gmail.com",
+  "hawkeyedlion.wos@gmail.com",
+] as const;
+
 export const GOOGLE_WORKSPACE_CONNECT_SCOPE = [
   "openid",
   "email",
@@ -19,14 +31,35 @@ export const GOOGLE_WORKSPACE_CONNECT_SCOPE = [
   "https://www.googleapis.com/auth/gmail.readonly",
   "https://www.googleapis.com/auth/gmail.compose",
   "https://www.googleapis.com/auth/drive.readonly",
+  "https://www.googleapis.com/auth/calendar.readonly",
   "https://www.googleapis.com/auth/calendar.events",
 ].join(" ");
+
+/**
+ * Allows an already-authenticated owner session to link Google Workspace tokens
+ * from either the configured APP_OWNER_EMAIL or the owner's explicit OAuth test
+ * accounts (`csahingoz@gmail.com` and `hawkeyedlion.wos@gmail.com`).
+ * Initial app `/login` continues to require `isOwnerEmail` strictly.
+ */
+export function isAllowedOwnerGoogleConnectorEmail(email: unknown): boolean {
+  if (isOwnerEmail(email)) {
+    return true;
+  }
+  if (typeof email !== "string") {
+    return false;
+  }
+  const normalized = email.trim().toLowerCase();
+  return (OWNER_GOOGLE_TEST_USER_EMAILS as readonly string[]).includes(
+    normalized
+  );
+}
 
 export type ResolvedGoogleAuth =
   | {
       ok: true;
       accessToken: string;
       source: "vault_access_token" | "vault_refresh_token";
+      oauthClientProjectNumber?: string;
     }
   | {
       ok: false;
@@ -35,6 +68,7 @@ export type ResolvedGoogleAuth =
         | "connector_secret_missing"
         | "oauth_refresh_failed";
       message: string;
+      oauthClientProjectNumber?: string;
     };
 
 const refreshedTokenCache = new Map<
@@ -58,6 +92,7 @@ export async function resolveGoogleAccessTokenFromVault(opts: {
   const store = opts.vaultStore ?? createPostgresVaultStore();
   const fetchFn = opts.fetchImpl ?? fetch;
   const canUseRuntimeCache = !opts.fetchImpl && !opts.vaultStore;
+  const envProjectNumber = parseClientProjectNumber(process.env.AUTH_GOOGLE_ID);
 
   try {
     const [directToken, refreshToken, vaultClientId, vaultClientSecret] =
@@ -84,6 +119,11 @@ export async function resolveGoogleAccessTokenFromVault(opts: {
       vaultClientId?.trim() || process.env.AUTH_GOOGLE_ID?.trim() || "";
     const clientSecret =
       vaultClientSecret?.trim() || process.env.AUTH_GOOGLE_SECRET?.trim() || "";
+    const oauthClientProjectNumber =
+      parseClientProjectNumber(clientId) ?? envProjectNumber ?? undefined;
+    const projectSpread = oauthClientProjectNumber
+      ? { oauthClientProjectNumber }
+      : {};
 
     // Prefer OAuth refresh_token whenever present so 1-hour access tokens never go stale.
     if (refreshToken?.trim() && clientId && clientSecret) {
@@ -103,6 +143,7 @@ export async function resolveGoogleAccessTokenFromVault(opts: {
             ok: true,
             accessToken: cached.accessToken,
             source: "vault_refresh_token",
+            ...projectSpread,
           };
         }
       }
@@ -126,16 +167,34 @@ export async function resolveGoogleAccessTokenFromVault(opts: {
 
       if (!response.ok) {
         refreshedTokenCache.delete(opts.userId);
+        let oauthError = "unknown";
+        try {
+          const errPayload = (await response.json()) as {
+            error?: string;
+          };
+          if (typeof errPayload.error === "string") {
+            oauthError = errPayload.error.slice(0, 64);
+          }
+        } catch {
+          /* ignore non-json error body */
+        }
+        console.error("[google-connector] oauth_refresh_failed", {
+          httpStatus: response.status,
+          oauthError,
+          oauthClientProjectNumber,
+        });
         return {
           ok: false,
           code: "oauth_refresh_failed",
           message:
             "Your Google connection expired or needs updated permissions. Tap Reconnect Google to continue.",
+          ...projectSpread,
         };
       }
 
       const tokenJson = (await response.json()) as {
         access_token?: string;
+        refresh_token?: string;
         expires_in?: number;
       };
       if (!tokenJson.access_token?.trim()) {
@@ -144,7 +203,21 @@ export async function resolveGoogleAccessTokenFromVault(opts: {
           code: "oauth_refresh_failed",
           message:
             "Your Google connection expired. Tap Reconnect Google to refresh access.",
+          ...projectSpread,
         };
+      }
+
+      // Persist rotated refresh_token if Google issued a new one
+      const rotatedRefresh = tokenJson.refresh_token?.trim();
+      if (rotatedRefresh && rotatedRefresh !== trimmedRefresh) {
+        await store
+          .upsertSecret({
+            userId: opts.userId,
+            name: GOOGLE_VAULT_SECRET_NAMES.refreshToken,
+            provider: "google",
+            plaintext: rotatedRefresh,
+          })
+          .catch(() => undefined);
       }
 
       const minted = tokenJson.access_token.trim();
@@ -164,6 +237,7 @@ export async function resolveGoogleAccessTokenFromVault(opts: {
         ok: true,
         accessToken: minted,
         source: "vault_refresh_token",
+        ...projectSpread,
       };
     }
 
@@ -172,6 +246,7 @@ export async function resolveGoogleAccessTokenFromVault(opts: {
         ok: true,
         accessToken: directToken.trim(),
         source: "vault_access_token",
+        ...projectSpread,
       };
     }
 
@@ -180,8 +255,12 @@ export async function resolveGoogleAccessTokenFromVault(opts: {
       code: "connector_secret_missing",
       message:
         "Google isn't connected yet. Tap Connect Google to allow read-only Gmail, Calendar, and Drive access.",
+      ...projectSpread,
     };
   } catch (error) {
+    const envSpread = envProjectNumber
+      ? { oauthClientProjectNumber: envProjectNumber }
+      : {};
     if (
       error instanceof VaultError &&
       (error.code === "vault_key_missing" || error.code === "vault_unavailable")
@@ -191,6 +270,7 @@ export async function resolveGoogleAccessTokenFromVault(opts: {
         code: "vault_not_configured",
         message:
           "Secure account storage isn't ready yet. Open Setup to check your Google connection.",
+        ...envSpread,
       };
     }
     return {
@@ -198,6 +278,7 @@ export async function resolveGoogleAccessTokenFromVault(opts: {
       code: "oauth_refresh_failed",
       message:
         "Your Google connection expired. Tap Reconnect Google to refresh it.",
+      ...envSpread,
     };
   }
 }

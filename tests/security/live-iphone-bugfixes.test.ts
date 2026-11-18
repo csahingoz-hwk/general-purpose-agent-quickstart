@@ -3,9 +3,13 @@ import test from "node:test";
 import { createGoogleConnectorTools } from "../../lib/ai/tools/google-connectors";
 import { isSetupRequiredOutput } from "../../lib/connectors/card-state";
 import {
+  extractGoogleClientProjectNumber,
   GOOGLE_VAULT_SECRET_NAMES,
+  GOOGLE_WORKSPACE_CONNECT_SCOPE,
+  isAllowedOwnerGoogleConnectorEmail,
   resolveGoogleAccessTokenFromVault,
 } from "../../lib/connectors/google-vault-auth";
+import { parseGoogleApiErrorDiagnostics } from "../../lib/connectors/google-workspace";
 import {
   createResilientChunkMergeRunner,
   DEFAULT_MERGE_CHUNK_CHARS,
@@ -346,4 +350,179 @@ test("Bug 2: gmailReadMessages({}) defaults to latest 10 inbox messages (in:inbo
     assert.equal(isSetupRequiredOutput(out), true);
     assert.doesNotMatch(out.message, /Gmail message list failed|\{/);
   }
+});
+
+test("Gmail 403 SERVICE_DISABLED extracts project number without leaking secrets, keeps accountConnected=true (never says not connected), persists rotated refresh tokens, allows both owner test users, and returns 10 fenced inbox messages", async () => {
+  // 1) Project-number extractor strips opaque client ID suffix
+  assert.equal(
+    extractGoogleClientProjectNumber(
+      "297951472081-syntheticopaqueid123456.apps.googleusercontent.com"
+    ),
+    "297951472081"
+  );
+  assert.equal(extractGoogleClientProjectNumber("non-standard-client"), null);
+
+  // 2) OAuth scopes & explicit owner test-user emails
+  assert.match(GOOGLE_WORKSPACE_CONNECT_SCOPE, /\bgmail\.readonly\b/);
+  assert.match(GOOGLE_WORKSPACE_CONNECT_SCOPE, /\bcalendar\.readonly\b/);
+  assert.match(GOOGLE_WORKSPACE_CONNECT_SCOPE, /\bdrive\.readonly\b/);
+  process.env.APP_OWNER_EMAIL = "csahingoz@gmail.com";
+  assert.equal(isAllowedOwnerGoogleConnectorEmail("csahingoz@gmail.com"), true);
+  assert.equal(
+    isAllowedOwnerGoogleConnectorEmail("hawkeyedlion.wos@gmail.com"),
+    true
+  );
+  assert.equal(
+    isAllowedOwnerGoogleConnectorEmail("stranger@example.com"),
+    false
+  );
+
+  // 3) 403 SERVICE_DISABLED JSON body parsing + Gmail tool output
+  const sampleGoogle403 = JSON.stringify({
+    error: {
+      code: 403,
+      message:
+        "Gmail API has not been used in project 297951472081 before or it is disabled.",
+      status: "PERMISSION_DENIED",
+      errors: [{ domain: "usageLimits", reason: "accessNotConfigured" }],
+      details: [
+        {
+          "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+          reason: "SERVICE_DISABLED",
+          domain: "googleapis.com",
+          metadata: {
+            consumer: "projects/297951472081",
+            service: "gmail.googleapis.com",
+            activationUrl:
+              "https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=297951472081",
+          },
+        },
+      ],
+    },
+  });
+  const diag = parseGoogleApiErrorDiagnostics(sampleGoogle403);
+  assert.equal(diag.googleStatus, "PERMISSION_DENIED");
+  assert.equal(diag.errorProjectNumber, "297951472081");
+  assert.ok(diag.googleReasons.includes("SERVICE_DISABLED"));
+  assert.ok(diag.googleReasons.includes("accessNotConfigured"));
+
+  const vault = createInMemoryVaultStore(MASTER_KEY);
+  await vault.upsertSecret({
+    userId: "owner-1",
+    name: GOOGLE_VAULT_SECRET_NAMES.refreshToken,
+    plaintext: "1//initial-refresh-token",
+  });
+  await vault.upsertSecret({
+    userId: "owner-1",
+    name: GOOGLE_VAULT_SECRET_NAMES.clientId,
+    plaintext:
+      "297951472081-syntheticopaqueid123456.apps.googleusercontent.com",
+  });
+  await vault.upsertSecret({
+    userId: "owner-1",
+    name: GOOGLE_VAULT_SECRET_NAMES.clientSecret,
+    plaintext: "test-only-oauth-secret-value",
+  });
+
+  const disabledTools = createGoogleConnectorTools({
+    userId: "owner-1",
+    vaultStore: vault,
+    fetchImpl: ((input) => {
+      const url = String(input);
+      if (url === "https://oauth2.googleapis.com/token") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              access_token: "ya29.valid-connected-token",
+              refresh_token: "1//rotated-persisted-refresh-token",
+            }),
+            { status: 200 }
+          )
+        );
+      }
+      return Promise.resolve(new Response(sampleGoogle403, { status: 403 }));
+    }) as typeof fetch,
+  });
+
+  const disabledOut = await (disabledTools.gmailReadMessages as any).execute(
+    {},
+    { toolCallId: "gm-disabled", messages: [] }
+  );
+  assert.equal(disabledOut.status, "connector_error");
+  assert.equal(disabledOut.code, "service_disabled");
+  assert.equal(disabledOut.accountConnected, true);
+  assert.equal(disabledOut.projectNumber, "297951472081");
+  assert.equal(
+    disabledOut.enableApiUrl,
+    "https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com,calendar-json.googleapis.com,drive.googleapis.com&project=297951472081"
+  );
+  assert.doesNotMatch(
+    disabledOut.message,
+    /not connected|isn't connected|henüz bağlı değil|henüz bağlanmamış/i
+  );
+
+  // Verify rotated refresh_token persisted in Vault
+  const storedRefresh = await vault.resolveSecret({
+    userId: "owner-1",
+    name: GOOGLE_VAULT_SECRET_NAMES.refreshToken,
+  });
+  assert.equal(storedRefresh, "1//rotated-persisted-refresh-token");
+
+  // 4) Once enabled, gmailReadMessages({}) returns all 10 latest inbox messages (read-only)
+  const tenStubs = Array.from({ length: 12 }, (_, idx) => ({
+    id: `msg_${idx + 1}`,
+    threadId: `thr_${idx + 1}`,
+  }));
+  const liveInboxTools = createGoogleConnectorTools({
+    userId: "owner-1",
+    vaultStore: vault,
+    fetchImpl: ((input, init) => {
+      const url = String(input);
+      if (url === "https://oauth2.googleapis.com/token") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ access_token: "ya29.enabled-inbox-token" }),
+            { status: 200 }
+          )
+        );
+      }
+      assert.equal(init?.method, "GET", "Gmail read must strictly use GET");
+      if (url.includes("/gmail/v1/users/me/messages?")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ messages: tenStubs }), { status: 200 })
+        );
+      }
+      const idMatch = url.match(/\/messages\/(msg_\d+)/);
+      const id = idMatch?.[1] ?? "msg_0";
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            id,
+            threadId: `thr_${id}`,
+            snippet: `Preview snippet for ${id}`,
+            payload: {
+              headers: [
+                { name: "Subject", value: `Inbox item ${id}` },
+                { name: "From", value: "Sender <sender@example.com>" },
+                { name: "Date", value: "Wed, 18 Nov 2026 08:50:00 +0300" },
+              ],
+            },
+          }),
+          { status: 200 }
+        )
+      );
+    }) as typeof fetch,
+  });
+
+  const okInbox = await (liveInboxTools.gmailReadMessages as any).execute(
+    {},
+    { toolCallId: "gm-10", messages: [] }
+  );
+  assert.equal(okInbox.status, "ok");
+  assert.equal(okInbox.count, 10);
+  assert.equal(okInbox.messages.length, 10);
+  assert.match(
+    okInbox.messages[0]?.fencedContent ?? "",
+    /<untrusted_content source="connector:gmail:msg_1"/
+  );
 });

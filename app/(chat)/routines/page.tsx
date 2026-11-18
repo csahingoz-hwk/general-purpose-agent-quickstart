@@ -15,7 +15,6 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import useSWR from "swr";
-import { connectGoogleWorkspace } from "@/app/(auth)/actions";
 import { SubpageHeader } from "@/components/chat/subpage-header";
 import { toast } from "@/components/chat/toast";
 import { cn, fetcher } from "@/lib/utils";
@@ -635,21 +634,23 @@ function RoutinesPageContent() {
                       Disconnect
                     </button>
                   </div>
+                ) : connectorsData?.googleSignInReady === false ? (
+                  <button
+                    className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs opacity-50"
+                    disabled
+                    type="button"
+                  >
+                    Connect Google
+                  </button>
                 ) : (
-                  <form action={connectGoogleWorkspace}>
-                    <input
-                      name="returnTo"
-                      type="hidden"
-                      value="/routines?tab=vault"
-                    />
-                    <button
-                      className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs transition-colors hover:bg-primary/90 disabled:opacity-50"
-                      disabled={connectorsData?.googleSignInReady === false}
-                      type="submit"
-                    >
-                      Connect Google
-                    </button>
-                  </form>
+                  <a
+                    className="inline-flex min-h-11 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs transition-colors hover:bg-primary/90"
+                    href={`${basePath}/connect/google/start?returnTo=${encodeURIComponent("/routines?tab=vault")}`}
+                    rel="noopener noreferrer"
+                    target="_blank"
+                  >
+                    Connect Google
+                  </a>
                 )}
               </div>
 

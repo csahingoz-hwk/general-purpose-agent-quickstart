@@ -7,6 +7,7 @@ export const authConfig = {
   trustHost: true,
   pages: {
     signIn: `${base}/login`,
+    error: `${base}/connect/google`,
     newUser: `${base}/`,
   },
   providers: [],

@@ -31,6 +31,7 @@ export async function connectGoogleWorkspace(formData?: FormData) {
       access_type: "offline",
       prompt: "consent",
       include_granted_scopes: "true",
+      ...(session.user.email ? { login_hint: session.user.email } : {}),
     }
   );
 }

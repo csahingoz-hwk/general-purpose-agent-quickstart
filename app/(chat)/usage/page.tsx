@@ -13,7 +13,6 @@ import { useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import { Suspense, useEffect, useState } from "react";
 import useSWR from "swr";
-import { connectGoogleWorkspace } from "@/app/(auth)/actions";
 import { HomeLocationPanel } from "@/components/chat/home-location";
 import { MascotPicker } from "@/components/chat/mascot-preference";
 import { SubpageHeader } from "@/components/chat/subpage-header";
@@ -335,21 +334,23 @@ function UsagePageContent() {
                     Disconnect
                   </button>
                 </div>
+              ) : connectors?.googleSignInReady === false ? (
+                <button
+                  className="inline-flex min-h-10 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs opacity-50"
+                  disabled
+                  type="button"
+                >
+                  Connect Google
+                </button>
               ) : (
-                <form action={connectGoogleWorkspace}>
-                  <input
-                    name="returnTo"
-                    type="hidden"
-                    value="/usage?connected=google"
-                  />
-                  <button
-                    className="inline-flex min-h-10 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs transition-colors hover:bg-primary/90 disabled:opacity-50"
-                    disabled={connectors?.googleSignInReady === false}
-                    type="submit"
-                  >
-                    Connect Google
-                  </button>
-                </form>
+                <a
+                  className="inline-flex min-h-10 shrink-0 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs transition-colors hover:bg-primary/90"
+                  href={`${basePath}/connect/google/start?returnTo=${encodeURIComponent("/usage?connected=google")}`}
+                  rel="noopener noreferrer"
+                  target="_blank"
+                >
+                  Connect Google
+                </a>
               )}
             </li>
 

@@ -59,7 +59,7 @@ const PurePreviewMessage = ({
   vote,
   isLoading,
   setMessages: _setMessages,
-  regenerate: _regenerate,
+  regenerate,
   isReadonly,
   requiresScrollPadding: _requiresScrollPadding,
   onEdit,
@@ -151,6 +151,44 @@ const PurePreviewMessage = ({
     { text: "", isStreaming: false, rendered: false }
   ) ?? { text: "", isStreaming: false, rendered: false };
 
+  const hasExclusiveConnectorCard =
+    isAssistant &&
+    Boolean(
+      message.parts?.some((p) => {
+        if (!p.type.startsWith("tool-")) {
+          return false;
+        }
+        const tName = p.type.slice(5);
+        if (
+          !(
+            tName.startsWith("gmail") ||
+            tName.startsWith("calendar") ||
+            tName.startsWith("drive") ||
+            tName.startsWith("github")
+          )
+        ) {
+          return false;
+        }
+        const st = (p as { state?: string }).state;
+        const out = "output" in p ? p.output : undefined;
+        return (
+          (st === "output-available" || st === "output-error") &&
+          (isSetupRequiredOutput(out) || st === "output-error")
+        );
+      })
+    ) &&
+    !message.parts?.some((p) => {
+      if (!p.type.startsWith("tool-")) {
+        return false;
+      }
+      const out = "output" in p ? p.output : undefined;
+      return (
+        out &&
+        typeof out === "object" &&
+        (out as { status?: string }).status === "ok"
+      );
+    });
+
   const parts = message.parts?.map((part, index) => {
     const { type } = part;
     const key = `message-${message.id}-part-${index}`;
@@ -170,6 +208,9 @@ const PurePreviewMessage = ({
     }
 
     if (type === "text") {
+      if (hasExclusiveConnectorCard) {
+        return null;
+      }
       const cleanedText = sanitizeText(part.text);
       if (!cleanedText.trim()) {
         return null;
@@ -566,15 +607,31 @@ const PurePreviewMessage = ({
             : undefined) ??
           (toolName.startsWith("github") ? "github" : "google");
         const mode =
-          isSetupRequiredOutput(output) && output.status === "setup_required"
-            ? "connect"
-            : "reconnect";
+          isSetupRequiredOutput(output) && output.code === "service_disabled"
+            ? "api_disabled"
+            : isSetupRequiredOutput(output) &&
+                output.status === "setup_required"
+              ? "connect"
+              : "reconnect";
         return (
           <ConnectorConnectCard
             chatId={chatId}
+            enableApiUrl={
+              isSetupRequiredOutput(output) ? output.enableApiUrl : undefined
+            }
             key={toolCallId}
             locale={locale}
             mode={mode}
+            onRetry={
+              isReadonly
+                ? undefined
+                : () => {
+                    regenerate({ body: { retry: true } });
+                  }
+            }
+            projectNumber={
+              isSetupRequiredOutput(output) ? output.projectNumber : undefined
+            }
             provider={provider}
             reasonMessage={
               isSetupRequiredOutput(output) ? output.message : undefined

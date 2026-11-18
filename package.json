@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbo",
-    "build": "tsx lib/db/migrate && tsx scripts/redis-selfcheck.ts && tsx scripts/vertex-selfcheck.ts && tsx scripts/live-voice-selfcheck.ts && tsx scripts/cloud-computer-selfcheck.ts && tsx scripts/build.ts",
+    "build": "tsx lib/db/migrate && tsx scripts/redis-selfcheck.ts && tsx scripts/vertex-selfcheck.ts && tsx scripts/live-voice-selfcheck.ts && tsx scripts/cloud-computer-selfcheck.ts && tsx scripts/google-connector-selfcheck.ts && tsx scripts/build.ts",
     "start": "next start",
     "check": "biome check",
     "fix": "biome check --write",

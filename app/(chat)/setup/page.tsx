@@ -4,10 +4,7 @@ import { ExternalLinkIcon } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import useSWR, { useSWRConfig } from "swr";
-import {
-  connectGithubAccount,
-  connectGoogleWorkspace,
-} from "@/app/(auth)/actions";
+import { connectGithubAccount } from "@/app/(auth)/actions";
 import type { SetupChecklistItem } from "@/app/api/setup-status/route";
 import { SubpageHeader } from "@/components/chat/subpage-header";
 import { toast } from "@/components/chat/toast";
@@ -120,31 +117,38 @@ function SetupPageContent() {
 
               <div className="flex shrink-0 items-center gap-2 pl-5 sm:pl-0">
                 {item.connectedProvider ? (
-                  <button
-                    className="min-h-11 rounded-full border border-[color:var(--hairline)] px-4 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
-                    disabled={busy}
-                    onClick={() =>
-                      item.connectedProvider &&
-                      handleDisconnect(item.connectedProvider)
-                    }
-                    type="button"
-                  >
-                    Disconnect
-                  </button>
-                ) : item.actionKind === "connect_google" ? (
-                  <form action={connectGoogleWorkspace}>
-                    <input
-                      name="returnTo"
-                      type="hidden"
-                      value="/setup?connected=google"
-                    />
+                  <div className="flex items-center gap-2">
+                    {item.connectedProvider === "google" && (
+                      <a
+                        className="inline-flex min-h-11 items-center rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-foreground text-xs hover:bg-muted"
+                        href={`${basePath}/connect/google/start?returnTo=${encodeURIComponent("/setup?connected=google")}`}
+                        rel="noopener noreferrer"
+                        target="_blank"
+                      >
+                        Reconnect
+                      </a>
+                    )}
                     <button
-                      className="inline-flex min-h-11 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs hover:bg-primary/90"
-                      type="submit"
+                      className="min-h-11 rounded-full border border-[color:var(--hairline)] px-4 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
+                      disabled={busy}
+                      onClick={() =>
+                        item.connectedProvider &&
+                        handleDisconnect(item.connectedProvider)
+                      }
+                      type="button"
                     >
-                      Connect
+                      Disconnect
                     </button>
-                  </form>
+                  </div>
+                ) : item.actionKind === "connect_google" ? (
+                  <a
+                    className="inline-flex min-h-11 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs hover:bg-primary/90"
+                    href={`${basePath}/connect/google/start?returnTo=${encodeURIComponent("/setup?connected=google")}`}
+                    rel="noopener noreferrer"
+                    target="_blank"
+                  >
+                    Connect
+                  </a>
                 ) : item.actionKind === "connect_github" ? (
                   <form action={connectGithubAccount}>
                     <input

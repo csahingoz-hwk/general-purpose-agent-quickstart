@@ -1,5 +1,8 @@
 import { resolveGoogleAccessTokenFromVault } from "@/lib/connectors/google-vault-auth";
-import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
+import {
+  buildGoogleApiError,
+  containsRestrictedWorkData,
+} from "@/lib/connectors/google-workspace";
 import { fenceUntrustedContent } from "@/lib/safety/untrusted-content";
 import {
   createPostgresVaultStore,
@@ -94,7 +97,15 @@ export async function readGoogleCalendarEvents(opts: {
   fetchImpl?: typeof fetch;
 }): Promise<
   | { status: "ok"; events: FencedCalendarEvent[] }
-  | { status: "setup_required"; message: string }
+  | {
+      status: "setup_required" | "reconnect_required" | "connector_error";
+      code?: string;
+      connectProvider?: "google";
+      accountConnected?: boolean;
+      projectNumber?: string | null;
+      enableApiUrl?: string | null;
+      message: string;
+    }
   | { status: "error"; message: string }
 > {
   const auth = await resolveGoogleAccessTokenFromVault({
@@ -103,7 +114,16 @@ export async function readGoogleCalendarEvents(opts: {
     fetchImpl: opts.fetchImpl,
   });
   if (!auth.ok) {
-    return { status: "setup_required", message: auth.message };
+    return {
+      status:
+        auth.code === "oauth_refresh_failed"
+          ? "reconnect_required"
+          : "setup_required",
+      code: auth.code,
+      connectProvider: "google",
+      accountConnected: false,
+      message: auth.message,
+    };
   }
 
   const fetchFn = opts.fetchImpl ?? fetch;
@@ -125,18 +145,41 @@ export async function readGoogleCalendarEvents(opts: {
     signal: AbortSignal.timeout(12_000),
   }).catch(() => null);
 
-  if (!res || !res.ok) {
-    if (res?.status === 401 || res?.status === 403) {
+  if (!res) {
+    return {
+      status: "connector_error",
+      code: "upstream_error",
+      connectProvider: "google",
+      accountConnected: true,
+      message:
+        "Could not reach Google Calendar right now. Tap Try again shortly.",
+    };
+  }
+  if (!res.ok) {
+    const apiErr = await buildGoogleApiError("Google Calendar", res, {
+      oauthClientProjectNumber: auth.oauthClientProjectNumber,
+    });
+    if (
+      apiErr.reason === "token_expired" ||
+      apiErr.reason === "scope_missing"
+    ) {
       return {
-        status: "setup_required",
-        message:
-          "Your Google Calendar session expired or needs permission. Tap Reconnect Google to refresh.",
+        status: "reconnect_required",
+        code: apiErr.reason,
+        connectProvider: "google",
+        accountConnected: false,
+        projectNumber: apiErr.projectNumber,
+        message: apiErr.friendlyMessage,
       };
     }
     return {
-      status: "error",
-      message:
-        "Could not reach Google Calendar right now. Tap Reconnect Google or try again shortly.",
+      status: "connector_error",
+      code: apiErr.reason,
+      connectProvider: "google",
+      accountConnected: true,
+      projectNumber: apiErr.projectNumber,
+      enableApiUrl: apiErr.enableApiUrl,
+      message: apiErr.friendlyMessage,
     };
   }
 
