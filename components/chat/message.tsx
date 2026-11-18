@@ -453,12 +453,15 @@ const PurePreviewMessage = ({
 
     if (type === "tool-draftOutboundMessage") {
       const approval = (
-        part as { approval?: { id?: string; approved?: boolean } }
+        part as {
+          approval?: { id?: string; approved?: boolean; reason?: string };
+        }
       ).approval;
       return (
         <OutboundDraftCard
           addToolApprovalResponse={addToolApprovalResponse}
           approvalId={approval?.id}
+          approvalReason={approval?.reason}
           approved={approval?.approved}
           input={"input" in part ? part.input : undefined}
           isReadonly={isReadonly}
@@ -526,7 +529,9 @@ const PurePreviewMessage = ({
       };
       const toolName = type.slice(5);
       const approval = (
-        part as { approval?: { id?: string; approved?: boolean } }
+        part as {
+          approval?: { id?: string; approved?: boolean; reason?: string };
+        }
       ).approval;
       const input =
         "input" in part ? (part.input as Record<string, unknown>) : undefined;
@@ -542,13 +547,18 @@ const PurePreviewMessage = ({
         toolName === "calendarCreateDraftEvent" ||
         toolName === "githubCreateDraftReview" ||
         toolName === "scheduleTask";
+      const isPolicyReceipt =
+        output &&
+        typeof output === "object" &&
+        ((output as { status?: string }).status === "blocked_by_owner_rule" ||
+          (output as { status?: string }).status === "interrupted_on_restart");
 
       if (
         state === "approval-requested" ||
         state === "approval-responded" ||
         state === "output-denied" ||
         (state === "output-available" &&
-          isDraftApprovalTool &&
+          (isDraftApprovalTool || isPolicyReceipt) &&
           !isDisabledApiOutput(output) &&
           !isSetupRequiredOutput(output))
       ) {
@@ -565,6 +575,7 @@ const PurePreviewMessage = ({
           <ApprovalCard
             addToolApprovalResponse={addToolApprovalResponse}
             approvalId={approval?.id}
+            approvalReason={approval?.reason}
             approved={approval?.approved}
             input={input}
             isReadonly={isReadonly}

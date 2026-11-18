@@ -15,8 +15,11 @@ import {
   XCircleIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useSWRConfig } from "swr";
+import { toast } from "@/components/chat/toast";
 import type { RiskLevel } from "@/lib/safety/action-review";
 import type { ChatMessage } from "@/lib/types";
+import { getCopy, type UiCopy, type UiLocale } from "@/lib/ui-copy";
 import { cn } from "@/lib/utils";
 
 const RISK_STYLES: Record<RiskLevel, string> = {
@@ -27,33 +30,49 @@ const RISK_STYLES: Record<RiskLevel, string> = {
   critical: "border-destructive/40 bg-destructive/10 text-destructive",
 };
 
-const RISK_LABELS: Record<RiskLevel, string> = {
-  low: "Düşük risk",
-  medium: "İnceleme",
-  high: "Yüksek etki",
-  critical: "Kritik inceleme",
-};
-
-const GENERIC_KEY_LABELS: Record<string, string> = {
-  recipient: "Kime",
-  to: "Kime",
-  subject: "Konu",
-  body: "İleti",
-  content: "İçerik",
-  title: "Başlık",
-  description: "Açıklama",
-  startIso: "Başlangıç",
-  endIso: "Bitiş",
-  cronExpression: "Zamanlama",
-  timezone: "Saat dilimi",
-  prompt: "Yönerge",
-  owner: "Hesap",
-  repo: "Depo",
-  pullNumber: "PR numarası",
-  city: "Konum",
-  command: "Komut",
-  url: "Bağlantı",
-  aspectRatio: "Oran",
+const GENERIC_KEY_LABELS: Record<UiLocale, Record<string, string>> = {
+  en: {
+    recipient: "To",
+    to: "To",
+    subject: "Subject",
+    body: "Message",
+    content: "Content",
+    title: "Title",
+    description: "Description",
+    startIso: "Starts",
+    endIso: "Ends",
+    cronExpression: "Schedule",
+    timezone: "Time zone",
+    prompt: "Instructions",
+    owner: "Owner",
+    repo: "Repository",
+    pullNumber: "PR #",
+    city: "Location",
+    command: "Command",
+    url: "URL",
+    aspectRatio: "Aspect ratio",
+  },
+  tr: {
+    recipient: "Kime",
+    to: "Kime",
+    subject: "Konu",
+    body: "İleti",
+    content: "İçerik",
+    title: "Başlık",
+    description: "Açıklama",
+    startIso: "Başlangıç",
+    endIso: "Bitiş",
+    cronExpression: "Zamanlama",
+    timezone: "Saat dilimi",
+    prompt: "Yönerge",
+    owner: "Hesap",
+    repo: "Depo",
+    pullNumber: "PR numarası",
+    city: "Konum",
+    command: "Komut",
+    url: "Bağlantı",
+    aspectRatio: "Oran",
+  },
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -78,7 +97,7 @@ function asString(value: unknown): string {
   return "";
 }
 
-function formatTurkishDateTime(iso: string): string {
+function formatDateTimeForLocale(iso: string, locale: UiLocale): string {
   const trimmed = iso.trim();
   if (!trimmed) {
     return "—";
@@ -88,7 +107,7 @@ function formatTurkishDateTime(iso: string): string {
     return trimmed;
   }
   try {
-    return new Intl.DateTimeFormat("tr-TR", {
+    return new Intl.DateTimeFormat(locale === "tr" ? "tr-TR" : "en-GB", {
       day: "numeric",
       month: "short",
       year: "numeric",
@@ -101,9 +120,9 @@ function formatTurkishDateTime(iso: string): string {
   }
 }
 
-function humanizeKey(key: string): string {
-  if (GENERIC_KEY_LABELS[key]) {
-    return GENERIC_KEY_LABELS[key];
+function humanizeKey(key: string, locale: UiLocale): string {
+  if (GENERIC_KEY_LABELS[locale][key]) {
+    return GENERIC_KEY_LABELS[locale][key];
   }
   const spaced = key
     .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
@@ -123,11 +142,12 @@ export type DraftInputPatch = {
 export type ApprovalCardProps = {
   addToolApprovalResponse: UseChatHelpers<ChatMessage>["addToolApprovalResponse"];
   approvalId?: string;
+  approvalReason?: string;
   approved?: boolean;
   input?: unknown;
   output?: unknown;
   isReadonly?: boolean;
-  locale?: "en" | "tr";
+  locale?: UiLocale;
   onUpdateDraftInput?: (patch: DraftInputPatch) => void;
   reasons?: readonly string[];
   riskLevel?: RiskLevel;
@@ -160,11 +180,12 @@ function ToolIcon({ toolName }: { toolName: string }) {
 
 function resolveBadge(
   toolName: string,
-  riskLevel: RiskLevel
+  riskLevel: RiskLevel,
+  copy: UiCopy
 ): { label: string; className: string; testId?: string } {
   if (toolName === "gmailCreateDraft") {
     return {
-      label: "Asla göndermez",
+      label: copy.badgeNeverSends,
       className:
         "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
       testId: "approval-never-sends-badge",
@@ -172,27 +193,33 @@ function resolveBadge(
   }
   if (toolName === "calendarCreateDraftEvent") {
     return {
-      label: "Davet göndermez",
+      label: copy.badgeNoInvites,
       className:
         "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
     };
   }
   if (toolName === "driveCreateDraftDoc") {
     return {
-      label: "Özel taslak · Paylaşılmaz",
+      label: copy.badgePrivateDraft,
       className:
         "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
     };
   }
   if (toolName === "githubCreateDraftReview") {
     return {
-      label: "Yayınlanmaz · Taslak",
+      label: copy.badgeUnpublishedDraft,
       className:
         "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
     };
   }
+  const riskLabels: Record<RiskLevel, string> = {
+    low: copy.riskLow,
+    medium: copy.riskMedium,
+    high: copy.riskHigh,
+    critical: copy.riskCritical,
+  };
   return {
-    label: RISK_LABELS[riskLevel],
+    label: riskLabels[riskLevel],
     className: RISK_STYLES[riskLevel],
   };
 }
@@ -208,10 +235,12 @@ const SAVE_CTA_TOOLS = new Set([
 export function ApprovalCard({
   addToolApprovalResponse,
   approvalId,
+  approvalReason,
   approved,
   input,
   output,
   isReadonly = false,
+  locale = "tr",
   onUpdateDraftInput,
   reasons = [],
   riskLevel = "high",
@@ -219,6 +248,10 @@ export function ApprovalCard({
   title,
   toolName,
 }: ApprovalCardProps) {
+  const copy = getCopy(locale);
+  const { mutate } = useSWRConfig();
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+
   const inputRec = asRecord(input);
   const outputRec = asRecord(output);
 
@@ -232,6 +265,7 @@ export function ApprovalCard({
   const [draftBody, setDraftBody] = useState(initialBody);
   const [hasUserEdited, setHasUserEdited] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [ruleBusy, setRuleBusy] = useState(false);
 
   useEffect(() => {
     if (!hasUserEdited) {
@@ -245,16 +279,19 @@ export function ApprovalCard({
   const isDenied =
     state === "output-denied" ||
     (state === "approval-responded" && approved === false);
+  const isExpired = approvalReason === "expired_by_new_message";
   const isPending = state === "approval-requested" && Boolean(approvalId);
   const isSaving = state === "approval-responded" && approved === true;
   const isCompleted = state === "output-available";
   const outputStatus = asString(outputRec.status);
   const isBlockedBoundary = outputStatus === "blocked_data_boundary";
+  const isBlockedByRule = outputStatus === "blocked_by_owner_rule";
+  const isInterruptedRestart = outputStatus === "interrupted_on_restart";
   const isActionError =
     outputStatus === "error" || outputStatus === "connector_error";
 
-  const badge = resolveBadge(toolName, riskLevel);
-  const primaryLabel = SAVE_CTA_TOOLS.has(toolName) ? "Kaydet" : "Onayla";
+  const badge = resolveBadge(toolName, riskLevel, copy);
+  const primaryLabel = SAVE_CTA_TOOLS.has(toolName) ? copy.save : copy.approve;
 
   function handleSaveOrApprove() {
     if (!approvalId) {
@@ -265,9 +302,7 @@ export function ApprovalCard({
       const cleanSubject = draftSubject.trim();
       const cleanBody = draftBody.trim();
       if (!SIMPLE_EMAIL_RE.test(cleanTo) || !cleanSubject || !cleanBody) {
-        setEditError(
-          "Lütfen geçerli bir alıcı e-postası, konu ve ileti metni girin."
-        );
+        setEditError(copy.approvalEmailValidationError);
         setIsEditing(true);
         return;
       }
@@ -311,6 +346,40 @@ export function ApprovalCard({
     });
   }
 
+  async function handlePersistRule(decision: "always_allow" | "never_allow") {
+    if (!approvalId || ruleBusy) {
+      return;
+    }
+    setRuleBusy(true);
+    try {
+      await fetch(`${basePath}/api/settings/approvals`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ toolName, decision }),
+      }).catch(() => null);
+      mutate(`${basePath}/api/settings/approvals`);
+      if (decision === "always_allow") {
+        handleSaveOrApprove();
+      } else {
+        setIsEditing(false);
+        addToolApprovalResponse({
+          id: approvalId,
+          approved: false,
+          reason: "Blocked by owner Never allow rule",
+        });
+      }
+    } finally {
+      setRuleBusy(false);
+      toast({
+        type: "success",
+        description:
+          decision === "always_allow"
+            ? `${toolName}: ${copy.alwaysAllow}`
+            : `${toolName}: ${copy.neverAllow}`,
+      });
+    }
+  }
+
   function renderHumanPreview() {
     if (isEmailDraft) {
       if (isEditing && isPending && !isReadonly) {
@@ -321,7 +390,7 @@ export function ApprovalCard({
           >
             <label className="block space-y-1">
               <span className="block font-medium text-muted-foreground text-xs">
-                Kime
+                {copy.fieldTo}
               </span>
               <input
                 className="w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 py-2 text-base text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -333,14 +402,14 @@ export function ApprovalCard({
                     setEditError(null);
                   }
                 }}
-                placeholder="ornek@alanadi.com"
+                placeholder="user@example.com"
                 type="email"
                 value={draftTo}
               />
             </label>
             <label className="block space-y-1">
               <span className="block font-medium text-muted-foreground text-xs">
-                Konu
+                {copy.fieldSubject}
               </span>
               <input
                 className="w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 py-2 text-base text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -358,7 +427,7 @@ export function ApprovalCard({
             </label>
             <label className="block space-y-1">
               <span className="block font-medium text-muted-foreground text-xs">
-                İleti
+                {copy.fieldMessage}
               </span>
               <textarea
                 className="w-full rounded-xl border border-[color:var(--hairline)] bg-background px-3 py-2 text-base text-foreground leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -397,7 +466,7 @@ export function ApprovalCard({
             data-testid="email-preview-to"
           >
             <span className="w-12 shrink-0 font-medium text-muted-foreground text-xs">
-              Kime
+              {copy.fieldTo}
             </span>
             <span className="min-w-0 flex-1 break-all text-foreground">
               {draftTo || "—"}
@@ -408,7 +477,7 @@ export function ApprovalCard({
             data-testid="email-preview-subject"
           >
             <span className="w-12 shrink-0 font-medium text-muted-foreground text-xs">
-              Konu
+              {copy.fieldSubject}
             </span>
             <span className="min-w-0 flex-1 break-words font-medium text-foreground">
               {draftSubject || "—"}
@@ -436,7 +505,7 @@ export function ApprovalCard({
         >
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3.5 py-2.5">
             <span className="w-20 shrink-0 font-medium text-muted-foreground text-xs">
-              Başlık
+              {copy.fieldTitle}
             </span>
             <span className="min-w-0 flex-1 break-words font-medium text-foreground">
               {eventTitle || "—"}
@@ -444,18 +513,18 @@ export function ApprovalCard({
           </div>
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3.5 py-2.5">
             <span className="w-20 shrink-0 font-medium text-muted-foreground text-xs">
-              Başlangıç
+              {copy.fieldStart}
             </span>
             <span className="min-w-0 flex-1 text-foreground tabular-nums">
-              {formatTurkishDateTime(startIso)}
+              {formatDateTimeForLocale(startIso, locale)}
             </span>
           </div>
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3.5 py-2.5">
             <span className="w-20 shrink-0 font-medium text-muted-foreground text-xs">
-              Bitiş
+              {copy.fieldEnd}
             </span>
             <span className="min-w-0 flex-1 text-foreground tabular-nums">
-              {formatTurkishDateTime(endIso)}
+              {formatDateTimeForLocale(endIso, locale)}
             </span>
           </div>
           {description ? (
@@ -476,8 +545,8 @@ export function ApprovalCard({
           data-testid="drive-draft-preview"
         >
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3.5 py-2.5">
-            <span className="w-20 shrink-0 font-medium text-muted-foreground text-xs">
-              Belge adı
+            <span className="w-24 shrink-0 font-medium text-muted-foreground text-xs">
+              {copy.fieldDocTitle}
             </span>
             <span className="min-w-0 flex-1 break-words font-medium text-foreground">
               {docTitle || "—"}
@@ -505,7 +574,7 @@ export function ApprovalCard({
         >
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3.5 py-2.5">
             <span className="w-20 shrink-0 font-medium text-muted-foreground text-xs">
-              Depo
+              {copy.fieldRepo}
             </span>
             <span className="min-w-0 flex-1 break-all font-medium text-foreground">
               {repoPath || "—"}
@@ -532,7 +601,7 @@ export function ApprovalCard({
         >
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3.5 py-2.5">
             <span className="w-24 shrink-0 font-medium text-muted-foreground text-xs">
-              Zamanlama
+              {copy.fieldSchedule}
             </span>
             <span className="min-w-0 flex-1 font-mono text-[13px] text-foreground">
               {cron || "—"} ({tz})
@@ -565,7 +634,7 @@ export function ApprovalCard({
             key={k}
           >
             <span className="w-24 shrink-0 font-medium text-muted-foreground text-xs">
-              {humanizeKey(k)}
+              {humanizeKey(k, locale)}
             </span>
             <span className="min-w-0 flex-1 whitespace-pre-wrap break-words text-foreground">
               {asString(v)}
@@ -608,72 +677,104 @@ export function ApprovalCard({
       {renderHumanPreview()}
 
       {isPending && !isReadonly && approvalId && (
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-1.5 border-[color:var(--hairline)] border-t pt-3">
-          {isEmailDraft ? (
-            <button
-              className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-background px-3 font-medium text-[13px] text-foreground transition-colors hover:bg-muted motion-reduce:transition-none"
-              data-testid="approval-edit-button"
-              onClick={() => {
-                setEditError(null);
-                setIsEditing((prev) => !prev);
-              }}
-              type="button"
-            >
-              {isEditing ? (
-                <>
-                  <EyeIcon className="size-3.5 shrink-0" />
-                  <span>Önizle</span>
-                </>
-              ) : (
-                <>
-                  <PencilIcon className="size-3.5 shrink-0" />
-                  <span>Düzenle</span>
-                </>
-              )}
-            </button>
-          ) : (
-            <span />
-          )}
+        <div className="mt-4 space-y-2.5 border-[color:var(--hairline)] border-t pt-3">
+          <div className="flex flex-wrap items-center justify-between gap-1.5">
+            {isEmailDraft ? (
+              <button
+                className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-background px-3 font-medium text-[13px] text-foreground transition-colors hover:bg-muted motion-reduce:transition-none"
+                data-testid="approval-edit-button"
+                onClick={() => {
+                  setEditError(null);
+                  setIsEditing((prev) => !prev);
+                }}
+                type="button"
+              >
+                {isEditing ? (
+                  <>
+                    <EyeIcon className="size-3.5 shrink-0" />
+                    <span>{copy.preview}</span>
+                  </>
+                ) : (
+                  <>
+                    <PencilIcon className="size-3.5 shrink-0" />
+                    <span>{copy.edit}</span>
+                  </>
+                )}
+              </button>
+            ) : (
+              <span />
+            )}
 
-          <div className="ml-auto flex items-center gap-1.5">
+            <div className="ml-auto flex items-center gap-1.5">
+              <button
+                className="inline-flex min-h-11 items-center justify-center rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-[13px] text-foreground transition-colors hover:bg-muted motion-reduce:transition-none"
+                data-testid="approval-deny-button"
+                onClick={() => {
+                  setIsEditing(false);
+                  addToolApprovalResponse({
+                    id: approvalId,
+                    approved: false,
+                    reason: "Declined by owner",
+                  });
+                }}
+                type="button"
+              >
+                {copy.cancel}
+              </button>
+              <button
+                className="inline-flex min-h-11 items-center justify-center rounded-full bg-primary px-4 font-medium text-[13px] text-primary-foreground transition-colors hover:bg-primary/90 motion-reduce:transition-none"
+                data-testid="approval-allow-button"
+                onClick={handleSaveOrApprove}
+                type="button"
+              >
+                {primaryLabel}
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-end gap-1.5">
             <button
-              className="inline-flex min-h-11 items-center justify-center rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-[13px] text-foreground transition-colors hover:bg-muted motion-reduce:transition-none"
-              data-testid="approval-deny-button"
-              onClick={() => {
-                setIsEditing(false);
-                addToolApprovalResponse({
-                  id: approvalId,
-                  approved: false,
-                  reason: "Declined by owner",
-                });
-              }}
+              className="inline-flex min-h-9 items-center justify-center rounded-full border border-[color:var(--hairline)] bg-muted/40 px-3 font-medium text-[12px] text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+              data-testid="approval-always-allow-button"
+              disabled={ruleBusy}
+              onClick={() => handlePersistRule("always_allow")}
               type="button"
             >
-              Vazgeç
+              {copy.alwaysAllow}
             </button>
             <button
-              className="inline-flex min-h-11 items-center justify-center rounded-full bg-primary px-4 font-medium text-[13px] text-primary-foreground transition-colors hover:bg-primary/90 motion-reduce:transition-none"
-              data-testid="approval-allow-button"
-              onClick={handleSaveOrApprove}
+              className="inline-flex min-h-9 items-center justify-center rounded-full border border-[color:var(--hairline)] bg-muted/40 px-3 font-medium text-[12px] text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+              data-testid="approval-never-allow-button"
+              disabled={ruleBusy}
+              onClick={() => handlePersistRule("never_allow")}
               type="button"
             >
-              {primaryLabel}
+              {copy.neverAllow}
             </button>
           </div>
         </div>
       )}
 
       {isDenied && (
-        <div className="mt-3 flex items-center gap-2 rounded-xl bg-muted/40 px-3 py-2 text-[13px] text-muted-foreground">
+        <div
+          className="mt-3 flex items-center gap-2 rounded-xl bg-muted/40 px-3 py-2 text-[13px] text-muted-foreground"
+          data-testid={
+            isExpired ? "approval-expired-notice" : "approval-denied-notice"
+          }
+        >
           <XCircleIcon className="size-4 shrink-0 text-orange-600 dark:text-orange-400" />
-          <span>Vazgeçildi — hiçbir taslak kaydedilmedi.</span>
+          <span>
+            {isExpired
+              ? copy.approvalExpiredNotice
+              : copy.approvalDeclinedNotice}
+          </span>
         </div>
       )}
 
       {isSaving && (
         <div className="mt-3 flex items-center gap-2 rounded-xl bg-muted/40 px-3 py-2 text-[13px] text-muted-foreground">
           <CheckCircle2Icon className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-          <span>Kaydediliyor…</span>
+          <span>{copy.approvalSaving}</span>
         </div>
       )}
 
@@ -681,28 +782,38 @@ export function ApprovalCard({
         <div
           className={cn(
             "mt-3 flex items-center gap-2 rounded-xl px-3 py-2 text-[13px]",
-            isBlockedBoundary || isActionError
+            isBlockedBoundary ||
+              isBlockedByRule ||
+              isInterruptedRestart ||
+              isActionError
               ? "bg-amber-500/10 text-amber-800 dark:text-amber-300"
               : "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300"
           )}
           data-testid="approval-saved-receipt"
         >
-          {isBlockedBoundary || isActionError ? (
+          {isBlockedBoundary ||
+          isBlockedByRule ||
+          isInterruptedRestart ||
+          isActionError ? (
             <ShieldAlertIcon className="size-4 shrink-0" />
           ) : (
             <CheckCircle2Icon className="size-4 shrink-0" />
           )}
           <span>
-            {isBlockedBoundary || isActionError
-              ? asString(outputRec.message ?? outputRec.error) ||
-                "Taslak kaydedilemedi."
-              : isEmailDraft
-                ? "Gmail taslağı kaydedildi (gönderilmedi)."
-                : toolName === "calendarCreateDraftEvent"
-                  ? "Takvim taslak etkinliği kaydedildi."
-                  : toolName === "driveCreateDraftDoc"
-                    ? "Google Drive taslak belgesi kaydedildi."
-                    : "Kaydedildi."}
+            {isBlockedByRule
+              ? copy.approvalBlockedByRuleNotice
+              : isInterruptedRestart
+                ? copy.interruptedMidFlightRestart
+                : isBlockedBoundary || isActionError
+                  ? asString(outputRec.message ?? outputRec.error) ||
+                    copy.approvalSaveFailed
+                  : isEmailDraft
+                    ? copy.approvalSavedGmailDraft
+                    : toolName === "calendarCreateDraftEvent"
+                      ? copy.approvalSavedCalendarDraft
+                      : toolName === "driveCreateDraftDoc"
+                        ? copy.approvalSavedDriveDraft
+                        : copy.approvalSavedGeneric}
           </span>
         </div>
       )}
@@ -713,7 +824,7 @@ export function ApprovalCard({
           data-testid="approval-technical-details"
         >
           <summary className="cursor-pointer select-none font-medium text-muted-foreground hover:text-foreground">
-            Teknik ayrıntı
+            {copy.technicalDetails}
           </summary>
           <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-muted-foreground">
             {JSON.stringify(

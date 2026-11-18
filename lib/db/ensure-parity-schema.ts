@@ -32,16 +32,20 @@ export async function ensureParitySchema(
         rt: string | null;
         cb: string | null;
         mpf: string | null;
+        oas: string | null;
+        rtpe: string | null;
       }[]
     >`
       SELECT
         to_regclass('public."PrivateFile"')::text AS pf,
         to_regclass('public."RoutineTrigger"')::text AS rt,
         to_regclass('public."ChatBotBinding"')::text AS cb,
-        to_regclass('public."MemoryProfileFact"')::text AS mpf
+        to_regclass('public."MemoryProfileFact"')::text AS mpf,
+        to_regclass('public."OwnerAssistantSettings"')::text AS oas,
+        to_regclass('public."RoutineTriggerProcessedEvent"')::text AS rtpe
     `.catch(() => []);
     const row = existing[0];
-    if (row?.pf && row?.rt && row?.cb && row?.mpf) {
+    if (row?.pf && row?.rt && row?.cb && row?.mpf && row?.oas && row?.rtpe) {
       schemaEnsuredForProcess = true;
       return;
     }
@@ -212,6 +216,89 @@ export async function ensureParitySchema(
       );
       CREATE INDEX IF NOT EXISTS "PrivateFile_user_created"
         ON "PrivateFile" ("userId", "createdAt" DESC);
+
+      CREATE TABLE IF NOT EXISTS "OwnerAssistantSettings" (
+        "userId" uuid PRIMARY KEY REFERENCES "User"("id") ON DELETE CASCADE,
+        "approvalMode" varchar(32) NOT NULL DEFAULT 'ask_every_time',
+        "uiLocale" varchar(8) NOT NULL DEFAULT 'auto',
+        "updatedAt" timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS "ToolApprovalRule" (
+        "id" uuid PRIMARY KEY,
+        "userId" uuid NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+        "toolName" varchar(80) NOT NULL,
+        "decision" varchar(16) NOT NULL CHECK ("decision" IN ('always_allow', 'never_allow')),
+        "createdAt" timestamptz NOT NULL DEFAULT now(),
+        "updatedAt" timestamptz NOT NULL DEFAULT now(),
+        UNIQUE ("userId", "toolName")
+      );
+      CREATE INDEX IF NOT EXISTS "ToolApprovalRule_user_updated"
+        ON "ToolApprovalRule" ("userId", "updatedAt" DESC);
+
+      CREATE TABLE IF NOT EXISTS "ToolExecutionJournal" (
+        "id" uuid PRIMARY KEY,
+        "userId" uuid NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+        "chatId" uuid NOT NULL,
+        "toolCallId" varchar(160) NOT NULL,
+        "toolName" varchar(80) NOT NULL,
+        "digest" varchar(64) NOT NULL,
+        "bootId" varchar(64) NOT NULL,
+        "status" varchar(24) NOT NULL DEFAULT 'in_flight',
+        "startedAt" timestamptz NOT NULL DEFAULT now(),
+        "finishedAt" timestamptz,
+        UNIQUE ("chatId", "toolCallId")
+      );
+      CREATE INDEX IF NOT EXISTS "ToolExecutionJournal_user_status"
+        ON "ToolExecutionJournal" ("userId", "status");
+
+      CREATE TABLE IF NOT EXISTS "ChatThreadSummary" (
+        "chatId" uuid PRIMARY KEY REFERENCES "Chat"("id") ON DELETE CASCADE,
+        "userId" uuid NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+        "coveredUntilMessageId" varchar(128) NOT NULL,
+        "coveredMessageCount" integer NOT NULL DEFAULT 0,
+        "summaryText" text NOT NULL,
+        "updatedAt" timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS "CloudComputerSession" (
+        "userId" uuid PRIMARY KEY REFERENCES "User"("id") ON DELETE CASCADE,
+        "state" varchar(24) NOT NULL DEFAULT 'sleeping',
+        "lastActiveAt" timestamptz NOT NULL DEFAULT now(),
+        "sleptAt" timestamptz,
+        "wakeCount" integer NOT NULL DEFAULT 0,
+        "lastWakeDurationMs" integer,
+        "updatedAt" timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS "RoutineCheckInState" (
+        "scheduleId" uuid PRIMARY KEY REFERENCES "CronJob"("id") ON DELETE CASCADE,
+        "userId" uuid NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+        "consecutiveSilentRuns" integer NOT NULL DEFAULT 0,
+        "backoffMultiplier" integer NOT NULL DEFAULT 1,
+        "lastOutcome" varchar(32),
+        "lastCheckedAt" timestamptz,
+        "nextEligibleAt" timestamptz
+      );
+
+      CREATE TABLE IF NOT EXISTS "RoutineTriggerCursor" (
+        "userId" uuid NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+        "source" varchar(64) NOT NULL,
+        "cursorValue" varchar(255) NOT NULL,
+        "updatedAt" timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY ("userId", "source")
+      );
+
+      CREATE TABLE IF NOT EXISTS "RoutineTriggerProcessedEvent" (
+        "id" uuid PRIMARY KEY,
+        "userId" uuid NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
+        "source" varchar(64) NOT NULL,
+        "externalEventId" varchar(255) NOT NULL,
+        "processedAt" timestamptz NOT NULL DEFAULT now(),
+        UNIQUE ("userId", "source", "externalEventId")
+      );
+      CREATE INDEX IF NOT EXISTS "RoutineTriggerProcessedEvent_user_source"
+        ON "RoutineTriggerProcessedEvent" ("userId", "source", "processedAt" DESC);
     `);
     schemaEnsuredForProcess = true;
   })().finally(() => {

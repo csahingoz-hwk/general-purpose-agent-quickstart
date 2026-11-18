@@ -9,6 +9,7 @@ import {
   type Dispatch,
   type ReactNode,
   type SetStateAction,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -22,6 +23,7 @@ import { getChatHistoryPaginationKey } from "@/components/chat/sidebar-history";
 import { toast } from "@/components/chat/toast";
 import type { VisibilityType } from "@/components/chat/visibility-selector";
 import { useAutoResume } from "@/hooks/use-auto-resume";
+import { expirePendingApprovalsOnNewUserTurn } from "@/lib/ai/conversation-state";
 import { DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
 import type { Vote } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
@@ -128,7 +130,7 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
   const {
     messages,
     setMessages,
-    sendMessage,
+    sendMessage: rawSendMessage,
     status,
     error,
     stop,
@@ -222,6 +224,26 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
     },
   });
   messagesRef.current = messages;
+
+  const sendMessage = useCallback<UseChatHelpers<ChatMessage>["sendMessage"]>(
+    (msg, options) => {
+      const hasWaitingApproval = messagesRef.current.some((m) =>
+        m.parts.some(
+          (p) =>
+            p.type.startsWith("tool-") &&
+            "state" in p &&
+            p.state === "approval-requested"
+        )
+      );
+      if (hasWaitingApproval) {
+        setMessages(
+          (prev) => expirePendingApprovalsOnNewUserTurn(prev).messages
+        );
+      }
+      return rawSendMessage(msg, options);
+    },
+    [rawSendMessage, setMessages]
+  );
 
   const loadedChatIds = useRef(new Set<string>());
 
