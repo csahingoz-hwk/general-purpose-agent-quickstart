@@ -1,6 +1,6 @@
 import type { LanguageModelV4Usage } from "@ai-sdk/provider";
-import postgres from "postgres";
 import { estimateReferenceModelUsd } from "@/lib/billing/vertex-cloud-usage";
+import { getSharedPostgresClient } from "@/lib/db/shared-pool";
 import {
   ARGON,
   COPILOT_HAIKU,
@@ -11,17 +11,11 @@ import {
 } from "./catalog";
 import { usageCost } from "./cost";
 
-let client: ReturnType<typeof postgres> | undefined;
 function sql() {
   if (!process.env.POSTGRES_URL?.trim()) {
     return null;
   }
-  client ??= postgres(process.env.POSTGRES_URL, {
-    max: 3,
-    prepare: false,
-    idle_timeout: 0,
-  });
-  return client;
+  return getSharedPostgresClient(process.env.POSTGRES_URL);
 }
 
 export type Invocation = {

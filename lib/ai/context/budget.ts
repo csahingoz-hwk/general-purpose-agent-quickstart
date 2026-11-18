@@ -1,14 +1,32 @@
 import { asSchema, type ModelMessage, type ToolSet } from "ai";
 
+const jsonSchemaCache = new WeakMap<object, Promise<unknown>>();
+
+function getCachedJsonSchema(inputSchema: ToolSet[string]["inputSchema"]) {
+  if (inputSchema && typeof inputSchema === "object") {
+    const cached = jsonSchemaCache.get(inputSchema);
+    if (cached) {
+      return cached;
+    }
+    const resolved = Promise.resolve(asSchema(inputSchema).jsonSchema);
+    jsonSchemaCache.set(inputSchema, resolved);
+    return resolved;
+  }
+  return Promise.resolve(asSchema(inputSchema).jsonSchema);
+}
+
 export async function estimateToolSchemaTokens(
   tools: ToolSet,
   active: string[]
 ) {
+  if (active.length === 0) {
+    return 0;
+  }
   const schemas = await Promise.all(
     active.map(async (name) => ({
       name,
       description: tools[name].description,
-      parameters: await asSchema(tools[name].inputSchema).jsonSchema,
+      parameters: await getCachedJsonSchema(tools[name].inputSchema),
     }))
   );
   return estimateModelTokens(schemas);

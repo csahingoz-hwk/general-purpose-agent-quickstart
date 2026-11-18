@@ -27,10 +27,12 @@ import {
 import { safeModelError } from "@/lib/ai/context/errors";
 import {
   needsArtifactInstructions,
-  selectActiveTools,
   selectToolsWithRanking,
 } from "@/lib/ai/context/select-tools";
-import { syncThreadSummary } from "@/lib/ai/context/thread-summary";
+import {
+  resolveThreadSummaryStore,
+  syncThreadSummary,
+} from "@/lib/ai/context/thread-summary";
 import {
   applyApprovalResponses,
   expirePendingApprovalsOnNewUserTurn,
@@ -112,7 +114,6 @@ import {
   getUserSoul,
   saveChat,
   saveMessages,
-  updateChatTitleById,
   updateMessage,
 } from "@/lib/db/queries";
 import type { DBMessage } from "@/lib/db/schema";
@@ -144,8 +145,11 @@ import {
 } from "@/lib/skills/library";
 import { contextBlock, validTimeZone } from "@/lib/temporal";
 import type { ChatMessage } from "@/lib/types";
-import { convertToUIMessages, generateUUID } from "@/lib/utils";
-import { generateTitleFromUserMessage } from "../../actions";
+import {
+  convertToUIMessages,
+  generateUUID,
+  getTextFromMessage,
+} from "@/lib/utils";
 import { type PostRequestBody, postRequestBodySchema } from "./schema";
 
 export const maxDuration = 180;
@@ -264,16 +268,38 @@ export async function POST(request: Request) {
     }
     let chatModel = selectedChatModel;
 
+    const isOwnerUser = session.user.type !== "guest";
     const memoryStore =
-      session.user.type !== "guest" && isMemoryToolsEnabled()
+      isOwnerUser && isMemoryToolsEnabled()
         ? createPostgresMemoryStore()
         : null;
-    const approvalPrefsStore =
-      session.user.type !== "guest" ? resolveApprovalPreferencesStore() : null;
+    const approvalPrefsStore = isOwnerUser
+      ? resolveApprovalPreferencesStore()
+      : null;
+
+    const incomingMessageText =
+      message?.role === "user" ? getTextFromMessage(message) : "";
+    const preliminaryBotSlug =
+      (incomingMessageText
+        ? extractRequestedBotSlug(incomingMessageText)
+        : null) ??
+      (selectedBotSlug?.trim() || null);
+    const preliminarySkillSlug = incomingMessageText
+      ? extractRequestedSkillSlug(incomingMessageText)
+      : null;
+    const preliminaryRemember =
+      isOwnerUser &&
+      isMemoryToolsEnabled() &&
+      incomingMessageText &&
+      !containsRestrictedWorkData(incomingMessageText)
+        ? extractExplicitRememberFact(incomingMessageText)
+        : null;
+
     const [
       ,
       acquiredLock,
       chat,
+      prefetchedMessages,
       soul,
       homeLocation,
       storedFacts,
@@ -281,10 +307,15 @@ export async function POST(request: Request) {
       capabilityManifest,
       ownerApprovalSettings,
       ownerToolRules,
+      prefetchedThreadSummary,
+      prefetchedTeammate,
+      prefetchedExplicitSavedFact,
+      prefetchedSkills,
     ] = await Promise.all([
       checkIpRateLimit(ipAddress(request)),
       acquireChatLock(id),
       getChatById({ id }),
+      getMessagesByChatId({ id }).catch(() => [] as DBMessage[]),
       getUserSoul({ userId: session.user.id }),
       getUserHomeLocation({ userId: session.user.id }),
       memoryStore
@@ -301,8 +332,9 @@ export async function POST(request: Request) {
         ? Promise.resolve(undefined)
         : resolveLiveCapabilityManifest({
             userId: session.user.id,
-            isGuest: session.user.type === "guest",
+            isGuest: !isOwnerUser,
             webSearchAvailable: webSearchLane(chatModel),
+            skipLiveProbe: true,
           }),
       approvalPrefsStore
         ? approvalPrefsStore.getSettings(session.user.id).catch(() => ({
@@ -320,6 +352,34 @@ export async function POST(request: Request) {
       approvalPrefsStore
         ? approvalPrefsStore.listToolRules(session.user.id).catch(() => [])
         : Promise.resolve([]),
+      isOwnerUser && !isSyntheticSdk7FixtureMode()
+        ? resolveThreadSummaryStore()
+            .getSummary({ chatId: id, userId: session.user.id })
+            .catch(() => null)
+        : Promise.resolve(null),
+      preliminaryBotSlug && isOwnerUser
+        ? createPostgresBotRosterStore()
+            .getBotBySlug(session.user.id, preliminaryBotSlug)
+            .catch(() => null)
+        : Promise.resolve(null),
+      preliminaryRemember?.kind === "ok" && memoryStore && !retry
+        ? memoryStore
+            .upsertProfileFact({
+              userId: session.user.id,
+              category: preliminaryRemember.category,
+              key: preliminaryRemember.key,
+              value: preliminaryRemember.value,
+              source: "chat",
+              pinned: preliminaryRemember.pinned,
+              sharedAcrossBots: true,
+            })
+            .catch((): ProfileFact | null => null)
+        : Promise.resolve(null),
+      isOwnerUser && (preliminarySkillSlug || preliminaryBotSlug)
+        ? createPostgresSkillStore()
+            .listSkills(session.user.id)
+            .catch(() => [])
+        : Promise.resolve(null),
     ]);
     const googleConnectedAndHealthy =
       capabilityManifest?.entries.find((e) => e.id === "gmail")?.state ===
@@ -333,22 +393,24 @@ export async function POST(request: Request) {
     const isToolApprovalFlow = Boolean(messages);
 
     let messagesFromDb: DBMessage[] = [];
-    let titlePromise: Promise<string> | null = null;
+    let newChatTitle: string | null = null;
     let replacementReplyId: string | undefined;
 
     if (chat) {
       if (chat.userId !== session.user.id) {
         return new ChatbotError("forbidden:chat").toResponse();
       }
-      messagesFromDb = await getMessagesByChatId({ id });
+      messagesFromDb = prefetchedMessages;
     } else if (message?.role === "user") {
+      newChatTitle =
+        incomingMessageText.replace(/\s+/g, " ").trim().slice(0, 70) ||
+        "New chat";
       await saveChat({
         id,
         userId: session.user.id,
-        title: "New chat",
+        title: newChatTitle,
         visibility: selectedVisibilityType,
       });
-      titlePromise = generateTitleFromUserMessage({ message });
     }
 
     // Retry can happen before or after the server accepted the original turn.
@@ -366,14 +428,8 @@ export async function POST(request: Request) {
     const midFlightSweep = markMidFlightToolsInterrupted(
       convertToUIMessages(messagesFromDb)
     );
-    if (midFlightSweep.interruptedMessages.length > 0) {
-      await Promise.all(
-        midFlightSweep.interruptedMessages.map((msg) =>
-          updateMessage({ id: msg.id, parts: msg.parts }).catch(() => null)
-        )
-      );
-    }
     const baseSavedUiMessages = midFlightSweep.messages;
+    let expiredMessagesToPersist: ChatMessage[] = [];
 
     if (isToolApprovalFlow && messages) {
       try {
@@ -400,15 +456,43 @@ export async function POST(request: Request) {
       }
       const expiredSweep =
         expirePendingApprovalsOnNewUserTurn(baseSavedUiMessages);
-      if (expiredSweep.expiredMessages.length > 0) {
+      expiredMessagesToPersist = expiredSweep.expiredMessages;
+      uiMessages = [...expiredSweep.messages, message as ChatMessage];
+    }
+
+    // Persist message sweeps + new user message concurrently while model streaming starts;
+    // awaited before onEnd saves the assistant turn and releases the advisory chat lock.
+    const persistUserTurnPromise = (async () => {
+      if (midFlightSweep.interruptedMessages.length > 0) {
         await Promise.all(
-          expiredSweep.expiredMessages.map((msg) =>
+          midFlightSweep.interruptedMessages.map((msg) =>
             updateMessage({ id: msg.id, parts: msg.parts }).catch(() => null)
           )
         );
       }
-      uiMessages = [...expiredSweep.messages, message as ChatMessage];
-    }
+      if (expiredMessagesToPersist.length > 0) {
+        await Promise.all(
+          expiredMessagesToPersist.map((msg) =>
+            updateMessage({ id: msg.id, parts: msg.parts }).catch(() => null)
+          )
+        );
+      }
+      if (message?.role === "user" && !retryAlreadyPersisted) {
+        await saveMessages({
+          messages: [
+            {
+              chatId: id,
+              id: message.id,
+              role: "user",
+              parts: message.parts,
+              attachments: [],
+              createdAt: new Date(),
+            },
+          ],
+        });
+      }
+    })();
+    persistUserTurnPromise.catch(() => null);
 
     const modelConfig =
       chatModels.find((m) => m.id === chatModel) ??
@@ -423,26 +507,25 @@ export async function POST(request: Request) {
     const toolSelectOptions = {
       googleConnectedAndHealthy,
       capabilityManifest:
-        isPremiumModel(chatModel) && session.user.type !== "guest"
+        isPremiumModel(chatModel) && isOwnerUser
           ? capabilityManifest
           : undefined,
     };
-    const requestedTools = supportsTools
-      ? selectActiveTools(
-          uiMessages,
-          session.user.type !== "guest",
-          searchLane,
-          toolSelectOptions
-        )
-      : [];
-    const { intentMatchedTools } = supportsTools
+    const { activeTools: requestedTools, intentMatchedTools } = supportsTools
       ? selectToolsWithRanking(
           uiMessages,
-          session.user.type !== "guest",
+          isOwnerUser,
           searchLane,
           toolSelectOptions
         )
-      : { intentMatchedTools: [] as typeof requestedTools };
+      : {
+          activeTools: [] as ReturnType<
+            typeof selectToolsWithRanking
+          >["activeTools"],
+          intentMatchedTools: [] as ReturnType<
+            typeof selectToolsWithRanking
+          >["intentMatchedTools"],
+        };
     const finalUserText =
       [...uiMessages]
         .reverse()
@@ -464,51 +547,44 @@ export async function POST(request: Request) {
       (selectedBotSlug?.trim() || null);
 
     const explicitRemember =
-      session.user.type !== "guest" &&
+      isOwnerUser &&
       isMemoryToolsEnabled() &&
       !containsRestrictedWorkData(finalUserText)
         ? extractExplicitRememberFact(finalUserText)
         : null;
 
-    const [, activeTeammate, explicitSavedFact, threadSummary] =
+    const [activeTeammate, explicitSavedFact, threadSummary] =
       await Promise.all([
-        message?.role === "user" && !retryAlreadyPersisted
-          ? saveMessages({
-              messages: [
-                {
-                  chatId: id,
-                  id: message.id,
-                  role: "user",
-                  parts: message.parts,
-                  attachments: [],
-                  createdAt: new Date(),
-                },
-              ],
-            })
-          : Promise.resolve(),
         requestedBotSlug
-          ? createPostgresBotRosterStore()
-              .getBotBySlug(session.user.id, requestedBotSlug)
-              .catch(() => null)
+          ? requestedBotSlug === preliminaryBotSlug
+            ? Promise.resolve(prefetchedTeammate)
+            : createPostgresBotRosterStore()
+                .getBotBySlug(session.user.id, requestedBotSlug)
+                .catch(() => null)
           : Promise.resolve(null),
         explicitRemember?.kind === "ok"
-          ? createPostgresMemoryStore()
-              .upsertProfileFact({
-                userId: session.user.id,
-                category: explicitRemember.category,
-                key: explicitRemember.key,
-                value: explicitRemember.value,
-                source: "chat",
-                pinned: explicitRemember.pinned,
-                sharedAcrossBots: true,
-              })
-              .catch((): ProfileFact | null => null)
+          ? prefetchedExplicitSavedFact
+            ? Promise.resolve(prefetchedExplicitSavedFact)
+            : (memoryStore ?? createPostgresMemoryStore())
+                .upsertProfileFact({
+                  userId: session.user.id,
+                  category: explicitRemember.category,
+                  key: explicitRemember.key,
+                  value: explicitRemember.value,
+                  source: "chat",
+                  pinned: explicitRemember.pinned,
+                  sharedAcrossBots: true,
+                })
+                .catch((): ProfileFact | null => null)
           : Promise.resolve(null),
-        session.user.type !== "guest" && !isSyntheticSdk7FixtureMode()
+        isOwnerUser && !isSyntheticSdk7FixtureMode()
           ? syncThreadSummary({
               chatId: id,
               userId: session.user.id,
               messages: uiMessages,
+              isNewChat: !chat,
+              prefetchedExisting: prefetchedThreadSummary,
+              hasPrefetchedExisting: true,
             }).catch(() => ({ record: null, promptBlock: "" }))
           : Promise.resolve({ record: null, promptBlock: "" }),
       ]);
@@ -527,9 +603,10 @@ export async function POST(request: Request) {
       null;
     const activeSkill = requestedSkillSlug
       ? ((
-          await createPostgresSkillStore()
+          prefetchedSkills ??
+          (await createPostgresSkillStore()
             .listSkills(session.user.id)
-            .catch(() => [])
+            .catch(() => []))
         ).find((s) => s.slug === requestedSkillSlug) ?? null)
       : null;
     const rawBaseContext = contextBlock({
@@ -1107,15 +1184,14 @@ export async function POST(request: Request) {
               .pipeThrough(safeUIStream(finalUserText))
           );
 
-          if (titlePromise) {
-            const title = await titlePromise;
-            dataStream.write({ type: "data-chat-title", data: title });
-            await updateChatTitleById({ chatId: id, title });
+          if (newChatTitle) {
+            dataStream.write({ type: "data-chat-title", data: newChatTitle });
           }
         }),
       generateId: () => replacementReplyId ?? generateUUID(),
       onEnd: async ({ responseMessage, outcome, isAborted, isCancelled }) => {
         try {
+          await persistUserTurnPromise;
           const reply = replyForStorage(
             responseMessage,
             outcome.status === "completed" && !isAborted && !isCancelled

@@ -9,8 +9,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { put } from "@vercel/blob";
-import postgres from "postgres";
 import { ensureParitySchema } from "@/lib/db/ensure-parity-schema";
+import { getSharedPostgresClient } from "@/lib/db/shared-pool";
 import type { ExportedPrivateFileMediaType } from "./attachment-validator";
 
 export type StoredPrivateFile = {
@@ -164,17 +164,12 @@ function resolveLocalCacheDir(): string {
   return path.join(os.tmpdir(), "assistant-private-files");
 }
 
-let pgFileClient: ReturnType<typeof postgres> | undefined;
 async function getFileSql() {
   const url = (process.env.POSTGRES_URL ?? "").trim();
   if (!url || url === "****") {
     return null;
   }
-  pgFileClient ??= postgres(url, {
-    max: 2,
-    prepare: false,
-    idle_timeout: 0,
-  });
+  const pgFileClient = getSharedPostgresClient(url);
   await ensureParitySchema(pgFileClient);
   return pgFileClient;
 }

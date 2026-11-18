@@ -13,7 +13,7 @@ import {
   vertexEnabled,
 } from "./routing/catalog";
 import type { Readiness } from "./routing/gateway";
-import { getVertexWifAccessToken } from "./vertex-auth";
+import { getVertexWifAccessToken, resolveVercelOidcJwt } from "./vertex-auth";
 
 let vertexCache:
   | { key: string; expires: number; result: Readiness }
@@ -231,6 +231,27 @@ export function getRequestModelAvailability() {
           ? ("ready" as const)
           : ("setup_required" as const),
       models,
+    });
+  }
+  const hasVertex = vertexEnabled();
+  const hasOidcJwt = hasVertex && Boolean(resolveVercelOidcJwt());
+  const hasCopilot = copilotFallbackEnabled();
+  if (hasOidcJwt || hasCopilot) {
+    if (hasOidcJwt) {
+      // Warm STS token cache asynchronously in parallel with DB reads instead of blocking preflight
+      getVertexWifAccessToken().catch(() => null);
+    }
+    const vertexModels = chatModels.filter(
+      (m) => m.id === HYDROGEN || m.id === ARGON
+    );
+    return Promise.resolve({
+      status: "ready" as const,
+      reason: "ready" as const,
+      hint: null,
+      models: vertexModels,
+      defaultModelId: HYDROGEN,
+      checkedAt: new Date().toISOString(),
+      unavailableModels: [],
     });
   }
   return vertexAvailability();

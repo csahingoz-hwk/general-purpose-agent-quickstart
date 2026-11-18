@@ -5,6 +5,7 @@ import {
 } from "@/lib/connectors/calendar-and-github";
 import {
   type GoogleWorkspaceHealthResult,
+  getCachedGoogleWorkspaceHealth,
   probeGoogleWorkspaceApiHealth,
 } from "@/lib/connectors/google-health";
 import {
@@ -637,11 +638,15 @@ const manifestCache = new Map<
   string,
   { manifest: CapabilityManifest; expiresAtMs: number }
 >();
-const MANIFEST_CACHE_TTL_MS = 60_000;
+const MANIFEST_CACHE_TTL_MS = 5 * 60_000;
 
 export function clearLiveCapabilityManifestCache(userId?: string): void {
   if (userId) {
-    manifestCache.delete(userId);
+    for (const key of manifestCache.keys()) {
+      if (key === userId || key.startsWith(`${userId}:`)) {
+        manifestCache.delete(key);
+      }
+    }
     return;
   }
   manifestCache.clear();
@@ -653,6 +658,13 @@ export async function resolveLiveCapabilityManifest(opts: {
   webSearchAvailable: boolean;
   vaultStore?: SecretVaultStore;
   forceRefresh?: boolean;
+  /**
+   * When true (used on latency-sensitive `/api/chat` & Live Voice session start),
+   * uses cached Google health (`0ms` external HTTP latency) and triggers a
+   * non-blocking background health refresh when uncached instead of blocking
+   * first-token generation on 4 live Google API probes.
+   */
+  skipLiveProbe?: boolean;
 }): Promise<CapabilityManifest> {
   const vertexReady = vertexEnabled();
   const dbReady = Boolean(process.env.POSTGRES_URL?.trim());
@@ -711,14 +723,30 @@ export async function resolveLiveCapabilityManifest(opts: {
   );
   let googleHealth: GoogleWorkspaceHealthResult | null = null;
   if (googleConnected && store) {
-    googleHealth = await Promise.race([
-      probeGoogleWorkspaceApiHealth({
-        userId: opts.userId,
-        vaultStore: store,
-        forceRefresh: opts.forceRefresh,
-      }).catch(() => null),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), 1800)),
-    ]);
+    if (opts.skipLiveProbe) {
+      googleHealth = getCachedGoogleWorkspaceHealth(opts.userId);
+      if (!googleHealth) {
+        probeGoogleWorkspaceApiHealth({
+          userId: opts.userId,
+          vaultStore: store,
+        })
+          .then((result) => {
+            if (result.status !== "ready") {
+              clearLiveCapabilityManifestCache(opts.userId);
+            }
+          })
+          .catch(() => null);
+      }
+    } else {
+      googleHealth = await Promise.race([
+        probeGoogleWorkspaceApiHealth({
+          userId: opts.userId,
+          vaultStore: store,
+          forceRefresh: opts.forceRefresh,
+        }).catch(() => null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 1800)),
+      ]);
+    }
   }
 
   const githubConnected =

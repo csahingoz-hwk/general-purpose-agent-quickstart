@@ -2,7 +2,7 @@ import { inflateRawSync, inflateSync } from "node:zlib";
 import Papa from "papaparse";
 import { fenceUntrustedContent } from "@/lib/safety/untrusted-content";
 import type { ChatMessage } from "@/lib/types";
-import type { AllowedAttachmentMediaType } from "./attachment-validator";
+import type { ExportedPrivateFileMediaType } from "./attachment-validator";
 import {
   extractTokenFromPrivateFileUrl,
   verifySignedFileToken,
@@ -652,7 +652,7 @@ export async function prepareMessagesWithAttachments(opts: {
         continue;
       }
 
-      const mediaType: AllowedAttachmentMediaType = verified.payload.ct;
+      const mediaType: ExportedPrivateFileMediaType = verified.payload.ct;
       if (mediaType === "text/csv") {
         const parsed = parseCsvBufferToText(bytes, verified.payload.name);
         nextParts.push({
@@ -665,7 +665,24 @@ export async function prepareMessagesWithAttachments(opts: {
           type: "text",
           text: parsed.fencedText,
         });
-      } else if (opts.visionEnabled) {
+      } else if (
+        mediaType === "text/html" ||
+        mediaType === "text/plain" ||
+        mediaType === "text/markdown" ||
+        mediaType === "application/json"
+      ) {
+        const rawText = Buffer.from(bytes)
+          .toString("utf8")
+          .slice(0, MAX_EXTRACTED_ATTACHMENT_CHARS);
+        nextParts.push({
+          type: "text",
+          text: fenceUntrustedContent({
+            text: rawText,
+            source: `attachment:${verified.payload.name}`,
+            maxChars: MAX_EXTRACTED_ATTACHMENT_CHARS,
+          }).fencedText,
+        });
+      } else if (opts.visionEnabled && mediaType.startsWith("image/")) {
         const dataUrl = `data:${mediaType};base64,${Buffer.from(bytes).toString("base64")}`;
         nextParts.push({
           ...part,

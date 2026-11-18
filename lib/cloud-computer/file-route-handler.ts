@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/app/(auth)/auth";
+import type { Session } from "next-auth";
 import {
   cloudReadWorkspaceFile,
   isCloudComputerConfigured,
@@ -19,14 +19,13 @@ import {
 export async function handleCloudComputerFileGet(
   request: Request,
   deps?: {
-    getSession?: typeof auth;
+    getSession?: () => Promise<Session | null>;
     relayUrl?: string;
     hmacSecret?: string;
     fetchImpl?: typeof fetch;
   }
 ): Promise<Response> {
-  const resolveSession = deps?.getSession ?? auth;
-  const session = await resolveSession();
+  const session = deps?.getSession ? await deps.getSession() : null;
   if (!session?.user?.id || session.user.type === "guest") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
@@ -43,11 +42,14 @@ export async function handleCloudComputerFileGet(
   } catch {
     return NextResponse.json(
       { error: "Invalid workspace path" },
-      { status: 400 }
+      { status: 403 }
     );
   }
 
-  if (containsRestrictedWorkData(safePath)) {
+  if (
+    containsRestrictedWorkData(safePath) ||
+    containsRestrictedWorkData(safePath.replace(/[_-]+/g, " "))
+  ) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

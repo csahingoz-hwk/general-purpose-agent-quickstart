@@ -60,7 +60,7 @@ export type CustomUIDataTypes = {
   openui: OpenUiPayload;
   "turn-status": {
     phase: "searching" | "weather" | "fixtures" | "tool" | "thinking" | "done";
-    model: string;
+    model?: string;
   };
   "task-step": {
     stepIndex: number;

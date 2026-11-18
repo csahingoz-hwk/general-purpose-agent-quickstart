@@ -121,6 +121,7 @@ export function buildCoreSharedTools(opts: {
           userId,
           store: resolveMemoryStore(opts.memoryStore),
           defaultSource: opts.memorySource ?? "chat",
+          dedupePerTurn: true,
         })
       : {}),
     ...(isGoogleConnectorsEnabled()

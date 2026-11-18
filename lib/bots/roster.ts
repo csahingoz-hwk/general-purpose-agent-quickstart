@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
 import { buildSoulPrompt } from "@/lib/ai/prompts";
 import { ensureParitySchema } from "@/lib/db/ensure-parity-schema";
+import { getSharedPostgresClient } from "@/lib/db/shared-pool";
 import { isMascotVariant, type MascotVariant } from "@/lib/mascot";
 import type { ProfileFact } from "@/lib/memory/store";
 
@@ -203,17 +203,11 @@ export function createInMemoryBotRosterStore(): BotRosterStore {
   };
 }
 
-let pgClient: ReturnType<typeof postgres> | undefined;
 function getSql() {
   if (!process.env.POSTGRES_URL) {
     return null;
   }
-  pgClient ??= postgres(process.env.POSTGRES_URL, {
-    max: 2,
-    prepare: false,
-    idle_timeout: 0,
-  });
-  return pgClient;
+  return getSharedPostgresClient(process.env.POSTGRES_URL);
 }
 
 function isMissingTable(error: unknown): boolean {

@@ -16,7 +16,7 @@ import { useState } from "react";
 import { getCopy } from "@/lib/ui-copy";
 import { cn } from "@/lib/utils";
 
-function resolveCloudFileUrls(output: Record<string, unknown>): {
+export function resolveCloudFileUrls(output: Record<string, unknown>): {
   filename: string;
   previewUrl: string | null;
   downloadUrl: string | null;

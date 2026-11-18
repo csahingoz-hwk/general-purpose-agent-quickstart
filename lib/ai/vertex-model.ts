@@ -862,7 +862,7 @@ export function createVertexGeminiAdapter(
                     },
                   ],
                 });
-                const subRes = await fetcher(endpointFor(projectId, false), {
+                const subRes = await fetcher(endpointFor(projectId, true), {
                   method: "POST",
                   headers: {
                     Authorization: `Bearer ${accessToken}`,
@@ -873,13 +873,111 @@ export function createVertexGeminiAdapter(
                 }).catch((err) =>
                   normalizeUpstreamError(err, params.abortSignal)
                 );
-                if (subRes.ok) {
-                  const subPayload =
-                    (await subRes.json()) as VertexResponsePayload;
-                  const subCand = subPayload.candidates?.[0];
-                  const subGrounding = buildGroundingSearchResults(
-                    subCand?.groundingMetadata
-                  );
+                if (subRes.ok && subRes.body) {
+                  const subReader = subRes.body
+                    .pipeThrough(new TextDecoderStream())
+                    .getReader();
+                  let subSseBuf = "";
+                  let rawSubText = "";
+                  let sawSubSseFrame = false;
+                  const subTextId = `vtxt-split-${Math.random().toString(36).slice(2, 8)}`;
+                  let subTextOpen = false;
+                  const subQueriesAcc: string[] = [];
+                  const subChunksAcc: NonNullable<
+                    VertexCandidate["groundingMetadata"]
+                  >["groundingChunks"] = [];
+
+                  const handleSubPayload = (
+                    subPayload: VertexResponsePayload
+                  ) => {
+                    if (subPayload.usageMetadata) {
+                      lastUsage = mapUsage(subPayload.usageMetadata);
+                    }
+                    const subCand = subPayload.candidates?.[0];
+                    if (!subCand) {
+                      return;
+                    }
+                    if (subCand.groundingMetadata?.webSearchQueries) {
+                      for (const q of subCand.groundingMetadata
+                        .webSearchQueries) {
+                        if (q && !subQueriesAcc.includes(q)) {
+                          subQueriesAcc.push(q);
+                        }
+                      }
+                    }
+                    if (subCand.groundingMetadata?.groundingChunks) {
+                      subChunksAcc.push(
+                        ...subCand.groundingMetadata.groundingChunks
+                      );
+                    }
+                    for (const p of subCand.content?.parts ?? []) {
+                      if (!p.thought && typeof p.text === "string" && p.text) {
+                        if (!subTextOpen) {
+                          controller.enqueue({
+                            type: "text-start",
+                            id: subTextId,
+                          });
+                          subTextOpen = true;
+                        }
+                        controller.enqueue({
+                          type: "text-delta",
+                          id: subTextId,
+                          delta: p.text,
+                        });
+                      }
+                    }
+                  };
+
+                  for (;;) {
+                    const { done: subDone, value: subChunk } =
+                      await subReader.read();
+                    if (subDone) {
+                      break;
+                    }
+                    rawSubText += subChunk;
+                    subSseBuf += subChunk;
+                    const subLines = subSseBuf.split(/\r?\n/);
+                    subSseBuf = subLines.pop() ?? "";
+                    for (const line of subLines) {
+                      const trimmed = line.trim();
+                      if (!trimmed.startsWith("data:")) {
+                        continue;
+                      }
+                      const dataStr = trimmed.slice(5).trim();
+                      if (!dataStr || dataStr === "[DONE]") {
+                        continue;
+                      }
+                      sawSubSseFrame = true;
+                      handleSubPayload(
+                        JSON.parse(dataStr) as VertexResponsePayload
+                      );
+                    }
+                  }
+                  if (subSseBuf.trim().startsWith("data:")) {
+                    const dataStr = subSseBuf.trim().slice(5).trim();
+                    if (dataStr && dataStr !== "[DONE]") {
+                      sawSubSseFrame = true;
+                      handleSubPayload(
+                        JSON.parse(dataStr) as VertexResponsePayload
+                      );
+                    }
+                  }
+                  if (!sawSubSseFrame && rawSubText.trim()) {
+                    try {
+                      handleSubPayload(
+                        JSON.parse(rawSubText) as VertexResponsePayload
+                      );
+                    } catch {
+                      /* non-JSON empty fallback */
+                    }
+                  }
+                  if (subTextOpen) {
+                    controller.enqueue({ type: "text-end", id: subTextId });
+                  }
+                  const subGrounding = buildGroundingSearchResults({
+                    webSearchQueries: subQueriesAcc,
+                    groundingChunks: subChunksAcc,
+                  });
                   controller.enqueue({
                     type: "tool-result",
                     toolCallId: subCallId,
@@ -889,20 +987,6 @@ export function createVertexGeminiAdapter(
                     },
                     providerExecuted: true,
                   } as unknown as LanguageModelV4StreamPart);
-                  const subText = (subCand?.content?.parts ?? [])
-                    .filter((p) => !p.thought && typeof p.text === "string")
-                    .map((p) => p.text)
-                    .join("");
-                  if (subText) {
-                    const subTextId = `vtxt-split-${Math.random().toString(36).slice(2, 8)}`;
-                    controller.enqueue({ type: "text-start", id: subTextId });
-                    controller.enqueue({
-                      type: "text-delta",
-                      id: subTextId,
-                      delta: subText,
-                    });
-                    controller.enqueue({ type: "text-end", id: subTextId });
-                  }
                 } else {
                   controller.enqueue({
                     type: "tool-result",

@@ -95,15 +95,15 @@ export async function POST(request: Request) {
         : Promise.resolve([]),
       body.chatId && hasDb
         ? (async () => {
-            const chat = await getChatById({ id: body.chatId as string }).catch(
-              () => null
-            );
+            const [chat, rows] = await Promise.all([
+              getChatById({ id: body.chatId as string }).catch(() => null),
+              getMessagesByChatId({ id: body.chatId as string }).catch(
+                () => []
+              ),
+            ]);
             if (!chat || chat.userId !== userId) {
               return [];
             }
-            const rows = await getMessagesByChatId({
-              id: body.chatId as string,
-            }).catch(() => []);
             return rows
               .slice(-8)
               .map((row) => {
@@ -137,6 +137,7 @@ export async function POST(request: Request) {
         userId,
         isGuest: false,
         webSearchAvailable: useVertex,
+        skipLiveProbe: true,
       }),
     ]);
 

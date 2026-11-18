@@ -16,7 +16,6 @@ import {
   sql,
 } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
 import type { ArtifactKind } from "@/components/chat/artifact";
 import type { VisibilityType } from "@/components/chat/visibility-selector";
 import { isOwnerEmail } from "../access-policy";
@@ -39,9 +38,10 @@ import {
   user,
   vote,
 } from "./schema";
+import { getSharedPostgresClient } from "./shared-pool";
 import { generateHashedPassword } from "./utils";
 
-const client = postgres(process.env.POSTGRES_URL ?? "");
+const client = getSharedPostgresClient(process.env.POSTGRES_URL ?? "");
 const db = drizzle(client);
 
 export async function getUser(email: string): Promise<User[]> {

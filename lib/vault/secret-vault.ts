@@ -5,8 +5,8 @@ import {
   randomBytes,
   randomUUID,
 } from "node:crypto";
-import postgres from "postgres";
 import { ensureParitySchema } from "@/lib/db/ensure-parity-schema";
+import { getSharedPostgresClient } from "@/lib/db/shared-pool";
 
 export type VaultErrorCode =
   | "vault_key_missing"
@@ -257,17 +257,11 @@ export function createInMemoryVaultStore(masterKey?: string): SecretVaultStore {
   };
 }
 
-let pgClient: ReturnType<typeof postgres> | undefined;
 function getSql() {
   if (!process.env.POSTGRES_URL) {
     throw new VaultError("vault_unavailable", "POSTGRES_URL is not configured");
   }
-  pgClient ??= postgres(process.env.POSTGRES_URL, {
-    max: 3,
-    prepare: false,
-    idle_timeout: 0,
-  });
-  return pgClient;
+  return getSharedPostgresClient(process.env.POSTGRES_URL);
 }
 
 function isMissingTable(error: unknown): boolean {
