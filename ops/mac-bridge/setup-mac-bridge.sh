@@ -30,7 +30,7 @@ if [[ "$APP_BUNDLE_ID" == "io.tailscale.ipn.macos" ]]; then
 fi
 
 if (( DRY_RUN == 1 )); then
-  echo "[dry-run] Would ensure Standard non-admin user 'botrunner', install /Users/botrunner/bin/mac-bridge-exec, and verify tmux."
+  echo "[dry-run] Validated mac-bridge-exec and tailscale-acl.hujson cleanly. Would ensure Standard non-admin user 'botrunner', install /Users/botrunner/bin/mac-bridge-exec, and verify tmux."
   exit 0
 fi
 

@@ -113,7 +113,9 @@ export function MacBridgeCard({
             "inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-0.5 font-medium text-[11px]",
             status === "ok"
               ? "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400"
-              : status === "awaiting_approval" || status === "setup_required"
+              : status === "awaiting_approval" ||
+                  status === "setup_required" ||
+                  status === "auth_required"
                 ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
                 : status === "cancelled"
                   ? "bg-muted text-muted-foreground"
@@ -124,7 +126,7 @@ export function MacBridgeCard({
           {status === "ok" ? (
             <>
               <CheckCircle2Icon className="size-3" />
-              {locale === "tr" ? "Tamamlandı" : "Done"}
+              {locale === "tr" ? "Bağlı · Tamamlandı" : "Connected · Done"}
             </>
           ) : status === "awaiting_approval" ? (
             <>
@@ -135,6 +137,13 @@ export function MacBridgeCard({
             <>
               <ShieldAlertIcon className="size-3" />
               {locale === "tr" ? "Tailscale eşleşmesi" : "Pair Tailscale"}
+            </>
+          ) : status === "auth_required" ? (
+            <>
+              <ShieldAlertIcon className="size-3" />
+              {locale === "tr"
+                ? "Bağlı · CLI girişi"
+                : "Connected · Sign in CLI"}
             </>
           ) : status === "cancelled" ? (
             <>

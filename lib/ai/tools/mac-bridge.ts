@@ -244,8 +244,12 @@ export function createMacBridgeTools(opts: {
           hmacSecret,
           fetchImpl,
         });
+        const needsCliAuth =
+          /Authentication required\. Please visit the URL to log in:|authentication failed or timed out|Please run .*login/i.test(
+            `${res.stdout}\n${res.stderr}`
+          );
         return {
-          status: res.status,
+          status: needsCliAuth ? ("auth_required" as const) : res.status,
           cli,
           repoName,
           branch: validated.branch,
@@ -255,6 +259,11 @@ export function createMacBridgeTools(opts: {
           stdout: res.stdout,
           stderr: res.stderr,
           durationMs: res.durationMs,
+          ...(needsCliAuth
+            ? {
+                message: ` Mac bridge is connected, and '${cli}' needs a one-time sign-in under botrunner: run 'sudo -iu botrunner ${cli === "agy" ? '/Users/Shared/antigravity-bin/agy -p "hello"' : cli}' once in Mac Terminal.`,
+              }
+            : {}),
           pushNote:
             "Changes stay strictly on the local worktree branch; git push always requires a separate Approval Card.",
         };

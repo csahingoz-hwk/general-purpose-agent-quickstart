@@ -6,6 +6,8 @@ set -euo pipefail
 # Enforces the 8 GB Mac mini governor, runs inside named tmux session `task-<id>`,
 # logs every byte via `tmux pipe-pane`, and writes append-only `commands.jsonl`.
 
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/bin:$HOME/.local/bin:/Users/Shared/antigravity-bin"
+
 TASK_ID="${1:-task}"
 SAFE_TASK_ID="${TASK_ID//[^a-zA-Z0-9_-]/}"
 TARGET_CWD="${2:-/Users/botrunner/workspaces}"
@@ -21,6 +23,11 @@ LOG_DIR="${BOTRUNNER_LOG_DIR:-/Users/botrunner/logs}"
 mkdir -p "$WORKSPACES_ROOT" "$LOG_DIR"
 chmod 700 "$LOG_DIR"
 
+# Prevent zsh-newuser-install interactive prompt inside tmux on fresh botrunner accounts
+if [[ "$(id -un)" == "botrunner" && ! -f "$HOME/.zshrc" ]]; then
+  printf '# botrunner non-interactive shell\nexport PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/bin:$HOME/.local/bin:/Users/Shared/antigravity-bin"\n' > "$HOME/.zshrc"
+fi
+
 REAL_CWD="$(python3 -c 'import os,sys; p=os.path.realpath(sys.argv[1]); r=os.path.realpath(sys.argv[2]); assert p==r or p.startswith(r+"/"), "escape"; print(p)' "$TARGET_CWD" "$WORKSPACES_ROOT" 2>/dev/null || true)"
 if [[ -z "$REAL_CWD" ]]; then
   echo "Refused: working directory must stay inside $WORKSPACES_ROOT" >&2
@@ -35,14 +42,14 @@ fi
 
 # 1. 8 GB Mac mini Governor: <= 3 concurrent CLI agents (under botrunner UID)
 MAX_AGENTS="${MAC_GOVERNOR_MAX_AGENTS:-3}"
-ACTIVE_AGENTS="$(pgrep -u "$(id -u)" -f '(claude|codex|agy|t3)[[:space:]]' 2>/dev/null | wc -l | tr -d ' ')"
+ACTIVE_AGENTS="$({ pgrep -u "$(id -u)" -f '(claude|codex|agy|t3)[[:space:]]' 2>/dev/null || true; } | wc -l | tr -d ' ')"
 if (( ACTIVE_AGENTS >= MAX_AGENTS )); then
   echo "8 GB Mac mini governor: $ACTIVE_AGENTS/$MAX_AGENTS CLI agents already active; deferring." >&2
   exit 75
 fi
 
 # 2. Free/reclaimable RAM check (>= 1200 MB) via vm_stat
-FREE_MB="$(vm_stat | awk '
+FREE_MB="$(/usr/bin/vm_stat | awk '
   /page size of/ { ps = $8 }
   /Pages free:/ { gsub(/\./,"",$3); f = $3 }
   /Pages speculative:/ { gsub(/\./,"",$3); s = $3 }
@@ -74,26 +81,26 @@ OUT_TMP="$(mktemp "${LOG_DIR}/.out-${SAFE_TASK_ID}-XXXXXX")"
 RC_TMP="${OUT_TMP}.rc"
 START_MS="$(python3 -c 'import time; print(int(time.time()*1000))')"
 
-# Run inside a named tmux session and log every byte with tmux pipe-pane
-"$TMUX_BIN" new-session -d -s "$SESSION" -c "$REAL_CWD" 2>/dev/null || true
-"$TMUX_BIN" pipe-pane -o -t "$SESSION" "sed -E 's/(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{16,}|tskey-[A-Za-z0-9_-]{12,}|AIza[0-9A-Za-z_-]{20,})/[REDACTED]/g' >> '$PTY_LOG'"
-
 RUNNER_SCRIPT="${OUT_TMP}.sh"
 cat > "$RUNNER_SCRIPT" <<EOF
 #!/usr/bin/env zsh
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:\$HOME/.local/bin"
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:\$HOME/bin:\$HOME/.local/bin:/Users/Shared/antigravity-bin"
 export HOME="$HOME"
 export USER="$(id -un)"
 export LANG="en_GB.UTF-8"
 cd "$REAL_CWD"
 (
 $DECODED_CMD
-) > "$OUT_TMP" 2>&1
-echo \$? > "$RC_TMP"
+) 2>&1 | tee "$OUT_TMP"
+echo \${pipestatus[1]} > "$RC_TMP"
 EOF
 chmod 700 "$RUNNER_SCRIPT"
 
-"$TMUX_BIN" send-keys -t "$SESSION" "'$RUNNER_SCRIPT'" C-m
+# Clean any finished session with the same name, launch inside tmux, and attach pipe-pane
+"$TMUX_BIN" kill-session -t "$SESSION" 2>/dev/null || true
+"$TMUX_BIN" new-session -d -s "$SESSION" -c "$REAL_CWD" "sleep 0.12 && '$RUNNER_SCRIPT'"
+"$TMUX_BIN" set-option -t "$SESSION" remain-on-exit on 2>/dev/null || true
+"$TMUX_BIN" pipe-pane -o -t "$SESSION" "sed -E 's/(sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{16,}|tskey-[A-Za-z0-9_-]{12,}|AIza[0-9A-Za-z_-]{20,})/[REDACTED]/g' >> '$PTY_LOG'" 2>/dev/null || true
 
 for _ in $(seq 1 900); do
   if [[ -f "$RC_TMP" ]]; then
@@ -101,6 +108,9 @@ for _ in $(seq 1 900); do
   fi
   sleep 0.1
 done
+
+sleep 0.05
+"$TMUX_BIN" kill-session -t "$SESSION" 2>/dev/null || true
 
 EXIT_CODE="$(cat "$RC_TMP" 2>/dev/null || echo 124)"
 END_MS="$(python3 -c 'import time; print(int(time.time()*1000))')"

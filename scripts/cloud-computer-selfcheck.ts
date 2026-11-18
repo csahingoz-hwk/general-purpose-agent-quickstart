@@ -4,6 +4,10 @@ import {
   cloudRunExec,
   isCloudComputerConfigured,
 } from "../lib/cloud-computer/client";
+import {
+  isMacBridgeConfigured,
+  runMacBridgeExec,
+} from "../lib/mac-bridge/client";
 
 async function main() {
   if (!isCloudComputerConfigured()) {
@@ -45,9 +49,32 @@ async function main() {
     copilotSummary = `ready(${cp.model})`;
   }
 
+  let macBridgeSummary = "unconfigured";
+  if (isMacBridgeConfigured()) {
+    try {
+      const mb = await runMacBridgeExec({
+        taskId: "buildcheck",
+        command: "whoami && agy --version",
+        timeoutSec: 20,
+      });
+      if (mb.exitCode === 0 && mb.stdout.includes("botrunner")) {
+        const ver =
+          mb.stdout
+            .split(/\r?\n/)
+            .map((l) => l.trim())
+            .filter(Boolean)[1] ?? "ok";
+        macBridgeSummary = `connected(botrunner,agy-${ver})`;
+      } else {
+        macBridgeSummary = `warn(rc=${mb.exitCode})`;
+      }
+    } catch {
+      macBridgeSummary = "offline_warn";
+    }
+  }
+
   const hostLine = res.stdout.split("\n")[0]?.trim() || res.hostname || "vm";
   console.log(
-    `Cloud Computer self-check: PASS vm=${hostLine} wake=${res.vmWakeMs ?? 0}ms exec=${res.durationMs}ms metadataBlocked=true copilotFallback=${copilotSummary}`
+    `Cloud Computer self-check: PASS vm=${hostLine} wake=${res.vmWakeMs ?? 0}ms exec=${res.durationMs}ms metadataBlocked=true copilotFallback=${copilotSummary} macBridge=${macBridgeSummary}`
   );
 }
 

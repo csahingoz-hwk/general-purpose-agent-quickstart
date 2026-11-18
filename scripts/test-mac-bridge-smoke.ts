@@ -15,7 +15,11 @@ import { chromium, expect } from "@playwright/test";
 import { encode } from "next-auth/jwt";
 import { createMacBridgeTools } from "../lib/ai/tools/mac-bridge";
 import { cloudRunExec } from "../lib/cloud-computer/client";
+import { runMacBridgeExec } from "../lib/mac-bridge/client";
 import { validateMacCliInvocation } from "../lib/mac-bridge/policy";
+
+const MAC_TAILSCALE_HOST =
+  process.env.MAC_TAILSCALE_HOST || "caglars-mac-mini.tail464f9c.ts.net";
 
 const MAC_CHROME =
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
@@ -67,7 +71,7 @@ test("Step 3 End-to-End Smoke: Cloud VM tailscale/ssh binary check, Tailscale AC
   assert.match(vmCheck.stdout, /\d+\.\d+\.\d+/);
   assert.match(`${vmCheck.stdout}\n${vmCheck.stderr}`, /OpenSSH/i);
 
-  // 2. Verify setup-mac-bridge.sh --dry-run & Tailscale ACL invariants (no caglar/root, port 22 only, zero Funnel)
+  // 2. Verify setup-mac-bridge.sh --dry-run, revoke-mac-bridge.sh --dry-run (kill switch), & Tailscale ACL invariants
   const dryRunOut = execFileSync(
     "/bin/zsh",
     ["ops/mac-bridge/setup-mac-bridge.sh", "--dry-run"],
@@ -77,6 +81,33 @@ test("Step 3 End-to-End Smoke: Cloud VM tailscale/ssh binary check, Tailscale AC
     dryRunOut,
     /Validated mac-bridge-exec and tailscale-acl\.hujson/
   );
+  const killDryRunOut = execFileSync(
+    "/bin/zsh",
+    ["ops/mac-bridge/revoke-mac-bridge.sh", "--dry-run"],
+    { encoding: "utf8" }
+  );
+  assert.match(killDryRunOut, /\[dry-run\] Kill switch ready/);
+
+  // 2b. Live Bot -> Cloud Run Relay -> Cloud VM (tag:bot) -> Tailscale SSH -> botrunner@Mac mini -> tmux -> agy check + ACL rejection check
+  const liveExec = await runMacBridgeExec({
+    taskId: "smokelive1",
+    command: "whoami && which agy && agy --version",
+    macHost: MAC_TAILSCALE_HOST,
+    relayUrl: RELAY_URL,
+    hmacSecret,
+    timeoutSec: 25,
+  });
+  assert.equal(liveExec.status, "ok");
+  assert.match(liveExec.stdout, /^botrunner\b/m);
+  assert.match(liveExec.stdout, /1\.5\./);
+
+  const aclReject = await cloudRunExec({
+    command: `ssh -o BatchMode=yes -o ConnectTimeout=5 caglar@${MAC_TAILSCALE_HOST} whoami 2>&1 || echo ACL_REJECTED`,
+    cwd: "/workspace",
+    relayUrl: RELAY_URL,
+    hmacSecret,
+  });
+  assert.match(aclReject.stdout, /ACL_REJECTED/);
 
   const rawAcl = readFileSync("ops/mac-bridge/tailscale-acl.hujson", "utf8")
     .split("\n")
@@ -204,6 +235,9 @@ test("Step 3 End-to-End Smoke: Cloud VM tailscale/ssh binary check, Tailscale AC
         ...process.env,
         AUTH_SECRET: secret,
         APP_OWNER_EMAIL: owner,
+        CLOUD_COMPUTER_RELAY_URL: RELAY_URL,
+        CLOUD_COMPUTER_HMAC_SECRET: hmacSecret,
+        MAC_TAILSCALE_HOST,
         PLAYWRIGHT: "True",
         NEXT_TELEMETRY_DISABLED: "1",
       },
@@ -329,6 +363,18 @@ test("Step 3 End-to-End Smoke: Cloud VM tailscale/ssh binary check, Tailscale AC
         },
         body: sse,
       });
+    });
+
+    // Verify /setup checklist shows Mac Bridge card as Connected with NO TS_AUTHKEY required
+    await page.goto(`${origin}/setup`, { waitUntil: "networkidle" });
+    const macBadge = page.getByTestId("setup-badge-mac_bridge");
+    await expect(macBadge).toBeVisible({ timeout: 10_000 });
+    await expect(macBadge).toHaveText("Connected");
+    await macBadge.evaluate((el) => el.scrollIntoView({ block: "center" }));
+    await page.waitForTimeout(200);
+    await page.screenshot({
+      path: join(scratchDir, "verify-mac-bridge-connected-390.png"),
+      fullPage: false,
     });
 
     await page.goto(

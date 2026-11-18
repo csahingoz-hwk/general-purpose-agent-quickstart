@@ -180,8 +180,17 @@ function SetupPageContent() {
                       <ExternalLinkIcon className="size-3.5" />
                     </a>
                   </div>
+                ) : item.status === "ready" ? (
+                  <span
+                    className="inline-flex items-center rounded-full bg-emerald-500/12 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300"
+                    data-testid={`setup-badge-${item.id}`}
+                  >
+                    {item.id === "mac_bridge" ? "Connected" : "Ready"}
+                  </span>
                 ) : (
-                  <span className="text-muted-foreground text-xs">Ready</span>
+                  <span className="text-muted-foreground text-xs">
+                    Optional
+                  </span>
                 )}
               </div>
             </li>
