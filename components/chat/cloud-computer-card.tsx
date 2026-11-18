@@ -10,6 +10,7 @@ import {
   XCircleIcon,
 } from "lucide-react";
 import { useState } from "react";
+import { getCopy } from "@/lib/ui-copy";
 import { cn } from "@/lib/utils";
 
 export function CloudComputerCard({
@@ -22,6 +23,7 @@ export function CloudComputerCard({
   locale?: "en" | "tr";
 }) {
   const [openStdout, setOpenStdout] = useState(false);
+  const copy = getCopy(locale);
   const status = String(output.status ?? "ok");
 
   if (toolName === "cloudExportFileToChat" && status === "ok") {
@@ -50,7 +52,7 @@ export function CloudComputerCard({
             href={downloadUrl}
           >
             <DownloadIcon className="size-3.5" />
-            {locale === "tr" ? "İndir" : "Download"}
+            {copy.cloudDownload}
           </a>
         ) : null}
       </div>
@@ -102,7 +104,9 @@ export function CloudComputerCard({
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2 text-xs">
           <CloudIcon className="size-3.5 shrink-0 text-primary" />
-          <span className="font-medium text-foreground">Cloud Computer</span>
+          <span className="font-medium text-foreground">
+            {copy.cloudComputerTitle}
+          </span>
           {typeof output.durationMs === "number" ? (
             <span className="text-muted-foreground">
               · {output.durationMs}ms
@@ -156,7 +160,7 @@ export function CloudComputerCard({
             onClick={() => setOpenStdout((p) => !p)}
             type="button"
           >
-            {openStdout ? "Hide terminal output" : "Show terminal output"}
+            {openStdout ? copy.cloudHideTerminal : copy.cloudShowTerminal}
           </button>
           {openStdout ? (
             <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-xl bg-muted/60 p-2.5 font-mono text-[11px] text-foreground">

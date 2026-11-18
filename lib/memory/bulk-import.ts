@@ -756,22 +756,166 @@ export function extractExplicitRememberFact(
 const CATEGORY_QUERY_HINTS: Record<CanonicalMemoryCategory, RegExp> = {
   rules: /\b(rule|rules|policy|allowed|never|always)\b|kural|ilke/iu,
   preferences:
-    /\b(prefer|preference|style|format|like|coffee|flight|seat)\b|tercih|üslup|tarz/iu,
+    /\b(prefer|preference|favorite|favourite|style|format|like|coffee|tea|drink|eat|allergy|flight|seat)\b|tercih|üslup|tarz|kahve|çay|favori|sever|içer|içtiğ|alerji|koltuk|uçuş/iu,
   about_me:
-    /\b(who am i|about me|where do i live|my city|timezone|remember about me)\b|hakkımda|nerede yaşıyorum|kimim/iu,
+    /\b(who am i|about me|where do i live|my city|timezone|remember about me)\b|hakkımda|nerede yaşıyorum|kimim|beni hatırlıyor/iu,
   family:
-    /\b(family|daughter|son|wife|husband|partner|kids|children|ece)\b|aile|kızım|oğlum|eşim/iu,
+    /\b(family|daughter|son|wife|husband|partner|sister|brother|birthday|kids|children|ece)\b|aile|kızım|oğlum|eşim|kardeş|doğum gün/iu,
   work: /\b(work|job|role|office|team|audit|close)\b|işim|görevim|ofis/iu,
   projects:
     /\b(project|projects|repo|app|deploy|tailscale|mac mini|vm|streamvault)\b|proje|uygulama|sunucu/iu,
 };
 
+const BILINGUAL_MEMORY_CONCEPT_GROUPS: ReadonlyArray<readonly string[]> = [
+  [
+    "coffee",
+    "espresso",
+    "americano",
+    "latte",
+    "cappuccino",
+    "filter",
+    "kahve",
+    "sütsüz",
+    "şekersiz",
+    "filtre",
+  ],
+  ["tea", "herbal", "earl", "çay", "bitki"],
+  [
+    "food",
+    "meal",
+    "diet",
+    "allergy",
+    "allergic",
+    "yemek",
+    "beslenme",
+    "diyet",
+    "alerji",
+  ],
+  [
+    "family",
+    "daughter",
+    "son",
+    "wife",
+    "husband",
+    "sister",
+    "brother",
+    "birthday",
+    "aile",
+    "kızım",
+    "oğlum",
+    "eşim",
+    "kardeş",
+    "doğum",
+  ],
+  [
+    "flight",
+    "seat",
+    "aisle",
+    "window",
+    "hotel",
+    "airline",
+    "uçuş",
+    "koltuk",
+    "koridor",
+    "pencere",
+    "otel",
+  ],
+  [
+    "sleep",
+    "morning",
+    "gym",
+    "workout",
+    "running",
+    "uyku",
+    "sabah",
+    "spor",
+    "koşu",
+  ],
+];
+
+function softenTurkishStem(word: string): string {
+  return word.replace(/ğ/g, "k").replace(/ç/g, "c").slice(0, 6);
+}
+
+export function wordsMatchForMemoryRecall(
+  queryWord: string,
+  factWord: string
+): boolean {
+  if (!queryWord || !factWord) {
+    return false;
+  }
+  if (queryWord === factWord) {
+    return true;
+  }
+  if (queryWord.length >= 4 && factWord.length >= 4) {
+    const minPrefix = Math.min(5, queryWord.length, factWord.length);
+    if (
+      minPrefix >= 4 &&
+      queryWord.slice(0, minPrefix) === factWord.slice(0, minPrefix)
+    ) {
+      return true;
+    }
+    const sq = softenTurkishStem(queryWord);
+    const sf = softenTurkishStem(factWord);
+    const softPrefix = Math.min(5, sq.length, sf.length);
+    if (
+      softPrefix >= 4 &&
+      sq.slice(0, softPrefix) === sf.slice(0, softPrefix)
+    ) {
+      return true;
+    }
+  }
+  for (const group of BILINGUAL_MEMORY_CONCEPT_GROUPS) {
+    const qInGroup = group.some(
+      (term) =>
+        queryWord === term ||
+        (queryWord.length >= 4 &&
+          term.length >= 4 &&
+          queryWord.slice(0, 4) === term.slice(0, 4))
+    );
+    if (!qInGroup) {
+      continue;
+    }
+    const fInGroup = group.some(
+      (term) =>
+        factWord === term ||
+        (factWord.length >= 4 &&
+          term.length >= 4 &&
+          factWord.slice(0, 4) === term.slice(0, 4))
+    );
+    if (fInGroup) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function scoreTokensOverlap(
+  queryWords: readonly string[],
+  candidateText: string
+): number {
+  if (queryWords.length === 0) {
+    return 0;
+  }
+  const candidateWords = normalizeMemoryComparisonText(candidateText)
+    .split(" ")
+    .filter((w) => w.length >= 3);
+  let score = 0;
+  for (const qw of queryWords) {
+    if (candidateWords.some((cw) => wordsMatchForMemoryRecall(qw, cw))) {
+      score += 2;
+    }
+  }
+  return score;
+}
+
 /**
  * Selects facts for a session prompt:
  * 1. ALL `pinned === true` facts are ALWAYS included.
  * 2. `pinned === false` ("Searchable") facts are pulled in when relevant to
- *    `queryText` (keyword overlap or category intent; or when queryText is empty
- *    such as Live Voice session startup, top recent searchable facts up to budget).
+ *    `queryText` (keyword/stem/bilingual overlap or category intent; or when
+ *    queryText is empty such as Live Voice session startup, top recent searchable
+ *    facts up to budget).
  */
 export function selectRelevantFactsForPrompt(
   facts: readonly ProfileFact[],
@@ -821,29 +965,21 @@ export function selectRelevantFactsForPrompt(
   const trimmedQuery = queryText.trim();
   const asksBroadPersonalRecall =
     !trimmedQuery ||
-    /\b(what do you (?:know|remember)|about me|my profile|my memories)\b|hakkımda ne|belleğimde ne/iu.test(
+    /\b(what do you (?:know|remember)|about me|my profile|my memories|do you remember me)\b|hakkımda ne|belleğimde ne|ne hatırlıyorsun|beni hatırlıyor musun/iu.test(
       trimmedQuery
     );
 
-  const queryWords = new Set(
-    normalizeMemoryComparisonText(trimmedQuery)
-      .split(" ")
-      .filter((w) => w.length >= 3)
-  );
+  const queryWords = [
+    ...new Set(
+      normalizeMemoryComparisonText(trimmedQuery)
+        .split(" ")
+        .filter((w) => w.length >= 3)
+    ),
+  ];
 
   const scoredSearchable = searchable
     .map((fact, idx) => {
-      let score = 0;
-      if (queryWords.size > 0) {
-        const factWords = normalizeMemoryComparisonText(
-          `${fact.key} ${fact.value}`
-        ).split(" ");
-        for (const fw of factWords) {
-          if (queryWords.has(fw)) {
-            score += 2;
-          }
-        }
-      }
+      let score = scoreTokensOverlap(queryWords, `${fact.key} ${fact.value}`);
       const normCat = normalizeMemoryCategory(fact.category);
       if (trimmedQuery && CATEGORY_QUERY_HINTS[normCat]?.test(trimmedQuery)) {
         score += 1;
@@ -864,13 +1000,78 @@ export function selectRelevantFactsForPrompt(
 }
 
 /**
+ * Selects relevant episodic Journal notes for auto-recall on the current turn.
+ */
+export function selectRelevantJournalNotesForPrompt(
+  journalEntries: readonly JournalEntry[],
+  queryText = "",
+  maxNotes = 5,
+  maxChars = 1600
+): JournalEntry[] {
+  if (journalEntries.length === 0) {
+    return [];
+  }
+  const trimmedQuery = queryText.trim();
+  const asksBroadRecall =
+    !trimmedQuery ||
+    /\b(what do you (?:know|remember)|my journal|my notes|about me|my memories)\b|günlüğüm|notlarım|hakkımda ne|ne hatırlıyorsun|hatırlıyor musun/iu.test(
+      trimmedQuery
+    );
+  const queryWords = [
+    ...new Set(
+      normalizeMemoryComparisonText(trimmedQuery)
+        .split(" ")
+        .filter((w) => w.length >= 3)
+    ),
+  ];
+
+  const scored = journalEntries
+    .filter(
+      (entry) => !containsRestrictedWorkData(`${entry.title}\n${entry.body}`)
+    )
+    .map((entry, idx) => {
+      let score = scoreTokensOverlap(
+        queryWords,
+        `${entry.title} ${entry.body} ${entry.tags.join(" ")}`
+      );
+      if (asksBroadRecall) {
+        score += 1;
+      }
+      return { entry, score, idx };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.idx - b.idx);
+
+  const chosen: JournalEntry[] = [];
+  let used = 0;
+  for (const { entry } of scored) {
+    if (chosen.length >= maxNotes) {
+      break;
+    }
+    const snippet = entry.body.slice(0, 320);
+    const cost = entry.title.length + snippet.length + 24;
+    if (used + cost > maxChars && chosen.length > 0) {
+      break;
+    }
+    chosen.push(entry);
+    used += cost;
+  }
+  return chosen;
+}
+
+/**
  * Formats selected owner facts grouped by category with Rules and Preferences
- * strictly first, for injection into chat and voice session system prompts.
+ * strictly first, plus relevant episodic Journal notes, for auto-recall into
+ * chat and voice session system prompts on every turn.
  */
 export function buildGroupedMemoryPromptBlock(
   facts: readonly ProfileFact[],
   queryText = "",
-  opts?: { maxFacts?: number; maxChars?: number }
+  opts?: {
+    maxFacts?: number;
+    maxChars?: number;
+    journalEntries?: readonly JournalEntry[];
+  }
 ): string {
   const selected = selectRelevantFactsForPrompt(
     facts,
@@ -878,30 +1079,44 @@ export function buildGroupedMemoryPromptBlock(
     opts?.maxFacts ?? 80,
     opts?.maxChars ?? 6000
   );
-  if (selected.length === 0) {
+  const selectedNotes = selectRelevantJournalNotesForPrompt(
+    opts?.journalEntries ?? [],
+    queryText
+  );
+  if (selected.length === 0 && selectedNotes.length === 0) {
     return "";
-  }
-
-  const grouped = new Map<CanonicalMemoryCategory, ProfileFact[]>();
-  for (const cat of ORDERED_MEMORY_CATEGORIES) {
-    grouped.set(cat, []);
-  }
-  for (const fact of selected) {
-    const cat = normalizeMemoryCategory(fact.category);
-    grouped.get(cat)?.push(fact);
   }
 
   const sections: string[] = [
     "Owner durable memory (self-contained facts; Rules and Preferences take priority):",
   ];
-  for (const cat of ORDERED_MEMORY_CATEGORIES) {
-    const items = grouped.get(cat) ?? [];
-    if (items.length === 0) {
-      continue;
+  if (selected.length > 0) {
+    const grouped = new Map<CanonicalMemoryCategory, ProfileFact[]>();
+    for (const cat of ORDERED_MEMORY_CATEGORIES) {
+      grouped.set(cat, []);
     }
-    sections.push(`### ${MEMORY_CATEGORY_LABELS.en[cat]}`);
-    for (const item of items) {
-      sections.push(`- ${item.value}`);
+    for (const fact of selected) {
+      const cat = normalizeMemoryCategory(fact.category);
+      grouped.get(cat)?.push(fact);
+    }
+
+    for (const cat of ORDERED_MEMORY_CATEGORIES) {
+      const items = grouped.get(cat) ?? [];
+      if (items.length === 0) {
+        continue;
+      }
+      sections.push(`### ${MEMORY_CATEGORY_LABELS.en[cat]}`);
+      for (const item of items) {
+        sections.push(`- ${item.value}`);
+      }
+    }
+  }
+  if (selectedNotes.length > 0) {
+    sections.push("### Relevant Memory Notes");
+    for (const note of selectedNotes) {
+      const dateStr = note.createdAt.slice(0, 10);
+      const compactBody = note.body.replace(/\s+/g, " ").trim().slice(0, 300);
+      sections.push(`- [${dateStr}] ${note.title}: ${compactBody}`);
     }
   }
   return sections.join("\n");

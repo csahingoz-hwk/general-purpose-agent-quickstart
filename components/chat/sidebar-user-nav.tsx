@@ -28,8 +28,8 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { useUiLocale } from "@/hooks/use-ui-locale";
 import { guestRegex } from "@/lib/constants";
-import { getCopy } from "@/lib/ui-copy";
 
 function emailToHue(email: string): number {
   let hash = 0;
@@ -38,8 +38,6 @@ function emailToHue(email: string): number {
   }
   return Math.abs(hash) % 360;
 }
-
-const copy = getCopy();
 
 export function SidebarUserNav({
   user,
@@ -52,6 +50,7 @@ export function SidebarUserNav({
   const { setOpenMobile } = useSidebar();
   const { data } = useSession();
   const { setTheme, resolvedTheme } = useTheme();
+  const { copy } = useUiLocale("en");
 
   const email = user?.email ?? data?.user?.email ?? "";
   const isGuest = guestRegex.test(email);
@@ -125,7 +124,7 @@ export function SidebarUserNav({
               onSelect={() => navigateFromMenu("/setup")}
             >
               <CheckCircle2Icon className="size-4 text-muted-foreground" />
-              Setup checklist
+              {copy.setupChecklist}
             </DropdownMenuItem>
             <DropdownMenuItem
               className="min-h-11 cursor-pointer gap-2.5 rounded-xl px-3 text-[15px] md:min-h-9 md:text-[13px]"
@@ -190,7 +189,7 @@ export function SidebarUserNav({
               }}
             >
               <LogOutIcon className="size-4 text-muted-foreground" />
-              {isGuest ? "Login to your account" : "Sign out"}
+              {isGuest ? "Login to your account" : copy.signOut}
             </DropdownMenuItem>
             {onRequestDeleteAll && (
               <>

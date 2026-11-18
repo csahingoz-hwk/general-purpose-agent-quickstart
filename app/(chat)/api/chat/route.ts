@@ -253,6 +253,10 @@ export async function POST(request: Request) {
     }
     let chatModel = selectedChatModel;
 
+    const memoryStore =
+      session.user.type !== "guest" && isMemoryToolsEnabled()
+        ? createPostgresMemoryStore()
+        : null;
     const [
       ,
       acquiredLock,
@@ -260,6 +264,7 @@ export async function POST(request: Request) {
       soul,
       homeLocation,
       storedFacts,
+      storedJournalEntries,
       capabilityManifest,
     ] = await Promise.all([
       checkIpRateLimit(ipAddress(request)),
@@ -267,9 +272,14 @@ export async function POST(request: Request) {
       getChatById({ id }),
       getUserSoul({ userId: session.user.id }),
       getUserHomeLocation({ userId: session.user.id }),
-      session.user.type !== "guest" && isMemoryToolsEnabled()
-        ? createPostgresMemoryStore()
+      memoryStore
+        ? memoryStore
             .listProfileFacts({ userId: session.user.id })
+            .catch(() => [])
+        : Promise.resolve([]),
+      memoryStore
+        ? memoryStore
+            .listJournalEntries({ userId: session.user.id, limit: 25 })
             .catch(() => [])
         : Promise.resolve([]),
       isSyntheticSdk7FixtureMode()
@@ -485,7 +495,7 @@ export async function POST(request: Request) {
     const memoryContextBlock = buildGroupedMemoryPromptBlock(
       safeBotFacts,
       finalUserText,
-      { maxFacts: 80, maxChars: 6000 }
+      { maxFacts: 80, maxChars: 6000, journalEntries: storedJournalEntries }
     );
     const ownerDisplayName =
       session.user.type !== "guest"

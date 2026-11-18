@@ -350,7 +350,7 @@ const PurePreviewMessage = ({
             key={toolCallId}
             locale={locale}
             state={state}
-            title="Hava durumu sorgusunu onayla"
+            title={getCopy(locale).titleWeatherApproval}
             toolName="getWeather"
           />
         );
@@ -552,13 +552,14 @@ const PurePreviewMessage = ({
           !isDisabledApiOutput(output) &&
           !isSetupRequiredOutput(output))
       ) {
+        const cardCopy = getCopy(locale);
         const friendlyTitles: Record<string, string> = {
-          gmailCreateDraft: "Gmail taslağı kaydet",
-          driveCreateDraftDoc: "Google Drive taslak belgesi",
-          calendarCreateDraftEvent: "Takvim taslak etkinliği",
-          githubCreateDraftReview: "GitHub PR taslak incelemesi",
-          generateVideoClip: "Video klibi oluştur",
-          scheduleTask: "Zamanlanmış rutin oluştur",
+          gmailCreateDraft: cardCopy.titleGmailDraft,
+          driveCreateDraftDoc: cardCopy.titleDriveDraft,
+          calendarCreateDraftEvent: cardCopy.titleCalendarDraft,
+          githubCreateDraftReview: cardCopy.titleGithubDraft,
+          generateVideoClip: cardCopy.titleVideoClip,
+          scheduleTask: cardCopy.titleScheduleTask,
         };
         return (
           <ApprovalCard
@@ -780,9 +781,7 @@ const PurePreviewMessage = ({
                     data-testid="tool-input-details"
                   >
                     <summary className="cursor-pointer select-none font-medium text-muted-foreground hover:text-foreground">
-                      {locale === "tr"
-                        ? "Parametre detayları"
-                        : "Parameter details"}
+                      {getCopy(locale).parameterDetails}
                     </summary>
                     <div className="mt-2">
                       <ToolInput input={input} />

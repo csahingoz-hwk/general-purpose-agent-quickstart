@@ -295,7 +295,38 @@ const MEMORY_SAVE_STEM_PATTERN =
   /\b(save (?:this )?to (?:my )?(?:profile|memory)|remember (?:this(?:\s+fact)?|that\b)|store in (?:my )?(?:profile|memory)|keep in mind)\b|^\s*(?:please\s+)?remember\s*[:\-–—]|profilime kaydet|belleğe kaydet|belleğime kaydet|hafızaya kaydet|bunu hatırla|hatırla\s*[:\-–—]|unutma(?:\s+ki|\s*[:\-–—])|aklında tut/iu;
 
 const MEMORY_RECALL_STEM_PATTERN =
-  /\b(search my memory|recall from memory|what do you remember|do you remember (?:my|what|how|when|where|who)|what have you saved in (?:my )?memory|check my journal)\b|(?<![\p{L}])(?:belleğimi ara|hafızam\p{L}*\s+ara|hakkımda ne (?:hatırlıyorsun|biliyorsun)|hatırlıyor musun|ne hatırlıyorsun|günlüğümü kontrol et)(?![\p{L}])/iu;
+  /\b(search my memory|recall from memory|what do you remember|do you remember (?:my|what|how|when|where|who|me)|what have you saved in (?:my )?memory|check my journal|how do i (?:like|drink|take|prefer|usually)|what (?:is|are) my (?:favorite|favourite|preferred|preferences|rules|allergies|coffee|diet)|what do i (?:prefer|like to)|do you know (?:my|how i|what i)|when is my [\p{L}'’]+\s+birthday|do i have (?:any )?allerg\w*|what did i (?:tell|say to) you about)\b|(?<![\p{L}])(?:belleğimi ara|hafızam\p{L}*\s+ara|hakkımda ne (?:hatırlıyorsun|biliyorsun)|hakkımda bildiğin|hatırlıyor musun|ne hatırlıyorsun|beni tanıyor musun|günlüğümü kontrol et|(?:kahvem\p{L}*|çayım\p{L}*)\s+nasıl|nasıl\s+(?:içtiğimi|içerim|severim)|(?:favori|en sevdiğim)\s+\p{L}+|(?:tercihlerim|kurallarım|alışkanlıklarım)\s+(?:neler|ne)|alerjim\s+var\s+m[ıi]|(?:kızımın|oğlumun|eşimin|kardeşimin|ablamın|abimin)\s+(?:doğum\s+günü|adı|yaşı)|sana\s+.{1,40}(?:ne demiştim|söylemiştim))(?![\p{L}])/iu;
+
+function hasPersonalSelfQuestionIntent(phrase: string): boolean {
+  if (
+    MEMORY_SAVE_STEM_PATTERN.test(phrase) &&
+    !/\?|\b(do you remember|what do you remember)\b|hatırlıyor musun|ne hatırlıyorsun/iu.test(
+      phrase
+    )
+  ) {
+    return false;
+  }
+  if (
+    WEATHER_PATTERN.test(phrase) ||
+    CLOCK_PATTERN.test(phrase) ||
+    isFixtureQuestion(phrase) ||
+    hasPersonalEmailReadIntent(phrase) ||
+    hasPersonalEmailDraftIntent(phrase) ||
+    hasPersonalCalendarReadIntent(phrase) ||
+    hasPersonalCalendarCreateIntent(phrase) ||
+    hasPersonalDriveReadIntent(phrase) ||
+    hasPersonalDriveCreateIntent(phrase) ||
+    GITHUB_READ_STEM_PATTERN.test(phrase) ||
+    SCHEDULE_LIST_OR_CANCEL_STEM_PATTERN.test(phrase) ||
+    SCHEDULE_CREATE_STEM_PATTERN.test(phrase) ||
+    MAC_BRIDGE_PATTERN.test(phrase) ||
+    CLOUD_COMPUTER_PATTERN.test(phrase) ||
+    CLOUD_BROWSE_PATTERN.test(phrase)
+  ) {
+    return false;
+  }
+  return MEMORY_RECALL_STEM_PATTERN.test(phrase);
+}
 
 const SCHEDULE_LIST_OR_CANCEL_STEM_PATTERN =
   /\b(my schedules|scheduled tasks|recurring tasks|my routines|cancel (?:a |the |my )?(?:schedule|routine|reminder))\b|(?<![\p{L}])(?:zamanlanmış görev\p{L}*|planlanmış görev\p{L}*|görevlerimi listele|rutinlerim\p{L}*|görevi iptal|(?:rutin\p{L}*|görev\p{L}*|hatırlat\p{L}*)\s+(?:iptal|sil|kaldır))(?![\p{L}])/iu;
@@ -380,7 +411,7 @@ function hasMatchedLocalOrPersonalIntent(phrase: string): boolean {
     hasPersonalDriveCreateIntent(phrase) ||
     GITHUB_READ_STEM_PATTERN.test(phrase) ||
     MEMORY_SAVE_STEM_PATTERN.test(phrase) ||
-    MEMORY_RECALL_STEM_PATTERN.test(phrase) ||
+    hasPersonalSelfQuestionIntent(phrase) ||
     SCHEDULE_LIST_OR_CANCEL_STEM_PATTERN.test(phrase) ||
     SCHEDULE_CREATE_STEM_PATTERN.test(phrase) ||
     IMAGE_GENERATE_STEM_PATTERN.test(phrase) ||
@@ -748,7 +779,10 @@ export function selectToolsWithRanking(
   }
 
   if (canPersonalize && isMemoryToolsEnabled()) {
-    if (MEMORY_SAVE_STEM_PATTERN.test(phrase)) {
+    const isSelfQuestion = hasPersonalSelfQuestionIntent(phrase);
+    const isExplicitSave =
+      !isSelfQuestion && MEMORY_SAVE_STEM_PATTERN.test(phrase);
+    if (isExplicitSave) {
       enabled.push("saveProfileFact");
       intentOnly.push("saveProfileFact");
     }
@@ -760,9 +794,9 @@ export function selectToolsWithRanking(
       enabled.push("addJournalEntry");
       intentOnly.push("addJournalEntry");
     }
-    if (MEMORY_RECALL_STEM_PATTERN.test(phrase)) {
-      enabled.push("recallMemories");
-      intentOnly.push("recallMemories");
+    if (isSelfQuestion) {
+      enabled.push("recallMemories", "saveProfileFact", "addJournalEntry");
+      intentOnly.push("recallMemories", "saveProfileFact", "addJournalEntry");
     }
   }
 
