@@ -129,19 +129,74 @@ export function applyApprovalResponses(
   return messages as ChatMessage[];
 }
 
-/** Sanitize tool failures too: SDK tool errors are UI chunks, not fatal errors. */
+/** Sanitize tool failures too, and emit at most one fatal `error` chunk per turn. */
 export function safeUIStream(userText: string) {
+  let fatalErrorEmitted = false;
   return new TransformStream<
     InferUIMessageChunk<ChatMessage>,
     InferUIMessageChunk<ChatMessage>
   >({
     transform(chunk, controller) {
+      if (chunk.type === "error") {
+        if (fatalErrorEmitted) {
+          return;
+        }
+        fatalErrorEmitted = true;
+        controller.enqueue({
+          ...chunk,
+          errorText: safeModelError(chunk.errorText, userText),
+        });
+        return;
+      }
       controller.enqueue(
-        chunk.type === "tool-output-error" || chunk.type === "error"
+        chunk.type === "tool-output-error"
           ? { ...chunk, errorText: safeModelError(chunk.errorText, userText) }
           : chunk
       );
     },
+  });
+}
+
+const SAFE_RETRY_READ_ONLY_TOOL_TYPES = new Set<string>([
+  "tool-webSearch",
+  "tool-gmailReadMessages",
+  "tool-calendarReadEvents",
+  "tool-driveReadFiles",
+  "tool-githubReadPullRequests",
+  "tool-recallMemories",
+  "tool-listMySchedules",
+  "tool-getWeather",
+  "tool-getCurrentTime",
+  "tool-getFixtures",
+]);
+
+/**
+ * True only when an assistant message executed a tool that could repeat a write
+ * or stateful action on retry. Read-only lookups and unexecuted/pending-approval
+ * tool calls remain safely retryable if the stream breaks mid-way.
+ */
+export function hasNonRetryableToolExecution(
+  message: ChatMessage | undefined
+): boolean {
+  if (!message) {
+    return false;
+  }
+  return message.parts.some((part) => {
+    if (!part.type.startsWith("tool-")) {
+      return false;
+    }
+    if (SAFE_RETRY_READ_ONLY_TOOL_TYPES.has(part.type as string)) {
+      return false;
+    }
+    if (
+      "state" in part &&
+      (part.state === "input-streaming" ||
+        part.state === "input-available" ||
+        part.state === "approval-requested")
+    ) {
+      return false;
+    }
+    return true;
   });
 }
 
@@ -158,7 +213,7 @@ export function replyForStorage(
     return null;
   }
   // Retrying a side-effecting tool could repeat a write. Preserve and explain it.
-  const hadTools = message.parts.some((part) => part.type.startsWith("tool-"));
+  const hadSideEffectTool = hasNonRetryableToolExecution(message);
   return {
     ...message,
     parts: [
@@ -169,7 +224,7 @@ export function replyForStorage(
         type: "data-reply-status",
         data: {
           status: completed ? "complete" : "interrupted",
-          retryable: !completed && !hadTools,
+          retryable: !completed && !hadSideEffectTool,
         },
       },
     ],

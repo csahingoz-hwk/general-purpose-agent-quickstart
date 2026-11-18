@@ -3,6 +3,7 @@ import test from "node:test";
 import type { UIMessageStreamWriter } from "ai";
 import { selectActiveTools } from "@/lib/ai/context/select-tools";
 import {
+  createUsageLedger,
   type Invocation,
   settledEstimate,
   type UsageLedger,
@@ -159,7 +160,7 @@ test("Imagen reserves ModelUsage spend BEFORE API call, stores encrypted PNG in 
   }
 });
 
-test("Media generation fails closed with zero upstream HTTP calls when monthly ModelUsage cap is exceeded", async () => {
+test("Media generation is never blocked by an internal spend cap even across repeated calls", async () => {
   const vaultStore = createInMemoryVaultStore(TEST_MASTER_KEY);
   await vaultStore.upsertSecret({
     userId: "owner-1",
@@ -167,34 +168,45 @@ test("Media generation fails closed with zero upstream HTTP calls when monthly M
     provider: "google",
     plaintext: "AIzaSyTestFakeKey123456",
   });
-
-  const mock = createMockLedger({ capUsd: 10, alreadySpentUsd: 9.98 });
+  const fileStore = createInMemoryPrivateFileStore({ secret: TEST_MASTER_KEY });
+  const prodLedger = createUsageLedger("owner-1", "req-media-uncapped");
   let fetchCalls = 0;
   const fetchImpl: typeof fetch = () => {
     fetchCalls += 1;
-    return Promise.resolve(new Response("{}", { status: 200 }));
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          predictions: [{ bytesBase64Encoded: SAMPLE_PNG_BASE64 }],
+          name: `operations/veo-${fetchCalls}`,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
   };
 
-  const imgRes = await generateImageWithImagen({
-    userId: "owner-1",
-    prompt: "Watercolor lighthouse",
-    ledger: mock.ledger,
-    vaultStore,
-    fetchImpl,
-  });
-  assert.equal(imgRes.status, "spend_cap_exceeded");
-  assert.equal(fetchCalls, 0);
+  for (let i = 0; i < 12; i++) {
+    const imgRes = await generateImageWithImagen({
+      userId: "owner-1",
+      prompt: `Watercolor lighthouse #${i}`,
+      ledger: prodLedger,
+      vaultStore,
+      fileStore,
+      signingSecret: TEST_SIGNING_SECRET,
+      fetchImpl,
+    });
+    assert.equal(imgRes.status, "ok");
+  }
 
   const vidRes = await generateVideoWithVeo({
     userId: "owner-1",
     prompt: "Waves rolling onto pebbles",
-    ledger: mock.ledger,
+    ledger: prodLedger,
     vaultStore,
     taskStore: createInMemoryTaskStore(),
     fetchImpl,
   });
-  assert.equal(vidRes.status, "spend_cap_exceeded");
-  assert.equal(fetchCalls, 0);
+  assert.equal(vidRes.status, "queued");
+  assert.equal(fetchCalls, 13);
 });
 
 test("Media Studio blocks restricted employer prompts and disallows 3.x Gemini model configs", async () => {

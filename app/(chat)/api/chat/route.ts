@@ -16,6 +16,7 @@ import {
   type ResumableStreamContext,
 } from "resumable-stream";
 import { auth } from "@/app/(auth)/auth";
+import { resolveLiveCapabilityManifest } from "@/lib/ai/capability-manifest";
 import {
   budgetModelMessages,
   DEFAULT_REPLY_TOKENS,
@@ -27,6 +28,7 @@ import { safeModelError } from "@/lib/ai/context/errors";
 import {
   needsArtifactInstructions,
   selectActiveTools,
+  selectToolsWithRanking,
 } from "@/lib/ai/context/select-tools";
 import {
   applyApprovalResponses,
@@ -49,10 +51,12 @@ import {
   COPILOT_HAIKU,
   copilotFallbackEnabled,
   isPremiumModel,
+  isSyntheticSdk7FixtureMode,
   premiumModels,
   webSearchLane,
 } from "@/lib/ai/routing/catalog";
 import { createUsageLedger } from "@/lib/ai/routing/ledger";
+import { failureKind } from "@/lib/ai/routing/policy";
 import {
   type InferenceSession,
   inferenceSession,
@@ -86,6 +90,7 @@ import {
   extractRequestedBotSlug,
   filterFactsForBot,
 } from "@/lib/bots/roster";
+import { isCloudComputerConfigured } from "@/lib/cloud-computer/client";
 import { isGithubConnectorEnabled } from "@/lib/connectors/calendar-and-github";
 import { isGoogleConnectorsEnabled } from "@/lib/connectors/google-vault-auth";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
@@ -107,6 +112,7 @@ import {
 import type { DBMessage } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
 import { prepareMessagesWithAttachments } from "@/lib/files/parse-attachment";
+import { isMacBridgeConfigured } from "@/lib/mac-bridge/client";
 import { isMediaStudioEnabled } from "@/lib/media/media-studio";
 import {
   buildGroupedMemoryPromptBlock,
@@ -247,19 +253,36 @@ export async function POST(request: Request) {
     }
     let chatModel = selectedChatModel;
 
-    const [, acquiredLock, chat, soul, homeLocation, storedFacts] =
-      await Promise.all([
-        checkIpRateLimit(ipAddress(request)),
-        acquireChatLock(id),
-        getChatById({ id }),
-        getUserSoul({ userId: session.user.id }),
-        getUserHomeLocation({ userId: session.user.id }),
-        session.user.type !== "guest" && isMemoryToolsEnabled()
-          ? createPostgresMemoryStore()
-              .listProfileFacts({ userId: session.user.id })
-              .catch(() => [])
-          : Promise.resolve([]),
-      ]);
+    const [
+      ,
+      acquiredLock,
+      chat,
+      soul,
+      homeLocation,
+      storedFacts,
+      capabilityManifest,
+    ] = await Promise.all([
+      checkIpRateLimit(ipAddress(request)),
+      acquireChatLock(id),
+      getChatById({ id }),
+      getUserSoul({ userId: session.user.id }),
+      getUserHomeLocation({ userId: session.user.id }),
+      session.user.type !== "guest" && isMemoryToolsEnabled()
+        ? createPostgresMemoryStore()
+            .listProfileFacts({ userId: session.user.id })
+            .catch(() => [])
+        : Promise.resolve([]),
+      isSyntheticSdk7FixtureMode()
+        ? Promise.resolve(undefined)
+        : resolveLiveCapabilityManifest({
+            userId: session.user.id,
+            isGuest: session.user.type === "guest",
+            webSearchAvailable: webSearchLane(chatModel),
+          }),
+    ]);
+    const googleConnectedAndHealthy =
+      capabilityManifest?.entries.find((e) => e.id === "gmail")?.state ===
+      "connected_and_healthy";
 
     releaseLock = acquiredLock;
     if (!releaseLock) {
@@ -342,9 +365,29 @@ export async function POST(request: Request) {
     const requestTimeZone = validTimeZone(timeZone);
     const requestNow = new Date();
     const searchLane = supportsTools && webSearchLane(chatModel);
+    const toolSelectOptions = {
+      googleConnectedAndHealthy,
+      capabilityManifest:
+        isPremiumModel(chatModel) && session.user.type !== "guest"
+          ? capabilityManifest
+          : undefined,
+    };
     const requestedTools = supportsTools
-      ? selectActiveTools(uiMessages, session.user.type !== "guest", searchLane)
+      ? selectActiveTools(
+          uiMessages,
+          session.user.type !== "guest",
+          searchLane,
+          toolSelectOptions
+        )
       : [];
+    const { intentMatchedTools } = supportsTools
+      ? selectToolsWithRanking(
+          uiMessages,
+          session.user.type !== "guest",
+          searchLane,
+          toolSelectOptions
+        )
+      : { intentMatchedTools: [] as typeof requestedTools };
     const finalUserText =
       [...uiMessages]
         .reverse()
@@ -356,7 +399,7 @@ export async function POST(request: Request) {
       selectedModelId: chatModel,
       availableModelIds: availability.models.map((model) => model.id),
       userText: finalUserText,
-      requestedTools,
+      requestedTools: intentMatchedTools,
       baseEffort: modelConfig?.reasoningEffort,
     });
     chatModel = turnEscalation.modelId;
@@ -492,15 +535,32 @@ export async function POST(request: Request) {
       needsOnboarding:
         !effectiveSoul &&
         session.user.type !== "guest" &&
-        requestedTools.length === 0 &&
+        intentMatchedTools.length === 0 &&
         !hasPriorAssistantTurn,
       includeArtifacts: needsArtifactInstructions(requestedTools),
       includeWebSearch: searchLane && requestedTools.includes("webSearch"),
-      includeFixtures: requestedTools.includes("getFixtures"),
-      includeOperatorTools: hasOperatorToolOnTurn,
+      includeFixtures: intentMatchedTools.includes("getFixtures"),
+      includeOperatorTools: hasOperatorToolOnTurn || googleConnectedAndHealthy,
+      googleConnected: googleConnectedAndHealthy,
+      capabilityManifest,
+      setupCapabilities:
+        Boolean(premium) && session.user.type !== "guest"
+          ? {
+              googleConnected: googleConnectedAndHealthy,
+              githubConnected:
+                capabilityManifest?.entries.find((e) => e.id === "github")
+                  ?.state === "connected_and_healthy" ||
+                (isGithubConnectorEnabled() &&
+                  Boolean(process.env.GITHUB_CONNECTOR_PAT?.trim())),
+              memoryEnabled: isMemoryToolsEnabled(),
+              routinesEnabled: isRoutinesEnabled(),
+              cloudComputerConnected: isCloudComputerConfigured(),
+              macBridgeConnected: isMacBridgeConfigured(),
+            }
+          : undefined,
       includeVisual:
         Boolean(premium) &&
-        isVisualCandidateTurn(finalUserText, requestedTools),
+        isVisualCandidateTurn(finalUserText, intentMatchedTools),
       context: activeSkill
         ? `${baseContext}\n\n${formatSkillPromptBlock(activeSkill)}`
         : baseContext,
@@ -544,30 +604,28 @@ export async function POST(request: Request) {
             });
           };
           const initialPhase =
-            searchLane && requestedTools.includes("webSearch")
+            searchLane && intentMatchedTools.includes("webSearch")
               ? "searching"
-              : requestedTools.includes("getWeather")
+              : intentMatchedTools.includes("getWeather")
                 ? "weather"
-                : requestedTools.includes("getFixtures")
+                : intentMatchedTools.includes("getFixtures")
                   ? "fixtures"
-                  : requestedTools.length > 0
+                  : intentMatchedTools.length > 0
                     ? "tool"
                     : "thinking";
           dataStream.write({
             type: "data-turn-status",
             data: { phase: initialPhase, model: chatModel },
           });
-          if (turnEscalation.escalated) {
-            dataStream.write({
-              type: "data-model-used",
-              data: {
-                modelId: chatModel,
-                modelName: getModelDisplayName(chatModel),
-                isFallback: false,
-                escalated: true,
-              },
-            });
-          }
+          dataStream.write({
+            type: "data-model-used",
+            data: {
+              modelId: chatModel,
+              modelName: getModelDisplayName(chatModel),
+              isFallback: false,
+              escalated: turnEscalation.escalated,
+            },
+          });
           if (explicitSavedFact) {
             const memCallId = `mem-${explicitSavedFact.id.slice(0, 12)}`;
             dataStream.write({
@@ -662,12 +720,12 @@ export async function POST(request: Request) {
                     )
                   );
                   const hasUntrusted =
-                    requestedTools.includes("webSearch") ||
-                    requestedTools.includes("gmailReadMessages") ||
-                    requestedTools.includes("driveReadFiles") ||
-                    requestedTools.includes("calendarReadEvents") ||
-                    requestedTools.includes("githubReadPullRequests") ||
-                    requestedTools.includes("cloudBrowseUrl") ||
+                    intentMatchedTools.includes("webSearch") ||
+                    intentMatchedTools.includes("gmailReadMessages") ||
+                    intentMatchedTools.includes("driveReadFiles") ||
+                    intentMatchedTools.includes("calendarReadEvents") ||
+                    intentMatchedTools.includes("githubReadPullRequests") ||
+                    intentMatchedTools.includes("cloudBrowseUrl") ||
                     attachmentPrep.hasUntrustedAttachment ||
                     hasPriorConnectorReads;
 
@@ -815,9 +873,11 @@ export async function POST(request: Request) {
             ),
             maxOutputTokens: replyTokens,
             maxRetries: 0,
-            // The SDK default logs raw upstream errors, including request content.
-            onError: () => {
-              /* Ledger and UI handle safe errors; never log upstream request bodies. */
+            // Log failureKind(error) only — never upstream request/response bodies, URLs, or secrets.
+            onError: ({ error }) => {
+              console.error("[chat] stream error", {
+                kind: failureKind(error),
+              });
             },
             abortSignal: AbortSignal.any([
               request.signal,
@@ -888,7 +948,12 @@ export async function POST(request: Request) {
                 primaryOutcome = outcome;
               },
               sendReasoning: false,
-              onError: (error) => safeModelError(error, finalUserText),
+              onError: (error) => {
+                console.error("[chat] ui stream error", {
+                  kind: failureKind(error),
+                });
+                return safeModelError(error, finalUserText);
+              },
             })
               .pipeThrough(
                 createMultiSearchRecoveryStream({
@@ -914,8 +979,10 @@ export async function POST(request: Request) {
                         providerOptions: {
                           openai: { reasoningEffort: effectiveReasoningEffort },
                         },
-                        onError: () => {
-                          /* Deterministic partial answer handles synthesis errors. */
+                        onError: ({ error }) => {
+                          console.error("[chat] synthesis stream error", {
+                            kind: failureKind(error),
+                          });
                         },
                         abortSignal: AbortSignal.any([
                           request.signal,
@@ -954,7 +1021,23 @@ export async function POST(request: Request) {
             return;
           }
           const resolvedModelId = execution.activeModelId ?? chatModel;
-          const withVisual = attachOpenUiPart(reply, resolvedModelId);
+          const ensuredModelParts = [
+            ...reply.parts.filter((p) => p.type !== "data-model-used"),
+            {
+              type: "data-model-used" as const,
+              data: {
+                modelId: resolvedModelId,
+                modelName: getModelDisplayName(resolvedModelId),
+                isFallback: execution.fallbackUsed,
+                ...(execution.fallbackUsed ? { fallbackFrom: chatModel } : {}),
+                escalated: turnEscalation.escalated,
+              },
+            },
+          ];
+          const withVisual = attachOpenUiPart(
+            { ...reply, parts: ensuredModelParts },
+            resolvedModelId
+          );
           const saved = messagesFromDb.find((m) => m.id === withVisual.id);
           if (saved) {
             await updateMessage({ id: withVisual.id, parts: withVisual.parts });
@@ -976,7 +1059,12 @@ export async function POST(request: Request) {
           await releaseLock?.();
         }
       },
-      onError: (error) => safeModelError(error, finalUserText),
+      onError: (error) => {
+        console.error("[chat] ui stream error", {
+          kind: failureKind(error),
+        });
+        return safeModelError(error, finalUserText);
+      },
     });
 
     streamOwnsLock = true;

@@ -1,25 +1,29 @@
 import type { LanguageModelV4Usage } from "@ai-sdk/provider";
 import postgres from "postgres";
+import { estimateReferenceModelUsd } from "@/lib/billing/vertex-cloud-usage";
 import {
+  ARGON,
+  COPILOT_HAIKU,
+  HYDROGEN,
+  isCopilotFallbackModel,
   isVertexModel,
-  monthlyAllowance,
   type PremiumModelId,
 } from "./catalog";
 import { usageCost } from "./cost";
-import { ModelFailure } from "./policy";
 
 let client: ReturnType<typeof postgres> | undefined;
 function sql() {
-  if (!process.env.POSTGRES_URL) {
-    throw new ModelFailure("spend");
+  if (!process.env.POSTGRES_URL?.trim()) {
+    return null;
   }
   client ??= postgres(process.env.POSTGRES_URL, {
     max: 3,
     prepare: false,
-    idle_timeout: 2,
+    idle_timeout: 0,
   });
   return client;
 }
+
 export type Invocation = {
   model: PremiumModelId;
   reserveUsd: number;
@@ -32,88 +36,167 @@ export type UsageLedger = {
     model: PremiumModelId,
     outcome: string,
     usage?: LanguageModelV4Usage,
-    /** Non-token spend for this call (web search), added to the estimate. */
+    /** Non-token spend for informational stats only. */
     extraUsd?: number
   ) => Promise<void>;
 };
+
 /**
- * Estimate stored when a call settles. Token usage plus non-token spend (web
- * search). Without reported usage this stays null so the full reservation, which
- * already includes the capped search cost, remains counted.
+ * Estimate stored when a call settles (informational only; no spend cap exists).
  */
 export function settledEstimate(tokenUsd: number | undefined, extraUsd = 0) {
   return tokenUsd === undefined ? null : tokenUsd + Math.max(0, extraUsd);
 }
+
+/**
+ * Informational-only call & token recorder.
+ * All active models (`gemini-4-hydrogen`, `gemini-4-argon` on Google AI Ultra credit,
+ * and `claude-haiku-5.5` on GitHub Copilot subscription) are subscription/credit-covered
+ * with zero pay-per-use models, so `reserve` NEVER blocks or enforces an internal cap.
+ */
 export function createUsageLedger(
   userId: string,
   requestId: string
 ): UsageLedger {
   return {
-    async reserve({ model, reserveUsd, fallbackReason }) {
-      // Vertex AI models (`gemini-4-hydrogen`, `gemini-4-argon`) bill directly
-      // to GCP `0140A2-72DEB2-62EDCD` Ultra Cloud credit ($0 Gateway allowance),
-      // so skip blocking Postgres advisory locks before streaming.
-      if (isVertexModel(model) && reserveUsd === 0) {
-        return `vertex:${crypto.randomUUID()}:${fallbackReason ?? ""}`;
-      }
-      if (!Number.isFinite(reserveUsd) || reserveUsd <= 0) {
-        throw new ModelFailure("spend");
-      }
-      const limit = monthlyAllowance();
-      return await sql().begin(async (tx) => {
-        // Transaction lock serializes reservations across chats/server instances.
-        // UTC accounting; do not hold this lock during provider I/O.
-        await tx`SELECT pg_advisory_xact_lock(hashtextextended(${`model-spend:${userId}`}, 0))`;
-        const [total] =
-          await tx`SELECT COALESCE(SUM(COALESCE("estimatedUsd", "reservedUsd")),0) AS usd FROM "ModelUsage" WHERE "userId"=${userId} AND "createdAt">=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'`;
-        if (Number(total.usd) + reserveUsd > limit) {
-          throw new ModelFailure("spend");
-        }
-        const id = crypto.randomUUID();
-        await tx`INSERT INTO "ModelUsage" ("id","userId","requestId","model","fallbackReason","reservedUsd") VALUES (${id},${userId},${requestId},${model},${fallbackReason ?? null},${reserveUsd})`;
-        return id;
-      });
+    reserve({ model, fallbackReason }) {
+      const prefix = isVertexModel(model)
+        ? "vertex"
+        : isCopilotFallbackModel(model)
+          ? "copilot"
+          : "stat";
+      return Promise.resolve(
+        `${prefix}:${crypto.randomUUID()}:${fallbackReason ?? ""}`
+      );
     },
     async settle(id, model, outcome, usage, extraUsd = 0) {
-      const cost = usage && usageCost(model, usage);
-      const estimatedUsd = settledEstimate(cost?.usd, extraUsd);
-      if (id.startsWith("vertex:")) {
-        if (!process.env.POSTGRES_URL) {
-          return;
-        }
-        const [, rawId = crypto.randomUUID(), rawReason = ""] = id.split(":");
-        await sql()`INSERT INTO "ModelUsage" ("id","userId","requestId","model","fallbackReason","reservedUsd","estimatedUsd","inputTokens","cachedInputTokens","cacheWriteTokens","outputTokens","reasoningTokens","usageReported","outcome") VALUES (${rawId},${userId},${requestId},${model},${rawReason || null},${0},${0},${cost?.input ?? null},${cost?.cached ?? null},${cost?.cacheWrite ?? null},${cost?.output ?? null},${cost?.reasoning ?? null},${Boolean(cost)},${outcome})`.catch(
-          () => undefined
-        );
+      const db = sql();
+      if (!db) {
         return;
       }
-      // Unknown usage retains the full reservation, even on disconnect/cancel.
-      // This deliberately favors stopping early over undercounting lost calls.
-      await sql()`UPDATE "ModelUsage" SET "outcome"=${outcome}, "estimatedUsd"=${estimatedUsd}, "inputTokens"=${cost?.input ?? null}, "cachedInputTokens"=${cost?.cached ?? null}, "cacheWriteTokens"=${cost?.cacheWrite ?? null}, "outputTokens"=${cost?.output ?? null}, "reasoningTokens"=${cost?.reasoning ?? null}, "usageReported"=${Boolean(cost)} WHERE "id"=${id} AND "userId"=${userId}`;
+      const cost = usage && usageCost(model, usage);
+      const rawInput = usage?.inputTokens.total ?? cost?.input ?? null;
+      const rawCached = usage?.inputTokens.cacheRead ?? cost?.cached ?? null;
+      const rawCacheWrite =
+        usage?.inputTokens.cacheWrite ?? cost?.cacheWrite ?? null;
+      const rawOutput = usage?.outputTokens.total ?? cost?.output ?? null;
+      const rawReasoning =
+        usage?.outputTokens.reasoning ?? cost?.reasoning ?? null;
+      const hasRealTokens =
+        Boolean(cost) || (rawInput !== null && rawOutput !== null);
+      const estimatedUsd = settledEstimate(cost?.usd, extraUsd);
+      const parts = id.split(":");
+      const rawId =
+        parts.length >= 2 && parts[1] ? parts[1] : crypto.randomUUID();
+      const rawReason = parts.length >= 3 ? parts.slice(2).join(":") : "";
+
+      await db`INSERT INTO "ModelUsage" ("id","userId","requestId","model","fallbackReason","reservedUsd","estimatedUsd","inputTokens","cachedInputTokens","cacheWriteTokens","outputTokens","reasoningTokens","usageReported","outcome") VALUES (${rawId},${userId},${requestId},${model},${rawReason || null},${0},${estimatedUsd},${rawInput},${rawCached},${rawCacheWrite},${rawOutput},${rawReasoning},${hasRealTokens},${outcome})`.catch(
+        () => undefined
+      );
     },
   };
 }
+
+export type PerModelUsageRow = {
+  model: string;
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  referenceCostUsd: number;
+};
+
+export function summarizeCallsByModel(
+  rows: ReadonlyArray<{
+    model: string;
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+  }>
+): PerModelUsageRow[] {
+  const bucket = new Map<
+    string,
+    { calls: number; inputTokens: number; outputTokens: number }
+  >();
+  for (const baseModel of [HYDROGEN, ARGON, COPILOT_HAIKU]) {
+    bucket.set(baseModel, { calls: 0, inputTokens: 0, outputTokens: 0 });
+  }
+  for (const row of rows) {
+    const cur = bucket.get(row.model) ?? {
+      calls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+    };
+    cur.calls += 1;
+    cur.inputTokens += Number(row.inputTokens ?? 0);
+    cur.outputTokens += Number(row.outputTokens ?? 0);
+    bucket.set(row.model, cur);
+  }
+  return [...bucket.entries()].map(([model, agg]) => ({
+    model,
+    calls: agg.calls,
+    inputTokens: agg.inputTokens,
+    outputTokens: agg.outputTokens,
+    totalTokens: agg.inputTokens + agg.outputTokens,
+    referenceCostUsd:
+      Math.round(
+        estimateReferenceModelUsd(model, agg.inputTokens, agg.outputTokens) *
+          10_000
+      ) / 10_000,
+  }));
+}
+
 export async function usageSummary(userId: string) {
-  const rows =
-    await sql()`SELECT "model", "requestId", "fallbackReason", "createdAt", "reservedUsd", "estimatedUsd", "inputTokens", "cachedInputTokens", "cacheWriteTokens", "outputTokens", "reasoningTokens", "usageReported", "outcome" FROM "ModelUsage" WHERE "userId"=${userId} AND "createdAt">=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' ORDER BY "createdAt" DESC`;
-  const today = new Date().toISOString().slice(0, 10);
-  const cost = (row: (typeof rows)[number]) =>
-    Number(row.estimatedUsd ?? row.reservedUsd);
+  const db = sql();
+  if (!db) {
+    return {
+      timezone: "UTC",
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      invocations: 0,
+      requests: 0,
+      fallbackInvocations: 0,
+      byModel: summarizeCallsByModel([]),
+      calls: [],
+    };
+  }
+  const rows = await db<
+    {
+      model: string;
+      requestId: string;
+      fallbackReason: string | null;
+      createdAt: Date;
+      inputTokens: number | null;
+      cachedInputTokens: number | null;
+      cacheWriteTokens: number | null;
+      outputTokens: number | null;
+      reasoningTokens: number | null;
+      usageReported: boolean;
+      outcome: string;
+    }[]
+  >`
+    SELECT "model", "requestId", "fallbackReason", "createdAt", "inputTokens", "cachedInputTokens", "cacheWriteTokens", "outputTokens", "reasoningTokens", "usageReported", "outcome"
+    FROM "ModelUsage"
+    WHERE "userId" = ${userId}
+      AND "createdAt" >= date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+    ORDER BY "createdAt" DESC
+    LIMIT 500
+  `;
+  const totalInputTokens = rows.reduce(
+    (sum, r) => sum + Number(r.inputTokens ?? 0),
+    0
+  );
+  const totalOutputTokens = rows.reduce(
+    (sum, r) => sum + Number(r.outputTokens ?? 0),
+    0
+  );
   return {
-    currency: "USD",
     timezone: "UTC",
-    allowanceUsd: monthlyAllowance(),
-    monthlyEstimatedUsd: rows.reduce((sum, r) => sum + cost(r), 0),
-    dailyEstimatedUsd: rows
-      .filter((r) => r.createdAt.toISOString().startsWith(today))
-      .reduce((sum, r) => sum + cost(r), 0),
+    totalInputTokens,
+    totalOutputTokens,
     invocations: rows.length,
     requests: new Set(rows.map((r) => r.requestId)).size,
     fallbackInvocations: rows.filter((r) => r.fallbackReason).length,
-    fallbackEstimatedUsd: rows
-      .filter((r) => r.fallbackReason)
-      .reduce((sum, r) => sum + cost(r), 0),
-    unreportedInvocations: rows.filter((r) => !r.usageReported).length,
+    byModel: summarizeCallsByModel(rows),
     calls: rows,
   };
 }

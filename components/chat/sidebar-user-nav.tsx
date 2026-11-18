@@ -3,6 +3,7 @@
 import {
   BookOpenIcon,
   BotIcon,
+  CheckCircle2Icon,
   ChevronUp,
   ClockIcon,
   LogOutIcon,
@@ -24,14 +25,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   SidebarMenu,
-  SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
 import { guestRegex } from "@/lib/constants";
 import { getCopy } from "@/lib/ui-copy";
-import { LoaderIcon } from "./icons";
-import { toast } from "./toast";
 
 function emailToHue(email: string): number {
   let hash = 0;
@@ -52,10 +50,12 @@ export function SidebarUserNav({
 }) {
   const router = useRouter();
   const { setOpenMobile } = useSidebar();
-  const { data, status } = useSession();
+  const { data } = useSession();
   const { setTheme, resolvedTheme } = useTheme();
 
-  const isGuest = guestRegex.test(data?.user?.email ?? "");
+  const email = user?.email ?? data?.user?.email ?? "";
+  const isGuest = guestRegex.test(email);
+  const avatarHue = emailToHue(email);
 
   const navigateFromMenu = (href: string) => {
     setOpenMobile(false);
@@ -67,46 +67,69 @@ export function SidebarUserNav({
       <SidebarMenuItem>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            {status === "loading" ? (
-              <SidebarMenuButton className="h-auto min-h-[60px] justify-between rounded-[20px] bg-card px-4 text-foreground data-[state=open]:bg-card">
-                <div className="flex flex-row items-center gap-2">
-                  <div className="size-6 animate-pulse rounded-full bg-sidebar-foreground/10" />
-                  <span className="animate-pulse rounded-md bg-sidebar-foreground/10 text-[13px] text-transparent">
-                    Loading...
-                  </span>
-                </div>
-                <div className="animate-spin text-sidebar-foreground">
-                  <LoaderIcon />
-                </div>
-              </SidebarMenuButton>
-            ) : (
-              <SidebarMenuButton
-                className="h-auto min-h-[60px] rounded-[20px] bg-card px-4 text-[17px] text-foreground hover:bg-card data-[state=open]:bg-card group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:min-h-8! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-full group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:px-0!"
-                data-testid="user-nav-button"
+            <button
+              aria-label={
+                isGuest
+                  ? "Account menu (Guest)"
+                  : email
+                    ? `Account menu (${email})`
+                    : "Account menu"
+              }
+              className="relative z-30 flex min-h-[56px] w-full cursor-pointer items-center gap-2.5 rounded-[20px] bg-card px-4 text-left text-[17px] text-foreground outline-hidden transition-colors hover:bg-card/90 focus-visible:ring-2 focus-visible:ring-sidebar-ring data-[state=open]:bg-card group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-10! group-data-[collapsible=icon]:min-h-10! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-full group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:px-0! group-data-[collapsible=icon]:hover:bg-sidebar-accent"
+              data-testid="user-nav-button"
+              type="button"
+            >
+              <div
+                className="size-6 shrink-0 rounded-full ring-1 ring-sidebar-border/60"
+                style={{
+                  background: `linear-gradient(135deg, oklch(0.38 0.09 ${avatarHue}), oklch(0.26 0.06 ${avatarHue + 40}))`,
+                }}
+              />
+              <span
+                className="truncate text-[15px] group-data-[collapsible=icon]:hidden"
+                data-testid="user-email"
               >
-                <div
-                  className="size-5 shrink-0 rounded-full ring-1 ring-sidebar-border/50"
-                  style={{
-                    background: `linear-gradient(135deg, oklch(0.35 0.08 ${emailToHue(user.email ?? "")}), oklch(0.25 0.05 ${emailToHue(user.email ?? "") + 40}))`,
-                  }}
-                />
-                <span
-                  className="truncate text-[17px] group-data-[collapsible=icon]:hidden"
-                  data-testid="user-email"
-                >
-                  {isGuest ? "Guest" : user?.email}
-                </span>
-                <ChevronUp className="ml-auto size-3.5 text-sidebar-foreground group-data-[collapsible=icon]:hidden" />
-              </SidebarMenuButton>
-            )}
+                {isGuest ? "Guest" : email}
+              </span>
+              <ChevronUp className="ml-auto size-3.5 shrink-0 text-sidebar-foreground group-data-[collapsible=icon]:hidden" />
+            </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent
-            className="w-(--radix-popper-anchor-width) rounded-[20px] border border-[color:var(--hairline)] bg-card p-1.5 shadow-[var(--shadow-float)]"
+            align="start"
+            className="z-50 w-64 min-w-60 max-w-[calc(100vw-1.5rem)] rounded-[20px] border border-[color:var(--hairline)] bg-card p-1.5 shadow-[var(--shadow-float)]"
             data-testid="user-nav-menu"
             side="top"
+            sideOffset={8}
           >
+            <div className="flex items-center gap-2.5 px-3 py-2">
+              <div
+                className="size-6 shrink-0 rounded-full ring-1 ring-sidebar-border/60"
+                style={{
+                  background: `linear-gradient(135deg, oklch(0.38 0.09 ${avatarHue}), oklch(0.26 0.06 ${avatarHue + 40}))`,
+                }}
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] text-muted-foreground">Account</p>
+                <p
+                  className="truncate font-medium text-[13px] text-foreground"
+                  data-testid="user-menu-email"
+                >
+                  {isGuest ? "Guest" : email || "Signed in"}
+                </p>
+              </div>
+            </div>
+            <DropdownMenuSeparator />
             <DropdownMenuItem
               className="min-h-11 cursor-pointer gap-2.5 rounded-xl px-3 text-[15px] md:min-h-9 md:text-[13px]"
+              data-testid="user-nav-item-setup"
+              onSelect={() => navigateFromMenu("/setup")}
+            >
+              <CheckCircle2Icon className="size-4 text-muted-foreground" />
+              Setup checklist
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="min-h-11 cursor-pointer gap-2.5 rounded-xl px-3 text-[15px] md:min-h-9 md:text-[13px]"
+              data-testid="user-nav-item-usage"
               onSelect={() => navigateFromMenu("/usage")}
             >
               <Settings2Icon className="size-4 text-muted-foreground" />
@@ -152,34 +175,22 @@ export function SidebarUserNav({
               {`Toggle ${resolvedTheme === "light" ? "dark" : "light"} mode`}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem asChild data-testid="user-nav-item-auth">
-              <button
-                className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 rounded-xl px-3 text-[15px] md:min-h-9 md:text-[13px]"
-                onClick={() => {
-                  if (status === "loading") {
-                    toast({
-                      type: "error",
-                      description:
-                        "Checking authentication status, please try again!",
-                    });
-
-                    return;
-                  }
-
-                  setOpenMobile(false);
-                  if (isGuest) {
-                    router.push("/login");
-                  } else {
-                    signOut({
-                      redirectTo: "/",
-                    });
-                  }
-                }}
-                type="button"
-              >
-                <LogOutIcon className="size-4 text-muted-foreground" />
-                {isGuest ? "Login to your account" : "Sign out"}
-              </button>
+            <DropdownMenuItem
+              className="min-h-11 cursor-pointer gap-2.5 rounded-xl px-3 text-[15px] md:min-h-9 md:text-[13px]"
+              data-testid="user-nav-item-auth"
+              onSelect={() => {
+                setOpenMobile(false);
+                if (isGuest) {
+                  router.push("/login");
+                } else {
+                  signOut({
+                    redirectTo: "/login",
+                  });
+                }
+              }}
+            >
+              <LogOutIcon className="size-4 text-muted-foreground" />
+              {isGuest ? "Login to your account" : "Sign out"}
             </DropdownMenuItem>
             {onRequestDeleteAll && (
               <>

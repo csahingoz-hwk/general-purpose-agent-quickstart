@@ -57,6 +57,38 @@ export function createGatewayAdapter(
   return provider(gatewaySlug(model));
 }
 
+const READ_ONLY_FALLBACK_SAFE_TOOLS = new Set<string>([
+  "gmailReadMessages",
+  "calendarReadEvents",
+  "driveReadFiles",
+  "githubReadPullRequests",
+  "recallMemories",
+  "listMySchedules",
+  "getWeather",
+  "getCurrentTime",
+  "getFixtures",
+  "webSearch",
+]);
+
+function hasConsequentialToolInPrompt(
+  prompt: LanguageModelV4CallOptions["prompt"]
+): boolean {
+  for (const msg of prompt) {
+    if (msg.role !== "tool") {
+      continue;
+    }
+    for (const part of msg.content) {
+      if (
+        part.type === "tool-result" &&
+        !READ_ONLY_FALLBACK_SAFE_TOOLS.has(part.toolName)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /** One request shares its exposure/tool/fallback boundary across all SDK steps and artifacts. */
 export function createRoutedModel(
   initial: PremiumModelId,
@@ -154,19 +186,27 @@ export function createRoutedModel(
     model: PremiumModelId,
     error: unknown,
     params: LanguageModelV4CallOptions,
-    visited: Set<PremiumModelId>
+    visited: Set<PremiumModelId>,
+    stepState?: { stepExposed: boolean; stepToolBoundary: boolean }
   ): { reason: string; target: PremiumModelId } {
     const failure = failureKind(error);
     const target = fallbackTargetFor(model);
     const cancelled = params.abortSignal?.aborted ?? false;
+    const vertexStepExposed = stepState
+      ? stepState.stepExposed
+      : session.exposed;
+    const vertexToolBoundary = stepState
+      ? stepState.stepToolBoundary ||
+        hasConsequentialToolInPrompt(params.prompt)
+      : session.toolBoundary;
     const allowed =
       target !== null &&
       !visited.has(target) &&
       (isVertexModel(model) && target === COPILOT_HAIKU
         ? mayFallbackFromVertexToCopilot({
             failure,
-            exposed: session.exposed,
-            toolBoundary: session.toolBoundary,
+            exposed: vertexStepExposed,
+            toolBoundary: vertexToolBoundary,
             used: session.fallbackUsed,
             available: true,
             cancelled,
@@ -298,14 +338,15 @@ export function createRoutedModel(
           if (searches > WEB_SEARCH_MAX_CALLS) {
             throw new ModelFailure("tool");
           }
+          const isStructuredJson =
+            params.responseFormat?.type === "json" &&
+            Boolean(params.responseFormat.schema);
           if (
-            result.finishReason.unified === "length" ||
-            result.finishReason.unified === "error"
+            result.finishReason.unified === "error" ||
+            (isStructuredJson && result.finishReason.unified === "length")
           ) {
             throw new ModelFailure(
-              params.responseFormat?.type === "json"
-                ? "structured"
-                : "unavailable"
+              isStructuredJson ? "structured" : "unavailable"
             );
           }
           if (
@@ -375,6 +416,8 @@ export function createRoutedModel(
               let id: string | undefined;
               let usage: LanguageModelV4Usage | undefined;
               let searches = 0;
+              let stepExposed = false;
+              let stepToolBoundary = false;
               try {
                 id = await reserve(model, opts, reason);
                 const result = await factory(model).doStream(opts);
@@ -405,8 +448,7 @@ export function createRoutedModel(
                   if (part.type === "finish") {
                     usage = part.usage;
                     if (
-                      part.finishReason.unified === "length" ||
-                      part.finishReason.unified === "error"
+                      ["error", "length"].includes(part.finishReason.unified)
                     ) {
                       throw new ModelFailure(
                         structured ? "structured" : "unavailable"
@@ -440,6 +482,20 @@ export function createRoutedModel(
                     held.push(part);
                   } else {
                     exposed(part);
+                    if (
+                      part.type.startsWith("tool-") ||
+                      part.type === "tool-call" ||
+                      part.type === "tool-result"
+                    ) {
+                      stepToolBoundary = true;
+                    }
+                    if (
+                      (part.type === "text-delta" ||
+                        part.type === "reasoning-delta") &&
+                      part.delta
+                    ) {
+                      stepExposed = true;
+                    }
                     for (const h of held.splice(0)) {
                       controller.enqueue(h);
                     }
@@ -495,7 +551,10 @@ export function createRoutedModel(
                   return;
                 }
                 try {
-                  const fallback = next(model, error, params, visited);
+                  const fallback = next(model, error, params, visited, {
+                    stepExposed,
+                    stepToolBoundary,
+                  });
                   reason = fallback.reason;
                   model = fallback.target;
                 } catch (safeError) {

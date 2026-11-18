@@ -1,31 +1,53 @@
 import type postgres from "postgres";
 
-const ensuredClients = new WeakSet<object>();
+let schemaEnsuredForProcess = false;
 let inflightPromise: Promise<void> | null = null;
 
+export function resetParitySchemaStateForTests(): void {
+  schemaEnsuredForProcess = false;
+  inflightPromise = null;
+}
+
 /**
- * Idempotently creates all additive owner-assistant tables (ModelUsage,
- * MemoryProfileFact, MemoryJournalEntry, VaultSecret, BackgroundTask,
- * SkillEntry, BotProfile, ChatBotBinding, RoutineTrigger, PublishedPage,
- * and PrivateFile) on first connection or during `lib/db/migrate.ts`.
- *
- * Uses `CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS` only — never
- * drops or alters existing user/chat columns.
+ * Idempotently creates all additive owner-assistant tables once per process
+ * (or during `lib/db/migrate.ts`). Fast-paths via `to_regclass` when tables
+ * already exist so runtime requests emit zero Postgres 42P07 "already exists"
+ * notices and take zero catalog locks.
  */
 export async function ensureParitySchema(
   sql: ReturnType<typeof postgres>
 ): Promise<void> {
-  if (ensuredClients.has(sql as unknown as object)) {
+  if (schemaEnsuredForProcess) {
     return;
   }
   if (inflightPromise) {
     await inflightPromise;
-    ensuredClients.add(sql as unknown as object);
     return;
   }
 
   inflightPromise = (async () => {
+    const existing = await sql<
+      {
+        pf: string | null;
+        rt: string | null;
+        cb: string | null;
+        mpf: string | null;
+      }[]
+    >`
+      SELECT
+        to_regclass('public."PrivateFile"')::text AS pf,
+        to_regclass('public."RoutineTrigger"')::text AS rt,
+        to_regclass('public."ChatBotBinding"')::text AS cb,
+        to_regclass('public."MemoryProfileFact"')::text AS mpf
+    `.catch(() => []);
+    const row = existing[0];
+    if (row?.pf && row?.rt && row?.cb && row?.mpf) {
+      schemaEnsuredForProcess = true;
+      return;
+    }
+
     await sql.unsafe(`
+      SET client_min_messages TO warning;
       CREATE TABLE IF NOT EXISTS "ModelUsage" (
         "id" uuid PRIMARY KEY,
         "userId" uuid NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
@@ -191,7 +213,7 @@ export async function ensureParitySchema(
       CREATE INDEX IF NOT EXISTS "PrivateFile_user_created"
         ON "PrivateFile" ("userId", "createdAt" DESC);
     `);
-    ensuredClients.add(sql as unknown as object);
+    schemaEnsuredForProcess = true;
   })().finally(() => {
     inflightPromise = null;
   });

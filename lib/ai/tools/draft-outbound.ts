@@ -26,7 +26,7 @@ export const draftOutboundMessage = ({
 } = {}) =>
   tool({
     description:
-      "Prepare an outbound message draft (email, Telegram, Slack, or webhook) for explicit owner review and approval before any send. Live external connectors are currently disconnected, so approving records a verified dry-run draft receipt without transmitting externally.",
+      "Prepare an outbound message preview (Slack, Telegram, webhook, or offline email draft when Gmail is not connected) for explicit owner review and approval. Approving records a verified local draft receipt without transmitting externally; when Gmail is connected, use gmailCreateDraft for real Gmail Drafts.",
     inputSchema: z.object({
       channel: z.enum(["email", "telegram", "slack", "webhook"]),
       recipient: z.string().trim().min(1).max(320),
@@ -59,7 +59,7 @@ export const draftOutboundMessage = ({
         riskLevel: review.riskLevel,
         reasons: review.reasons,
         approvedAt: new Date().toISOString(),
-        note: "Approved by owner in dry-run mode. Live external connectors are disconnected, so nothing was sent externally.",
+        note: "Approved by owner as an unsent local outbound preview. Nothing was transmitted externally.",
       };
     },
     toModelOutput: ({ output }) => ({

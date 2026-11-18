@@ -4,7 +4,6 @@ import {
   ARGON,
   gatewayEnabled,
   HYDROGEN,
-  monthlyAllowance,
   type PremiumModelId,
   TERRA,
 } from "./catalog";
@@ -20,7 +19,6 @@ const TERRA_COMPARISON_MODEL: ChatModel = {
 export type ReadinessReason =
   | "ready"
   | "provider_opt_in_missing"
-  | "spend_configuration_invalid"
   | "gateway_auth_missing"
   | "gateway_auth_rejected"
   | "catalog_unavailable"
@@ -43,8 +41,6 @@ type CatalogProvider = {
 const HINTS: Record<Exclude<ReadinessReason, "ready">, string> = {
   provider_opt_in_missing:
     "No model lane is enabled for this deployment. Configure GOOGLE_VERTEX_PROJECT_ID + GOOGLE_VERTEX_WORKLOAD_AUDIENCE or AI_GATEWAY_USAGE_ENABLED=true and redeploy.",
-  spend_configuration_invalid:
-    "AI_MONTHLY_ALLOWANCE_USD must be a number above 0 and at most 10.",
   gateway_auth_missing:
     "AI Gateway is enabled but no credential reached the function. Enable OIDC for the Vercel project (or set AI_GATEWAY_API_KEY for this environment) and redeploy.",
   gateway_auth_rejected:
@@ -83,10 +79,7 @@ function notReady(
 
 export function classifyGatewayFailure(
   error: unknown
-): Exclude<
-  ReadinessReason,
-  "ready" | "provider_opt_in_missing" | "spend_configuration_invalid"
-> {
+): Exclude<ReadinessReason, "ready" | "provider_opt_in_missing"> {
   const e = error as {
     name?: string;
     statusCode?: number;
@@ -132,11 +125,6 @@ export async function discoverGatewayReadiness({
 } = {}): Promise<Readiness> {
   if (!gatewayEnabled()) {
     return notReady("provider_opt_in_missing");
-  }
-  try {
-    monthlyAllowance();
-  } catch {
-    return notReady("spend_configuration_invalid");
   }
   let listed: Set<string>;
   try {

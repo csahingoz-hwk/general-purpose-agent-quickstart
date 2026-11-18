@@ -54,13 +54,13 @@ export function safeModelError(error: unknown, userText: string): string {
       : "Blocked: Korn Ferry or employer confidential material cannot be sent to personal Google AI models.";
   }
   if (
-    /model_(billing|spend)|spend_configuration|spending allowance or account credit limit|Kullanım bütçesi veya hesap kredisi/.test(
+    /model_billing|spending allowance or account credit limit|Sağlayıcı kredi sınırına/.test(
       raw
     )
   ) {
     return tr
-      ? "Kullanım bütçesi veya hesap kredisi sınırına ulaşıldı. Sohbetin kayıtlı; kapasite yeniden açıldığında buradan devam edebilirsin."
-      : "The spending allowance or account credit limit has been reached. Your conversation is saved; you can continue here when capacity is available.";
+      ? "Sağlayıcı (Google Cloud / Vertex AI) hesap kredi sınırına ulaşıldı. Sohbetin kayıtlı; kapasite açıldığında buradan devam edebilirsin."
+      : "Upstream provider credit limit reached. Your conversation is saved; you can continue here when capacity is available.";
   }
   if (
     /model_auth|account connection needs attention|Sohbet bağlantısının hesap ayarları/.test(
@@ -84,21 +84,21 @@ export function safeModelError(error: unknown, userText: string): string {
     )
   ) {
     return tr
-      ? "Hesabın şu anki kullanım sınırına ulaşıldı. Biraz sonra aynı sohbetten yeniden deneyebilirsin."
-      : "The account's current rate limit was reached. Please retry in this conversation shortly.";
+      ? "Vertex AI kota veya anlık istek hızı sınırına (429) ulaşıldı. Biraz sonra aynı sohbetten yeniden deneyebilirsin."
+      : "Vertex AI quota or rate limit (429) was reached. Please retry in this conversation shortly.";
   }
   const code = classifyModelError(error);
   if (code === "size") {
     return tr
-      ? "Sohbet bu modelin geçerli istek sınırını aştı. Daha kısa bir istek deneyebilir veya mevcut sohbetten devam edebilirsiniz. Ücretli modele geçilmedi."
-      : "This request exceeded the model's size limit. Try a shorter request or continue in this chat. No paid model was used.";
+      ? "Sohbet bu modelin geçerli istek sınırını aştı. Daha kısa bir istek deneyebilir veya mevcut sohbetten devam edebilirsiniz."
+      : "This request exceeded the model's size limit. Try a shorter request or continue in this chat.";
   }
   if (code === "rate") {
     return tr
-      ? "Modelin kullanım sınırına ulaşıldı. Biraz sonra yeniden deneyebilirsiniz. Ücretli modele geçilmedi."
-      : "The model's current usage limit was reached. Please retry shortly. No paid fallback was used.";
+      ? "Modelin kullanım sınırına ulaşıldı. Biraz sonra yeniden deneyebilirsiniz."
+      : "The model's current usage limit was reached. Please retry shortly.";
   }
   return tr
-    ? "Yanıt şu anda tamamlanamadı. Mesajın kayıtlı — yeniden denemek için aşağıdaki düğmeye dokun. Ücretli modele geçilmedi."
-    : "Couldn't finish this reply right now. Your message is saved — tap Retry response below to try again. No paid fallback was used.";
+    ? "Yanıt şu anda tamamlanamadı. Mesajın kayıtlı — yeniden denemek için aşağıdaki düğmeye dokun."
+    : "Couldn't finish this reply right now. Your message is saved — tap Retry response below to try again.";
 }

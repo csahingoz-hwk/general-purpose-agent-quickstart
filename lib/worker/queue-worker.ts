@@ -302,7 +302,7 @@ export function createPostgresWorkerAdapter(
   const sql = postgres(connectionString, {
     max: 1,
     prepare: false,
-    idle_timeout: 2,
+    idle_timeout: 0,
     connect_timeout: 10,
   });
 

@@ -58,8 +58,78 @@ function mapGoogleReadError(
   };
 }
 
+function extractCleanEmailAddress(raw: string): string | null {
+  const trimmed = raw.trim();
+  const bracketMatch = /<([^<>\s]+@[^<>\s]+)>/.exec(trimmed);
+  const candidate = (bracketMatch?.[1] ?? trimmed).trim();
+  return /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(candidate) ? candidate : null;
+}
+
 export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
   const { userId, vaultStore, hasUntrustedContext = false, fetchImpl } = opts;
+
+  async function runWithFreshGoogleTokenRetry<T>(
+    operation: (auth: {
+      accessToken: string;
+      oauthClientProjectNumber?: string;
+    }) => Promise<T>
+  ): Promise<
+    | { ok: true; value: T }
+    | {
+        ok: false;
+        authError?: {
+          status: "reconnect_required" | "setup_required";
+          code: string;
+          message: string;
+        };
+        apiError?: unknown;
+      }
+  > {
+    const auth = await resolveGoogleAccessTokenFromVault({
+      userId,
+      vaultStore,
+      fetchImpl,
+    });
+    if (!auth.ok) {
+      return {
+        ok: false,
+        authError: {
+          status:
+            auth.code === "oauth_refresh_failed"
+              ? "reconnect_required"
+              : "setup_required",
+          code: auth.code,
+          message: auth.message,
+        },
+      };
+    }
+    try {
+      return { ok: true, value: await operation(auth) };
+    } catch (firstErr) {
+      const shouldRetryOnce =
+        !(firstErr instanceof GoogleConnectorApiError) ||
+        firstErr.reason === "token_expired" ||
+        firstErr.reason === "upstream_error";
+      if (!shouldRetryOnce) {
+        return { ok: false, apiError: firstErr };
+      }
+      invalidateGoogleAccessTokenCache(userId);
+      const refreshed = await resolveGoogleAccessTokenFromVault({
+        userId,
+        vaultStore,
+        fetchImpl,
+        forceRefresh: true,
+      });
+      if (!refreshed.ok) {
+        return { ok: false, apiError: firstErr };
+      }
+      try {
+        return { ok: true, value: await operation(refreshed) };
+      } catch (secondErr) {
+        return { ok: false, apiError: secondErr };
+      }
+    }
+  }
 
   const gmailReadMessages = tool({
     description:
@@ -76,42 +146,35 @@ export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
       maxResults: z.number().int().min(1).max(20).default(10).optional(),
     }),
     execute: async ({ query, maxResults }) => {
-      const auth = await resolveGoogleAccessTokenFromVault({
-        userId,
-        vaultStore,
-        fetchImpl,
-      });
-      if (!auth.ok) {
-        const needsReconnect = auth.code === "oauth_refresh_failed";
-        return {
-          status: needsReconnect
-            ? ("reconnect_required" as const)
-            : ("setup_required" as const),
-          connectProvider: "google" as const,
-          code: auth.code,
-          message: auth.message,
-          messages: [],
-        };
-      }
-      try {
-        const messages = await readGmailMessages({
+      const attempt = await runWithFreshGoogleTokenRetry((auth) =>
+        readGmailMessages({
           accessToken: auth.accessToken,
           query,
           maxResults: maxResults ?? 10,
           oauthClientProjectNumber: auth.oauthClientProjectNumber,
           fetchImpl,
-        });
+        })
+      );
+      if (!attempt.ok) {
+        if (attempt.authError) {
+          return {
+            status: attempt.authError.status,
+            connectProvider: "google" as const,
+            code: attempt.authError.code,
+            message: attempt.authError.message,
+            messages: [],
+          };
+        }
         return {
-          status: "ok" as const,
-          count: messages.length,
-          messages,
-        };
-      } catch (err) {
-        return {
-          ...mapGoogleReadError(err, userId, "Gmail"),
+          ...mapGoogleReadError(attempt.apiError, userId, "Gmail"),
           messages: [],
         };
       }
+      return {
+        status: "ok" as const,
+        count: attempt.value.length,
+        messages: attempt.value,
+      };
     },
   });
 
@@ -128,56 +191,59 @@ export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
       maxResults: z.number().int().min(1).max(10).default(5).optional(),
     }),
     execute: async ({ query, maxResults }) => {
-      const auth = await resolveGoogleAccessTokenFromVault({
-        userId,
-        vaultStore,
-        fetchImpl,
-      });
-      if (!auth.ok) {
-        const needsReconnect = auth.code === "oauth_refresh_failed";
-        return {
-          status: needsReconnect
-            ? ("reconnect_required" as const)
-            : ("setup_required" as const),
-          connectProvider: "google" as const,
-          code: auth.code,
-          message: auth.message,
-          files: [],
-        };
-      }
-      try {
-        const files = await readDriveFiles({
+      const attempt = await runWithFreshGoogleTokenRetry((auth) =>
+        readDriveFiles({
           accessToken: auth.accessToken,
           query,
           maxResults: maxResults ?? 5,
           oauthClientProjectNumber: auth.oauthClientProjectNumber,
           fetchImpl,
-        });
+        })
+      );
+      if (!attempt.ok) {
+        if (attempt.authError) {
+          return {
+            status: attempt.authError.status,
+            connectProvider: "google" as const,
+            code: attempt.authError.code,
+            message: attempt.authError.message,
+            files: [],
+          };
+        }
         return {
-          status: "ok" as const,
-          count: files.length,
-          files,
-        };
-      } catch (err) {
-        return {
-          ...mapGoogleReadError(err, userId, "Google Drive"),
+          ...mapGoogleReadError(attempt.apiError, userId, "Google Drive"),
           files: [],
         };
       }
+      return {
+        status: "ok" as const,
+        count: attempt.value.length,
+        files: attempt.value,
+      };
     },
   });
 
   const gmailCreateDraft = tool({
     description:
-      "Create an UNSENT Gmail draft in the owner's Drafts folder after explicit owner approval. NEVER sends the email; you must review and send manually in Gmail.",
+      "Create an UNSENT Gmail draft in the owner's Drafts folder after explicit owner approval via the Kime/Konu/Mesaj Approval Card. ALWAYS call this tool whenever the owner asks to draft an email or reply to an email. NEVER sends the email automatically.",
     inputSchema: z.object({
-      recipient: z.string().email().max(320),
+      recipient: z
+        .string()
+        .trim()
+        .min(3)
+        .max(320)
+        .refine(
+          (val) => extractCleanEmailAddress(val) !== null,
+          "Must be a valid email address (e.g. user@example.com or Name <user@example.com>)"
+        ),
       subject: z.string().trim().min(1).max(200),
       body: z.string().trim().min(1).max(4000),
       threadId: z.string().trim().max(120).optional(),
     }),
     needsApproval: true,
-    execute: async ({ recipient, subject, body, threadId }) => {
+    execute: async ({ recipient: rawRecipient, subject, body, threadId }) => {
+      const recipient =
+        extractCleanEmailAddress(rawRecipient) ?? rawRecipient.trim();
       const review = reviewActionRisk({
         toolName: "gmailCreateDraft",
         input: { recipient, subject, body, threadId },

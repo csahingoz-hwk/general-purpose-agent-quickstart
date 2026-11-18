@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/app/(auth)/auth";
+import { clearSetupStatusCache } from "@/app/api/setup-status/route";
+import { clearLiveCapabilityManifestCache } from "@/lib/ai/capability-manifest";
 import { vertexEnabled } from "@/lib/ai/routing/catalog";
 import {
   GITHUB_VAULT_SECRET_NAME,
   isGithubConnectorEnabled,
 } from "@/lib/connectors/calendar-and-github";
+import { clearGoogleWorkspaceHealthCache } from "@/lib/connectors/google-health";
 import {
   GOOGLE_VAULT_SECRET_NAMES,
+  hasStoredGoogleConnection,
   isGoogleConnectorsEnabled,
 } from "@/lib/connectors/google-vault-auth";
 import { isGoogleSignInConfigured } from "@/lib/google-owner";
@@ -59,16 +63,12 @@ export async function GET() {
       session.user.id
     );
     const names = new Set(secrets.map((s) => s.name));
-    const hasAccess = names.has(GOOGLE_VAULT_SECRET_NAMES.accessToken);
-    const hasRefreshSet =
-      names.has(GOOGLE_VAULT_SECRET_NAMES.refreshToken) &&
-      ((names.has(GOOGLE_VAULT_SECRET_NAMES.clientId) &&
-        names.has(GOOGLE_VAULT_SECRET_NAMES.clientSecret)) ||
-        googleSignInReady);
-    const ready = enabled && (hasAccess || hasRefreshSet);
+    const ready = hasStoredGoogleConnection(names, googleSignInReady);
     const hasGemini = names.has(VOICE_VAULT_SECRET_NAMES.geminiApiKey);
     const hasOpenAiVoice = names.has(VOICE_VAULT_SECRET_NAMES.openaiApiKey);
-    const hasGithub = names.has(GITHUB_VAULT_SECRET_NAME);
+    const hasGithub =
+      Boolean(process.env.GITHUB_CONNECTOR_PAT?.trim()) ||
+      names.has(GITHUB_VAULT_SECRET_NAME);
 
     return NextResponse.json({
       enabled,
@@ -151,6 +151,9 @@ export async function DELETE(request: Request) {
           name: GOOGLE_VAULT_SECRET_NAMES.clientSecret,
         }),
       ]);
+      clearGoogleWorkspaceHealthCache(session.user.id);
+      clearSetupStatusCache(session.user.id);
+      clearLiveCapabilityManifestCache(session.user.id);
       return NextResponse.json({ disconnected: "google" });
     }
     if (provider === "github") {
@@ -158,6 +161,8 @@ export async function DELETE(request: Request) {
         userId: session.user.id,
         name: GITHUB_VAULT_SECRET_NAME,
       });
+      clearSetupStatusCache(session.user.id);
+      clearLiveCapabilityManifestCache(session.user.id);
       return NextResponse.json({ disconnected: "github" });
     }
     return NextResponse.json({ error: "Unknown provider" }, { status: 400 });

@@ -35,9 +35,9 @@ type CachedHealthEntry = {
 };
 
 const healthCache = new Map<string, CachedHealthEntry>();
-const READY_TTL_MS = 5 * 60_000;
-const DISABLED_TTL_MS = 10_000;
-const TRANSIENT_TTL_MS = 15_000;
+const READY_TTL_MS = 10 * 60_000;
+const DISABLED_TTL_MS = 30_000;
+const TRANSIENT_TTL_MS = 30_000;
 
 export function clearGoogleWorkspaceHealthCache(userId?: string): void {
   if (userId) {

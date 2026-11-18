@@ -90,7 +90,7 @@ export function getMessageByErrorCode(errorCode: ErrorCode): string {
     case "offline:model_setup":
       return "Chat is not ready yet. Your input is preserved; please try again after setup is complete.";
     case "rate_limit:model_quota":
-      return "The free model limit has been reached. Please try again later. No paid fallback was used.";
+      return "The model rate limit has been reached. Please try again later.";
     case "bad_request:api":
       return "The request couldn't be processed. Please check your input and try again.";
 

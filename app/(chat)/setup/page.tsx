@@ -33,9 +33,15 @@ function SetupPageContent() {
   const { mutate: globalMutate } = useSWRConfig();
   const [busy, setBusy] = useState(false);
 
-  const { data, mutate } = useSWR<SetupStatusResponse>(
-    `${basePath}/api/setup-status`,
-    fetcher
+  const connectedParam = searchParams.get("connected");
+  const { data, error, isLoading, mutate } = useSWR<SetupStatusResponse>(
+    `${basePath}/api/setup-status${connectedParam ? "?refresh=1" : ""}`,
+    fetcher,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      dedupingInterval: 10 * 60_000,
+    }
   );
 
   useEffect(() => {
@@ -89,10 +95,51 @@ function SetupPageContent() {
           </p>
         </div>
 
-        <ul className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card text-sm">
+        {error && !data ? (
+          <div
+            className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[color:var(--hairline)] bg-card p-4 text-sm"
+            data-testid="setup-checklist-error"
+          >
+            <p className="text-muted-foreground">
+              Could not load setup health right now.
+            </p>
+            <button
+              className="inline-flex min-h-10 items-center rounded-full border border-[color:var(--hairline)] bg-background px-4 font-medium text-foreground text-xs hover:bg-muted"
+              onClick={() => mutate()}
+              type="button"
+            >
+              Retry
+            </button>
+          </div>
+        ) : null}
+
+        <ul
+          className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card text-sm"
+          data-testid="setup-checklist-list"
+        >
+          {isLoading && !data
+            ? ["sk-1", "sk-2", "sk-3", "sk-4", "sk-5", "sk-6"].map((skKey) => (
+                <li
+                  className="flex items-center justify-between gap-3 px-4 py-4"
+                  data-testid="setup-checklist-skeleton"
+                  key={skKey}
+                >
+                  <div className="flex min-w-0 flex-1 items-start gap-3">
+                    <span className="mt-1.5 size-2.5 shrink-0 animate-pulse rounded-full bg-muted-foreground/30" />
+                    <div className="w-full max-w-md space-y-2">
+                      <div className="h-4 w-48 animate-pulse rounded bg-muted" />
+                      <div className="h-3 w-full animate-pulse rounded bg-muted/70" />
+                    </div>
+                  </div>
+                  <div className="h-7 w-20 shrink-0 animate-pulse rounded-full bg-muted" />
+                </li>
+              ))
+            : null}
           {(data?.items ?? []).map((item) => (
             <li
-              className="flex flex-col items-start justify-between gap-3 px-4 py-3.5 sm:flex-row sm:items-center"
+              className="scroll-mt-20 flex flex-col items-start justify-between gap-3 px-4 py-3.5 sm:flex-row sm:items-center"
+              data-testid={`setup-item-${item.id}`}
+              id={`setup-${item.id}`}
               key={item.id}
             >
               <div className="flex w-full min-w-0 flex-1 items-start gap-3">
@@ -173,12 +220,24 @@ function SetupPageContent() {
                     <a
                       className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-foreground text-xs hover:bg-muted"
                       data-testid={`setup-external-link-${item.id}`}
-                      href={item.externalUrl}
-                      rel="noopener noreferrer"
-                      target="_blank"
+                      href={
+                        item.externalUrl.startsWith("/")
+                          ? `${basePath}${item.externalUrl}`
+                          : item.externalUrl
+                      }
+                      rel={
+                        item.externalUrl.startsWith("/")
+                          ? undefined
+                          : "noopener noreferrer"
+                      }
+                      target={
+                        item.externalUrl.startsWith("/") ? undefined : "_blank"
+                      }
                     >
                       {item.externalLabel ?? "Open"}
-                      <ExternalLinkIcon className="size-3.5" />
+                      {!item.externalUrl.startsWith("/") && (
+                        <ExternalLinkIcon className="size-3.5" />
+                      )}
                     </a>
                   </div>
                 ) : item.status === "ready" ? (

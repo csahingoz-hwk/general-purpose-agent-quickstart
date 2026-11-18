@@ -1,14 +1,19 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/app/(auth)/auth";
+import { clearLiveCapabilityManifestCache } from "@/lib/ai/capability-manifest";
 import { isCopilotTokenConfigured } from "@/lib/ai/copilot-vm-model";
 import { vertexEnabled } from "@/lib/ai/routing/catalog";
+import { getVertexCloudBillingStatus } from "@/lib/billing/vertex-cloud-usage";
 import { isCloudComputerConfigured } from "@/lib/cloud-computer/client";
-import { GITHUB_VAULT_SECRET_NAME } from "@/lib/connectors/calendar-and-github";
+import {
+  GITHUB_VAULT_SECRET_NAME,
+  isGithubConnectorEnabled,
+} from "@/lib/connectors/calendar-and-github";
 import {
   type GoogleWorkspaceHealthResult,
   probeGoogleWorkspaceApiHealth,
 } from "@/lib/connectors/google-health";
-import { GOOGLE_VAULT_SECRET_NAMES } from "@/lib/connectors/google-vault-auth";
+import { hasStoredGoogleConnection } from "@/lib/connectors/google-vault-auth";
 import { isGoogleSignInConfigured } from "@/lib/google-owner";
 import { isMacBridgeConfigured } from "@/lib/mac-bridge/client";
 import { pingRedis } from "@/lib/ratelimit";
@@ -29,10 +34,35 @@ export type SetupChecklistItem = {
   connectedProvider?: "google" | "github";
 };
 
-export async function GET() {
+type CachedSetupStatus = {
+  payload: Record<string, unknown>;
+  expiresAt: number;
+};
+
+const setupStatusCache = new Map<string, CachedSetupStatus>();
+const SETUP_STATUS_TTL_MS = 10 * 60_000;
+
+export function clearSetupStatusCache(userId?: string): void {
+  clearLiveCapabilityManifestCache(userId);
+  if (userId) {
+    setupStatusCache.delete(userId);
+    return;
+  }
+  setupStatusCache.clear();
+}
+
+export async function GET(request: Request) {
   const session = await auth();
   if (!session?.user?.id || session.user.type === "guest") {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const forceRefresh = new URL(request.url).searchParams.get("refresh") === "1";
+  if (!forceRefresh) {
+    const cached = setupStatusCache.get(session.user.id);
+    if (cached && cached.expiresAt > Date.now()) {
+      return NextResponse.json(cached.payload);
+    }
   }
 
   const vertexReady = vertexEnabled();
@@ -44,7 +74,6 @@ export async function GET() {
     process.env.AUTH_GITHUB_ID?.trim() && process.env.AUTH_GITHUB_SECRET?.trim()
   );
   const redisConfigured = Boolean(process.env.REDIS_URL?.trim());
-  const redisReady = redisConfigured && (await pingRedis());
   const cloudComputerReady = isCloudComputerConfigured();
   const copilotTokenReady = isCopilotTokenConfigured();
   const copilotFallbackReady = cloudComputerReady && copilotTokenReady;
@@ -53,31 +82,45 @@ export async function GET() {
   const storedNames = new Set<string>();
   const vaultStore =
     vaultReady && dbReady ? createPostgresVaultStore() : undefined;
-  if (vaultStore) {
-    try {
-      const secrets = await vaultStore.listSecrets(session.user.id);
-      for (const s of secrets) {
-        storedNames.add(s.name);
-      }
-    } catch {
-      /* ignore transient read errors */
-    }
+
+  const [redisReady, secretsResult, gcpBilling] = await Promise.all([
+    redisConfigured
+      ? Promise.race([
+          pingRedis(),
+          new Promise<boolean>((resolve) =>
+            setTimeout(() => resolve(false), 1500)
+          ),
+        ]).catch(() => false)
+      : Promise.resolve(false),
+    vaultStore
+      ? vaultStore.listSecrets(session.user.id).catch(() => [])
+      : Promise.resolve([]),
+    Promise.race([
+      getVertexCloudBillingStatus({ forceRefresh }),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 3500)),
+    ]).catch(() => null),
+  ]);
+
+  for (const s of secretsResult) {
+    storedNames.add(s.name);
   }
 
-  const googleConnected =
-    storedNames.has(GOOGLE_VAULT_SECRET_NAMES.accessToken) ||
-    (storedNames.has(GOOGLE_VAULT_SECRET_NAMES.refreshToken) &&
-      (googleSignInReady ||
-        (storedNames.has(GOOGLE_VAULT_SECRET_NAMES.clientId) &&
-          storedNames.has(GOOGLE_VAULT_SECRET_NAMES.clientSecret))));
+  const googleConnected = hasStoredGoogleConnection(
+    storedNames,
+    googleSignInReady
+  );
 
   let googleHealth: GoogleWorkspaceHealthResult | null = null;
   if (googleConnected && vaultStore) {
     try {
-      googleHealth = await probeGoogleWorkspaceApiHealth({
-        userId: session.user.id,
-        vaultStore,
-      });
+      googleHealth = await Promise.race([
+        probeGoogleWorkspaceApiHealth({
+          userId: session.user.id,
+          vaultStore,
+          forceRefresh,
+        }),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+      ]);
     } catch {
       googleHealth = null;
     }
@@ -86,8 +129,9 @@ export async function GET() {
     googleHealth?.status === "service_disabled" ? googleHealth : null;
 
   const githubConnected =
-    Boolean(process.env.GITHUB_CONNECTOR_PAT?.trim()) ||
-    storedNames.has(GITHUB_VAULT_SECRET_NAME);
+    isGithubConnectorEnabled() &&
+    (Boolean(process.env.GITHUB_CONNECTOR_PAT?.trim()) ||
+      storedNames.has(GITHUB_VAULT_SECRET_NAME));
 
   const geminiReady =
     aiReady ||
@@ -99,12 +143,26 @@ export async function GET() {
       id: "core_ai",
       label: "Chat, web search, voice & images",
       summary: vertexReady
-        ? "Active via Google Cloud Vertex AI (Gemini 4 Hydrogen -> Argon escalation on Google AI Ultra credit — zero pay-per-use APIs)."
+        ? "Active via Google Cloud Vertex AI (Gemini 4 Hydrogen -> Argon escalation on Google AI Ultra credit — zero pay-per-use APIs, no internal spend cap)."
         : "Turn on Vertex AI WIF (GOOGLE_VERTEX_PROJECT_ID + GOOGLE_VERTEX_WORKLOAD_AUDIENCE) in your Vercel project settings.",
       status: aiReady ? "ready" : "action_needed",
       actionKind: aiReady ? "none" : "external_link",
       externalUrl: aiReady ? undefined : "https://vercel.com/dashboard",
       externalLabel: aiReady ? undefined : "Open Vercel",
+    },
+    {
+      id: "gcp_billing",
+      label: "Google Cloud Billing & Ultra credit telemetry (Vertex)",
+      summary: gcpBilling?.reachable
+        ? `Canlı Google Cloud fatura akışı aktif — bu ay $${(gcpBilling.mtdCreditsUsedUsd ?? 0).toFixed(2)} kredi kullanıldı, $${(gcpBilling.creditsRemainingUsd ?? gcpBilling.monthlyCreditLimitUsd).toFixed(2)} kredi kaldı (1 saat önbellekli).`
+        : (gcpBilling?.missingReason ??
+          "Canlı Vertex fatura ve kalan Ultra kredi bakiyesi için Cloud Billing + Budgets API, BigQuery Billing Export ve 'roles/billing.viewer' yetkisini açın."),
+      status: gcpBilling?.reachable ? "ready" : "action_needed",
+      actionKind: "external_link",
+      externalUrl:
+        gcpBilling?.setupActionUrl ??
+        "https://console.cloud.google.com/flows/enableapi?apiid=cloudbilling.googleapis.com,billingbudgets.googleapis.com,bigquery.googleapis.com",
+      externalLabel: gcpBilling?.setupActionLabel ?? "Enable Billing APIs",
     },
     {
       id: "copilot_fallback",
@@ -247,12 +305,18 @@ export async function GET() {
     },
   ];
 
-  return NextResponse.json({
+  const payload = {
     items,
     googleConnected,
     githubConnected,
     googleSignInReady,
     githubOAuthReady,
     vaultReady: dbReady && vaultReady,
+  };
+  setupStatusCache.set(session.user.id, {
+    payload,
+    expiresAt: Date.now() + SETUP_STATUS_TTL_MS,
   });
+
+  return NextResponse.json(payload);
 }

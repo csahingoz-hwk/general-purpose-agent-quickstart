@@ -1,4 +1,8 @@
 import { GoogleGenAI } from "@google/genai";
+import {
+  type CapabilityManifest,
+  formatCapabilityManifestPrompt,
+} from "@/lib/ai/capability-manifest";
 import { vertexEnabled } from "@/lib/ai/routing/catalog";
 import {
   getVertexProjectId,
@@ -55,6 +59,7 @@ export function buildVoiceSystemInstruction(opts: {
   teammate?: { name: string; soul: string } | null;
   facts?: string[];
   groupedMemoryBlock?: string;
+  capabilityManifest?: CapabilityManifest;
   recentTurns?: Array<{ role: "user" | "assistant"; text: string }>;
 }): string {
   const ownerName = opts.ownerName?.trim() || "Çağlar";
@@ -85,6 +90,9 @@ export function buildVoiceSystemInstruction(opts: {
     "If you did not clearly hear something, say so briefly and ask the owner to repeat it. Never guess words the owner did not say.",
     "This is a personal assistant. If the owner starts discussing employer-confidential or Korn Ferry work material, politely say in one sentence that work data can't be handled in personal voice mode.",
   ];
+  if (opts.capabilityManifest) {
+    lines.push(formatCapabilityManifestPrompt(opts.capabilityManifest));
+  }
   if (opts.teammate) {
     lines.push(
       `Active specialist role: ${opts.teammate.name}.`,

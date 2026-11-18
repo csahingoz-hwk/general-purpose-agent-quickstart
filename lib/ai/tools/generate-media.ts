@@ -75,16 +75,6 @@ export function createMediaTools(opts: {
       prompt,
       aspectRatio,
     }): Promise<MediaPreviewPayload> => {
-      if (opts.hasUntrustedContext) {
-        return {
-          status: "blocked_untrusted_context",
-          kind: "image",
-          title,
-          message:
-            "Blocked paid media generation in a turn containing untrusted external content.",
-        };
-      }
-
       const res = await generateImageWithImagen({
         userId: opts.userId,
         prompt,
@@ -148,16 +138,6 @@ export function createMediaTools(opts: {
       prompt,
       aspectRatio,
     }): Promise<MediaPreviewPayload> => {
-      if (opts.hasUntrustedContext) {
-        return {
-          status: "blocked_untrusted_context",
-          kind: "video",
-          title,
-          message:
-            "Blocked paid video generation in a turn containing untrusted external content.",
-        };
-      }
-
       const res = await generateVideoWithVeo({
         userId: opts.userId,
         prompt,

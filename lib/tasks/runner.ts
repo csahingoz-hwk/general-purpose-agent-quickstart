@@ -212,7 +212,7 @@ function getSql() {
   pgClient ??= postgres(process.env.POSTGRES_URL, {
     max: 3,
     prepare: false,
-    idle_timeout: 2,
+    idle_timeout: 0,
   });
   return pgClient;
 }

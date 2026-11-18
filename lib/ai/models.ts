@@ -2,6 +2,12 @@ export const DEFAULT_CHAT_MODEL = "gemini-4-hydrogen";
 export const ESCALATED_RESEARCH_MODEL = "gemini-4-argon";
 export const FALLBACK_CHAT_MODEL = "claude-haiku-5.5";
 
+export const REGISTERED_APP_MODEL_IDS = [
+  DEFAULT_CHAT_MODEL,
+  ESCALATED_RESEARCH_MODEL,
+  FALLBACK_CHAT_MODEL,
+] as const;
+
 export type ModelCapabilities = {
   tools: boolean;
   vision: boolean;
