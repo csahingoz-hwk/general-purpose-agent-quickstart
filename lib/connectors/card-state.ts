@@ -4,14 +4,22 @@ export type ConnectorCardActionOutput = {
   message?: string;
   connectProvider?: "google" | "github";
   accountConnected?: boolean;
-  projectNumber?: string | null;
-  enableApiUrl?: string | null;
 };
+
+export function isDisabledApiOutput(output: unknown): boolean {
+  if (!output || typeof output !== "object") {
+    return false;
+  }
+  return (output as { code?: string }).code === "service_disabled";
+}
 
 export function isSetupRequiredOutput(
   output: unknown
 ): output is ConnectorCardActionOutput {
   if (!output || typeof output !== "object") {
+    return false;
+  }
+  if (isDisabledApiOutput(output)) {
     return false;
   }
   const status = (output as { status?: string }).status;
@@ -21,6 +29,16 @@ export function isSetupRequiredOutput(
     status === "connector_error" ||
     status === "error"
   );
+}
+
+export function getDisabledApiNeutralMessage(toolName: string): string {
+  if (toolName.startsWith("calendar")) {
+    return "Google Takvim şu an kullanılamıyor, kurulum kontrol ediliyor";
+  }
+  if (toolName.startsWith("drive")) {
+    return "Google Drive şu an kullanılamıyor, kurulum kontrol ediliyor";
+  }
+  return "Gmail şu an kullanılamıyor, kurulum kontrol ediliyor";
 }
 
 /**

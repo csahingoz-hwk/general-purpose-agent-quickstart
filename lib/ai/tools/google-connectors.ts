@@ -35,7 +35,6 @@ function mapGoogleReadError(
         connectProvider: "google" as const,
         code: err.reason,
         accountConnected: false,
-        projectNumber: err.projectNumber,
         uiCardRendered: true,
         message: err.friendlyMessage,
       };
@@ -45,9 +44,7 @@ function mapGoogleReadError(
       connectProvider: "google" as const,
       code: err.reason,
       accountConnected: true,
-      projectNumber: err.projectNumber,
-      enableApiUrl: err.enableApiUrl,
-      uiCardRendered: true,
+      uiCardRendered: err.reason !== "service_disabled",
       message: err.friendlyMessage,
     };
   }

@@ -2,7 +2,6 @@
 
 import {
   CalendarIcon,
-  ExternalLinkIcon,
   FolderIcon,
   GitPullRequestIcon,
   MailIcon,
@@ -12,13 +11,12 @@ import { connectGithubAccount } from "@/app/(auth)/actions";
 
 export {
   type ConnectorCardActionOutput,
+  getDisabledApiNeutralMessage,
+  isDisabledApiOutput,
   isSetupRequiredOutput,
 } from "@/lib/connectors/card-state";
 
 import { cn } from "@/lib/utils";
-
-const DEFAULT_ENABLE_GOOGLE_APIS_URL =
-  "https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com,calendar-json.googleapis.com,drive.googleapis.com";
 
 export function ConnectorConnectCard({
   provider,
@@ -26,74 +24,51 @@ export function ConnectorConnectCard({
   locale = "en",
   mode = "connect",
   reasonMessage,
-  projectNumber,
-  enableApiUrl,
   onRetry,
 }: {
   provider: "google" | "github";
   chatId: string;
   locale?: "en" | "tr";
-  mode?: "connect" | "reconnect" | "api_disabled";
+  mode?: "connect" | "reconnect";
   reasonMessage?: string;
-  projectNumber?: string | null;
-  enableApiUrl?: string | null;
   onRetry?: () => void;
 }) {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
   const isGoogle = provider === "google";
-  const isApiDisabled = isGoogle && mode === "api_disabled";
   const isReconnect = mode === "reconnect";
   const returnTo = chatId ? `/chat/${chatId}` : "/setup";
   const googleStartHref = `${basePath}/connect/google/start?returnTo=${encodeURIComponent(returnTo)}`;
   const googleRetryHref = `${basePath}/connect/google/start?returnTo=${encodeURIComponent(returnTo)}&selectAccount=1`;
-  const resolvedEnableUrl =
-    enableApiUrl ||
-    (projectNumber
-      ? `${DEFAULT_ENABLE_GOOGLE_APIS_URL}&project=${encodeURIComponent(projectNumber)}`
-      : DEFAULT_ENABLE_GOOGLE_APIS_URL);
 
-  const title = isApiDisabled
-    ? locale === "tr"
-      ? "Google bağlı — Google Cloud üzerinde Gmail API'yi açın"
-      : "Google is connected — enable Gmail API on Google Cloud"
-    : isGoogle
-      ? isReconnect
-        ? locale === "tr"
-          ? "Gmail'i okumak için Google'ı yeniden bağlayın"
-          : "Reconnect Google to read your Gmail"
-        : locale === "tr"
-          ? "Google hesabınız henüz bağlı değil"
-          : "Google isn't connected yet"
-      : isReconnect
-        ? locale === "tr"
-          ? "GitHub bağlantısını yenileyin"
-          : "Reconnect your GitHub account"
-        : locale === "tr"
-          ? "GitHub hesabınız henüz bağlı değil"
-          : "GitHub isn't connected yet";
-
-  const defaultSubtitle = isApiDisabled
-    ? locale === "tr"
-      ? projectNumber
-        ? `Google hesabınız zaten bağlı; yalnızca #${projectNumber} numaralı Google Cloud projesinde Gmail, Takvim ve Drive API'lerinin bir kez açılması gerekiyor.`
-        : "Google hesabınız zaten bağlı; yalnızca Google Cloud projesinde Gmail, Takvim ve Drive API'lerinin bir kez açılması gerekiyor."
-      : projectNumber
-        ? `Your Google account is already connected — project #${projectNumber} just needs Gmail, Calendar & Drive APIs enabled once.`
-        : "Your Google account is already connected — your Google Cloud project just needs Gmail, Calendar & Drive APIs enabled once."
-    : isGoogle
-      ? isReconnect
-        ? locale === "tr"
-          ? "Oturum süresi doldu veya salt okunur Gmail izni gerekiyor. Yeni bir Safari sekmesinde yenileyin (yalnızca okur, asla göndermez)."
-          : "Your session expired or needs Gmail read permission. Opens in a full Safari tab — strictly read-only, never sends."
-        : locale === "tr"
-          ? "Gmail, Takvim ve Drive'ı tam bir Safari sekmesinde bağlayın (yalnızca okur, asla göndermez)."
-          : "Connect Gmail, Calendar & Drive in a full Safari tab (read-only + drafts, never sends)."
+  const title = isGoogle
+    ? isReconnect
+      ? locale === "tr"
+        ? "Gmail'i okumak için Google'ı yeniden bağlayın"
+        : "Reconnect Google to read your Gmail"
       : locale === "tr"
-        ? "Pull request'leri okumak için tek dokunuşla bağlayın."
-        : "Tap once to connect your GitHub repositories.";
+        ? "Google hesabınız henüz bağlı değil"
+        : "Google isn't connected yet"
+    : isReconnect
+      ? locale === "tr"
+        ? "GitHub bağlantısını yenileyin"
+        : "Reconnect your GitHub account"
+      : locale === "tr"
+        ? "GitHub hesabınız henüz bağlı değil"
+        : "GitHub isn't connected yet";
+
+  const defaultSubtitle = isGoogle
+    ? isReconnect
+      ? locale === "tr"
+        ? "Oturum süresi doldu veya salt okunur Gmail izni gerekiyor. Yeni bir Safari sekmesinde yenileyin (yalnızca okur, asla göndermez)."
+        : "Your session expired or needs Gmail read permission. Opens in a full Safari tab — strictly read-only, never sends."
+      : locale === "tr"
+        ? "Gmail, Takvim ve Drive'ı tam bir Safari sekmesinde bağlayın (yalnızca okur, asla göndermez)."
+        : "Connect Gmail, Calendar & Drive in a full Safari tab (read-only + drafts, never sends)."
+    : locale === "tr"
+      ? "Pull request'leri okumak için tek dokunuşla bağlayın."
+      : "Tap once to connect your GitHub repositories.";
 
   const subtitle =
-    !isApiDisabled &&
     isReconnect &&
     locale === "en" &&
     reasonMessage &&
@@ -101,25 +76,21 @@ export function ConnectorConnectCard({
       ? reasonMessage
       : defaultSubtitle;
 
-  const cta = isApiDisabled
-    ? locale === "tr"
-      ? "API'leri Etkinleştir"
-      : "Enable APIs"
-    : isGoogle
-      ? isReconnect
-        ? locale === "tr"
-          ? "Google'ı Yeniden Bağla"
-          : "Reconnect Google"
-        : locale === "tr"
-          ? "Google'ı Bağla"
-          : "Connect Google"
-      : isReconnect
-        ? locale === "tr"
-          ? "GitHub'ı Yeniden Bağla"
-          : "Reconnect GitHub"
-        : locale === "tr"
-          ? "GitHub'ı Bağla"
-          : "Connect GitHub";
+  const cta = isGoogle
+    ? isReconnect
+      ? locale === "tr"
+        ? "Google'ı Yeniden Bağla"
+        : "Reconnect Google"
+      : locale === "tr"
+        ? "Google'ı Bağla"
+        : "Connect Google"
+    : isReconnect
+      ? locale === "tr"
+        ? "GitHub'ı Yeniden Bağla"
+        : "Reconnect GitHub"
+      : locale === "tr"
+        ? "GitHub'ı Bağla"
+        : "Connect GitHub";
 
   const tryAgainLabel = locale === "tr" ? "Tekrar dene" : "Try again";
 
@@ -144,31 +115,7 @@ export function ConnectorConnectCard({
       </div>
 
       <div className="flex flex-wrap items-center gap-2 pl-5">
-        {isApiDisabled ? (
-          <>
-            <a
-              className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs transition-colors hover:bg-primary/90"
-              data-testid="enable-google-apis-button"
-              href={resolvedEnableUrl}
-              rel="noopener noreferrer"
-              target="_blank"
-            >
-              <ExternalLinkIcon className="size-3.5" />
-              <span>{cta}</span>
-            </a>
-            {onRetry && (
-              <button
-                className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-foreground text-xs transition-colors hover:bg-muted"
-                data-testid="connector-try-again-button"
-                onClick={onRetry}
-                type="button"
-              >
-                <RefreshCwIcon className="size-3.5" />
-                <span>{tryAgainLabel}</span>
-              </button>
-            )}
-          </>
-        ) : isGoogle ? (
+        {isGoogle ? (
           <>
             <a
               className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs transition-colors hover:bg-primary/90"

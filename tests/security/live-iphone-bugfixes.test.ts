@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createGoogleConnectorTools } from "../../lib/ai/tools/google-connectors";
-import { isSetupRequiredOutput } from "../../lib/connectors/card-state";
+import {
+  isDisabledApiOutput,
+  isSetupRequiredOutput,
+} from "../../lib/connectors/card-state";
+import { probeGoogleWorkspaceApiHealth } from "../../lib/connectors/google-health";
 import {
   extractGoogleClientProjectNumber,
   GOOGLE_VAULT_SECRET_NAMES,
@@ -451,15 +455,57 @@ test("Gmail 403 SERVICE_DISABLED extracts project number without leaking secrets
   assert.equal(disabledOut.status, "connector_error");
   assert.equal(disabledOut.code, "service_disabled");
   assert.equal(disabledOut.accountConnected, true);
-  assert.equal(disabledOut.projectNumber, "297951472081");
   assert.equal(
-    disabledOut.enableApiUrl,
-    "https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com,calendar-json.googleapis.com,drive.googleapis.com&project=297951472081"
+    "enableApiUrl" in disabledOut,
+    false,
+    "Chat tool output must never expose Cloud Console URLs to end users"
+  );
+  assert.equal(
+    "projectNumber" in disabledOut,
+    false,
+    "Chat tool output must never expose GCP project numbers to end users"
+  );
+  assert.equal(isSetupRequiredOutput(disabledOut), false);
+  assert.equal(isDisabledApiOutput(disabledOut), true);
+  assert.equal(
+    disabledOut.message,
+    "Gmail şu an kullanılamıyor, kurulum kontrol ediliyor"
   );
   assert.doesNotMatch(
     disabledOut.message,
-    /not connected|isn't connected|henüz bağlı değil|henüz bağlanmamış/i
+    /console\.cloud\.google\.com|Google Cloud|297951472081|not connected|isn't connected|henüz bağlı değil|henüz bağlanmamış/i
   );
+
+  // 3b) Server-side health check detects SERVICE_DISABLED for the owner Setup checklist ONLY
+  const disabledHealth = await probeGoogleWorkspaceApiHealth({
+    userId: "owner-1",
+    vaultStore: vault,
+    forceRefresh: true,
+    fetchImpl: ((input) => {
+      const url = String(input);
+      if (url === "https://oauth2.googleapis.com/token") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ access_token: "ya29.health-token" }), {
+            status: 200,
+          })
+        );
+      }
+      return Promise.resolve(new Response(sampleGoogle403, { status: 403 }));
+    }) as typeof fetch,
+  });
+  assert.equal(disabledHealth.status, "service_disabled");
+  if (disabledHealth.status === "service_disabled") {
+    assert.deepEqual(disabledHealth.disabledServices, [
+      "Gmail",
+      "Google Calendar",
+      "Google Drive",
+    ]);
+    assert.equal(disabledHealth.projectNumber, "297951472081");
+    assert.equal(
+      disabledHealth.enableApiUrl,
+      "https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com,calendar-json.googleapis.com,drive.googleapis.com&project=297951472081"
+    );
+  }
 
   // Verify rotated refresh_token persisted in Vault
   const storedRefresh = await vault.resolveSecret({
@@ -467,6 +513,39 @@ test("Gmail 403 SERVICE_DISABLED extracts project number without leaking secrets
     name: GOOGLE_VAULT_SECRET_NAMES.refreshToken,
   });
   assert.equal(storedRefresh, "1//rotated-persisted-refresh-token");
+
+  // 3c) Server-side health check turns ready once APIs are enabled
+  const readyHealth = await probeGoogleWorkspaceApiHealth({
+    userId: "owner-1",
+    vaultStore: vault,
+    forceRefresh: true,
+    fetchImpl: ((input) => {
+      const url = String(input);
+      if (url === "https://oauth2.googleapis.com/token") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ access_token: "ya29.ready-token" }), {
+            status: 200,
+          })
+        );
+      }
+      if (url.includes("/gmail/")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ messages: [{ id: "m1" }] }), {
+            status: 200,
+          })
+        );
+      }
+      if (url.includes("/calendar/")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ items: [] }), { status: 200 })
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ files: [] }), { status: 200 })
+      );
+    }) as typeof fetch,
+  });
+  assert.equal(readyHealth.status, "ready");
 
   // 4) Once enabled, gmailReadMessages({}) returns all 10 latest inbox messages (read-only)
   const tenStubs = Array.from({ length: 12 }, (_, idx) => ({

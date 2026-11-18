@@ -172,6 +172,7 @@ function SetupPageContent() {
                     )}
                     <a
                       className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-foreground text-xs hover:bg-muted"
+                      data-testid={`setup-external-link-${item.id}`}
                       href={item.externalUrl}
                       rel="noopener noreferrer"
                       target="_blank"

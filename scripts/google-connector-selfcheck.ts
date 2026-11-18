@@ -1,6 +1,7 @@
 import { config } from "dotenv";
 import postgres from "postgres";
 import { createGoogleConnectorTools } from "@/lib/ai/tools/google-connectors";
+import { probeGoogleWorkspaceApiHealth } from "@/lib/connectors/google-health";
 import { extractGoogleClientProjectNumber } from "@/lib/connectors/google-vault-auth";
 
 config({ path: ".env.local" });
@@ -33,6 +34,10 @@ async function main() {
       process.exit(0);
     }
 
+    const health = await probeGoogleWorkspaceApiHealth({
+      userId: ownerId,
+      forceRefresh: true,
+    });
     const tools = createGoogleConnectorTools({ userId: ownerId });
     // Execute gmailReadMessages({}) end-to-end (defaults to latest 10 inbox messages, read-only).
     // Never log message subjects, senders, bodies, client IDs, or tokens.
@@ -41,17 +46,17 @@ async function main() {
       { toolCallId: "google-selfcheck", messages: [] }
     );
 
-    if (res.status === "ok") {
+    if (res.status === "ok" && health.status === "ready") {
       console.log(
-        `Google connector self-check: PASS oauthClientProject=${oauthClientProject} inboxCount=${res.count} (read-only latest 10)`
+        `Google connector self-check: PASS oauthClientProject=${oauthClientProject} health=ready(gmail,calendar,drive) gmailReadMessages=ok(inboxCount=${res.count})`
       );
-    } else if (res.code === "service_disabled") {
+    } else if (health.status === "service_disabled") {
       console.log(
-        `Google connector self-check: API_DISABLED oauthClientProject=${oauthClientProject} errorProject=${res.projectNumber ?? oauthClientProject} enableUrl=${res.enableApiUrl ?? "none"}`
+        `Google connector self-check: API_DISABLED oauthClientProject=${oauthClientProject} disabled=${health.disabledServices.join(",")} setupChecklistUrl=${health.enableApiUrl}`
       );
     } else {
       console.log(
-        `Google connector self-check: ${String(res.status).toUpperCase()} code=${String(res.code ?? "unknown")} oauthClientProject=${oauthClientProject}`
+        `Google connector self-check: ${String(res.status).toUpperCase()} health=${health.status} code=${String(res.code ?? "none")} oauthClientProject=${oauthClientProject} inboxCount=${String(res.count ?? 0)}`
       );
     }
   } catch (err) {

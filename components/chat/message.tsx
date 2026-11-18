@@ -22,6 +22,8 @@ import { CloudComputerCard } from "./cloud-computer-card";
 import {
   ConnectorConnectCard,
   ConnectorSummaryCard,
+  getDisabledApiNeutralMessage,
+  isDisabledApiOutput,
   isSetupRequiredOutput,
 } from "./connector-connect-card";
 import { useDataStream } from "./data-stream-provider";
@@ -173,7 +175,9 @@ const PurePreviewMessage = ({
         const out = "output" in p ? p.output : undefined;
         return (
           (st === "output-available" || st === "output-error") &&
-          (isSetupRequiredOutput(out) || st === "output-error")
+          (isSetupRequiredOutput(out) ||
+            isDisabledApiOutput(out) ||
+            st === "output-error")
         );
       })
     ) &&
@@ -594,6 +598,26 @@ const PurePreviewMessage = ({
       }
 
       if (
+        state === "output-available" &&
+        isDisabledApiOutput(output) &&
+        (toolName.startsWith("gmail") ||
+          toolName.startsWith("calendar") ||
+          toolName.startsWith("drive"))
+      ) {
+        return (
+          <MessageContent
+            className="w-fit max-w-[min(85%,40rem)] overflow-hidden break-words rounded-[22px] bg-bubble-assistant px-4 py-2.5 text-[17px] text-foreground leading-[1.45]"
+            data-testid="connector-disabled-message"
+            key={toolCallId}
+          >
+            <MessageResponse className="text-inherit">
+              {getDisabledApiNeutralMessage(toolName)}
+            </MessageResponse>
+          </MessageContent>
+        );
+      }
+
+      if (
         (state === "output-available" || state === "output-error") &&
         (isSetupRequiredOutput(output) || state === "output-error") &&
         (toolName.startsWith("gmail") ||
@@ -607,18 +631,12 @@ const PurePreviewMessage = ({
             : undefined) ??
           (toolName.startsWith("github") ? "github" : "google");
         const mode =
-          isSetupRequiredOutput(output) && output.code === "service_disabled"
-            ? "api_disabled"
-            : isSetupRequiredOutput(output) &&
-                output.status === "setup_required"
-              ? "connect"
-              : "reconnect";
+          isSetupRequiredOutput(output) && output.status === "setup_required"
+            ? "connect"
+            : "reconnect";
         return (
           <ConnectorConnectCard
             chatId={chatId}
-            enableApiUrl={
-              isSetupRequiredOutput(output) ? output.enableApiUrl : undefined
-            }
             key={toolCallId}
             locale={locale}
             mode={mode}
@@ -628,9 +646,6 @@ const PurePreviewMessage = ({
                 : () => {
                     regenerate({ body: { retry: true } });
                   }
-            }
-            projectNumber={
-              isSetupRequiredOutput(output) ? output.projectNumber : undefined
             }
             provider={provider}
             reasonMessage={

@@ -4,6 +4,10 @@ import { isCopilotTokenConfigured } from "@/lib/ai/copilot-vm-model";
 import { vertexEnabled } from "@/lib/ai/routing/catalog";
 import { isCloudComputerConfigured } from "@/lib/cloud-computer/client";
 import { GITHUB_VAULT_SECRET_NAME } from "@/lib/connectors/calendar-and-github";
+import {
+  type GoogleWorkspaceHealthResult,
+  probeGoogleWorkspaceApiHealth,
+} from "@/lib/connectors/google-health";
 import { GOOGLE_VAULT_SECRET_NAMES } from "@/lib/connectors/google-vault-auth";
 import { isGoogleSignInConfigured } from "@/lib/google-owner";
 import { isMacBridgeConfigured } from "@/lib/mac-bridge/client";
@@ -47,11 +51,11 @@ export async function GET() {
   const macBridgeReady = isMacBridgeConfigured();
 
   const storedNames = new Set<string>();
-  if (vaultReady && dbReady) {
+  const vaultStore =
+    vaultReady && dbReady ? createPostgresVaultStore() : undefined;
+  if (vaultStore) {
     try {
-      const secrets = await createPostgresVaultStore().listSecrets(
-        session.user.id
-      );
+      const secrets = await vaultStore.listSecrets(session.user.id);
       for (const s of secrets) {
         storedNames.add(s.name);
       }
@@ -66,6 +70,20 @@ export async function GET() {
       (googleSignInReady ||
         (storedNames.has(GOOGLE_VAULT_SECRET_NAMES.clientId) &&
           storedNames.has(GOOGLE_VAULT_SECRET_NAMES.clientSecret))));
+
+  let googleHealth: GoogleWorkspaceHealthResult | null = null;
+  if (googleConnected && vaultStore) {
+    try {
+      googleHealth = await probeGoogleWorkspaceApiHealth({
+        userId: session.user.id,
+        vaultStore,
+      });
+    } catch {
+      googleHealth = null;
+    }
+  }
+  const googleServiceDisabled =
+    googleHealth?.status === "service_disabled" ? googleHealth : null;
 
   const githubConnected =
     Boolean(process.env.GITHUB_CONNECTOR_PAT?.trim()) ||
@@ -119,26 +137,37 @@ export async function GET() {
     {
       id: "google_workspace",
       label: "Google Gmail, Calendar & Drive",
-      summary: googleConnected
-        ? "Connected (read & unsent drafts only — never sends automatically)."
-        : googleSignInReady
-          ? "Click Connect to link your Google account for read & draft help."
-          : "Create a Google OAuth client to enable one-click Google connection.",
-      status: googleConnected ? "ready" : "action_needed",
-      actionKind: googleConnected
-        ? "none"
-        : googleSignInReady
-          ? "connect_google"
-          : "external_link",
-      externalUrl:
-        !googleConnected && !googleSignInReady
+      summary: googleServiceDisabled
+        ? `Google account connected — enable ${googleServiceDisabled.disabledServices.join(", ")} API${googleServiceDisabled.projectNumber ? ` on project #${googleServiceDisabled.projectNumber}` : ""} once.`
+        : googleConnected
+          ? "Connected (read & unsent drafts only — never sends automatically)."
+          : googleSignInReady
+            ? "Click Connect to link your Google account for read & draft help."
+            : "Create a Google OAuth client to enable one-click Google connection.",
+      status: googleServiceDisabled
+        ? "action_needed"
+        : googleConnected
+          ? "ready"
+          : "action_needed",
+      actionKind: googleServiceDisabled
+        ? "external_link"
+        : googleConnected
+          ? "none"
+          : googleSignInReady
+            ? "connect_google"
+            : "external_link",
+      externalUrl: googleServiceDisabled
+        ? googleServiceDisabled.enableApiUrl
+        : !googleConnected && !googleSignInReady
           ? "https://console.cloud.google.com/apis/credentials"
           : undefined,
-      externalLabel:
-        !googleConnected && !googleSignInReady
+      externalLabel: googleServiceDisabled
+        ? "Enable Google APIs"
+        : !googleConnected && !googleSignInReady
           ? "Google Cloud Credentials"
           : undefined,
-      connectedProvider: googleConnected ? "google" : undefined,
+      connectedProvider:
+        googleConnected && !googleServiceDisabled ? "google" : undefined,
     },
     {
       id: "github",

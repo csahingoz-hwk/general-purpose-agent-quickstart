@@ -327,13 +327,12 @@ export async function buildGoogleApiError(
     });
 
     if (isDisabled) {
-      const projText = resolvedProjectNumber
-        ? ` on Google Cloud project #${resolvedProjectNumber}`
-        : " on Google Cloud";
+      const neutralServiceName =
+        serviceLabel === "Google Calendar" ? "Google Takvim" : serviceLabel;
       return new GoogleConnectorApiError({
         statusCode: 403,
         reason: "service_disabled",
-        friendlyMessage: `Your Google account is connected, and ${serviceLabel} API needs to be enabled${projText}. Tap Enable APIs, then Try again.`,
+        friendlyMessage: `${neutralServiceName} şu an kullanılamıyor, kurulum kontrol ediliyor`,
         internalMessage: `${serviceLabel} API disabled on GCP project ${resolvedProjectNumber ?? "unknown"} (HTTP 403)`,
         projectNumber: resolvedProjectNumber,
         enableApiUrl,

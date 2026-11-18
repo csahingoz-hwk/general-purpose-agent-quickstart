@@ -102,8 +102,6 @@ export async function readGoogleCalendarEvents(opts: {
       code?: string;
       connectProvider?: "google";
       accountConnected?: boolean;
-      projectNumber?: string | null;
-      enableApiUrl?: string | null;
       message: string;
     }
   | { status: "error"; message: string }
@@ -168,7 +166,6 @@ export async function readGoogleCalendarEvents(opts: {
         code: apiErr.reason,
         connectProvider: "google",
         accountConnected: false,
-        projectNumber: apiErr.projectNumber,
         message: apiErr.friendlyMessage,
       };
     }
@@ -177,8 +174,6 @@ export async function readGoogleCalendarEvents(opts: {
       code: apiErr.reason,
       connectProvider: "google",
       accountConnected: true,
-      projectNumber: apiErr.projectNumber,
-      enableApiUrl: apiErr.enableApiUrl,
       message: apiErr.friendlyMessage,
     };
   }

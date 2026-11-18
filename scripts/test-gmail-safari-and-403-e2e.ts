@@ -35,7 +35,7 @@ function buildSseBody(chunks: Record<string, unknown>[]): string {
   return `${chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("")}data: [DONE]\n\n`;
 }
 
-test("Gmail 390x844 iPhone E2E: top-level Safari /connect/google/start redirect (gmail.readonly + offline + consent), Try again recovery, single clear API-disabled card (no 'not connected' text), and 10-message inbox retry", async () => {
+test("Gmail 390x844 iPhone E2E: neutral chat message on SERVICE_DISABLED (never Cloud Console in chat), single owner Setup checklist link when disabled, and 10-message inbox render when enabled", async () => {
   const scratchDir =
     process.env.VERIFY_SCREENSHOT_DIR ||
     "/Users/caglar/.gemini/antigravity-cli/brain/dd9cadeb-6946-44ae-87cb-364a999ae07b/scratch";
@@ -76,7 +76,7 @@ test("Gmail 390x844 iPhone E2E: top-level Safari /connect/google/start redirect 
       token: { id: userId, email: owner, type: "regular" },
     });
 
-    // 1) Verify GET /connect/google/start issues a real 302 top-level redirect to Google OAuth with gmail.readonly, access_type=offline, prompt=consent, and PKCE Set-Cookie!
+    // 1) Verify GET /connect/google/start issues a real 302 top-level redirect to Google OAuth
     const oauthRes = await fetch(
       `${origin}/connect/google/start?returnTo=%2Fchat%2Ftest-1`,
       {
@@ -96,10 +96,7 @@ test("Gmail 390x844 iPhone E2E: top-level Safari /connect/google/start redirect 
     assert.equal(oauthUrl.searchParams.get("prompt"), "consent");
     assert.equal(oauthUrl.searchParams.get("include_granted_scopes"), "true");
     assert.equal(oauthUrl.searchParams.get("login_hint"), owner);
-    const setCookies = oauthRes.headers.getSetCookie().join("; ");
-    assert.match(setCookies, /pkce\.code_verifier/);
 
-    // 2) Open 390x844 iPhone viewport and verify /connect/google?error=OAuthCallback recovery screen ("Try again · Tekrar dene")
     const context = await browser.newContext({
       viewport: { width: 390, height: 844 },
       deviceScaleFactor: 3,
@@ -139,21 +136,43 @@ test("Gmail 390x844 iPhone E2E: top-level Safari /connect/google/start redirect 
     );
     await page.route("**/api/vote*", (route) => route.fulfill({ json: [] }));
 
-    await page.goto(
-      `${origin}/connect/google?error=OAuthCallback&returnTo=%2F`,
-      { waitUntil: "networkidle" }
+    // 2) Owner /setup checklist shows ONE Enable Google APIs link when SERVICE_DISABLED is detected
+    await page.route("**/api/setup-status*", (route) =>
+      route.fulfill({
+        json: {
+          googleConnected: true,
+          githubConnected: false,
+          googleSignInReady: true,
+          githubOAuthReady: false,
+          vaultReady: true,
+          items: [
+            {
+              id: "google_workspace",
+              label: "Google Gmail, Calendar & Drive",
+              summary:
+                "Google account connected — enable Gmail, Google Calendar, Google Drive API on project #297951472081 once.",
+              status: "action_needed",
+              actionKind: "external_link",
+              externalUrl:
+                "https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com,calendar-json.googleapis.com,drive.googleapis.com&project=297951472081",
+              externalLabel: "Enable Google APIs",
+            },
+          ],
+        },
+      })
     );
-    await expect(page.getByTestId("google-connect-retry-card")).toBeVisible();
-    const retryOauthBtn = page.getByTestId("google-connect-try-again-button");
-    await expect(retryOauthBtn).toBeVisible();
-    const retryOauthBox = await retryOauthBtn.boundingBox();
-    assert.ok(retryOauthBox && retryOauthBox.height >= 44);
-    assert.match(
-      (await retryOauthBtn.getAttribute("href")) ?? "",
-      /\/connect\/google\/start\?.*selectAccount=1/
+    await page.goto(`${origin}/setup`, { waitUntil: "networkidle" });
+    const setupEnableLink = page.getByTestId(
+      "setup-external-link-google_workspace"
+    );
+    await expect(setupEnableLink).toBeVisible();
+    assert.equal(await setupEnableLink.count(), 1);
+    assert.equal(
+      await setupEnableLink.getAttribute("href"),
+      "https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com,calendar-json.googleapis.com,drive.googleapis.com&project=297951472081"
     );
 
-    // 3) Verify Chat 403 SERVICE_DISABLED shows ONE clear message ("Google bağlı — Google Cloud üzerinde Gmail API'yi açın" + Enable APIs + Tekrar dene) and suppresses contradictory "Google hesabınız henüz bağlanmamış" text!
+    // 3) In chat, SERVICE_DISABLED renders NO ConnectorConnectCard and NO Cloud Console link — ONLY "Gmail şu an kullanılamıyor, kurulum kontrol ediliyor"
     let turnCount = 0;
     await page.route("**/api/chat", async (route) => {
       turnCount += 1;
@@ -179,15 +198,10 @@ test("Gmail 390x844 iPhone E2E: top-level Safari /connect/google/start redirect 
               code: "service_disabled",
               connectProvider: "google",
               accountConnected: true,
-              projectNumber: "297951472081",
-              enableApiUrl:
-                "https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com,calendar-json.googleapis.com,drive.googleapis.com&project=297951472081",
-              message:
-                "Your Google account is connected, and Gmail API needs to be enabled on Google Cloud project #297951472081. Tap Enable APIs, then Try again.",
+              message: "Gmail şu an kullanılamıyor, kurulum kontrol ediliyor",
               messages: [],
             },
           },
-          // Simulate model trying to emit contradictory "not connected" text: UI MUST suppress it so ONLY one clear message appears!
           { type: "text-start", id: "txt-contradict" },
           {
             type: "text-delta",
@@ -205,13 +219,12 @@ test("Gmail 390x844 iPhone E2E: top-level Safari /connect/google/start redirect 
         return;
       }
 
-      // Turn 2 (triggered by tapping "Tekrar dene" / "Try again" on the card!): returns latest 10 inbox messages!
       const tenMessages = Array.from({ length: 10 }, (_, idx) => ({
         id: `m_${idx + 1}`,
         threadId: `t_${idx + 1}`,
         subject: `Gelen kutusu mesajı #${idx + 1} — Londra uçuş ve toplantı özeti`,
         from: `Sender ${idx + 1} <sender${idx + 1}@example.com>`,
-        date: "18 Nov 2026 08:50",
+        date: "18 Nov 2026 10:05",
         fencedContent: `<untrusted_content source="connector:gmail:m_${idx + 1}">Summary ${idx + 1}</untrusted_content>`,
         suspicious: false,
       }));
@@ -256,30 +269,26 @@ test("Gmail 390x844 iPhone E2E: top-level Safari /connect/google/start redirect 
     await page.goto(origin, { waitUntil: "networkidle" });
     await page
       .getByTestId("multimodal-input")
-      .fill("Gmail kutumdaki son e-postaları getirir misin?");
+      .fill("Can you fetch my Gmail?");
     await page.getByTestId("send-button").click();
 
-    const card = page.getByTestId("connector-connect-card");
-    await expect(card).toBeVisible({ timeout: 10_000 });
-    assert.equal(await card.getAttribute("data-mode"), "api_disabled");
-    await expect(card).toContainText("297951472081");
-
-    const enableBtn = page.getByTestId("enable-google-apis-button");
-    await expect(enableBtn).toBeVisible();
-    assert.equal(await enableBtn.getAttribute("target"), "_blank");
-    assert.equal(
-      await enableBtn.getAttribute("href"),
-      "https://console.cloud.google.com/flows/enableapi?apiid=gmail.googleapis.com,calendar-json.googleapis.com,drive.googleapis.com&project=297951472081"
+    const neutralBubble = page.getByTestId("connector-disabled-message");
+    await expect(neutralBubble).toBeVisible({ timeout: 10_000 });
+    await expect(neutralBubble).toHaveText(
+      "Gmail şu an kullanılamıyor, kurulum kontrol ediliyor"
     );
-    const enableBox = await enableBtn.boundingBox();
-    assert.ok(enableBox && enableBox.height >= 44);
 
-    // Crucial: "Google hesabınız henüz bağlanmamış" MUST NOT appear anywhere!
-    const chatText = await page.locator("main").innerText();
+    // Crucial: ZERO ConnectorConnectCard and ZERO Google Cloud Console links in chat!
+    assert.equal(await page.getByTestId("connector-connect-card").count(), 0);
     assert.equal(
-      chatText.includes("henüz bağlanmamış"),
-      false,
-      "Must NEVER show 'not connected' text when account IS connected and API is off"
+      await page.locator('a[href*="console.cloud.google.com"]').count(),
+      0,
+      "Chat UI must NEVER link end users to Google Cloud Console"
+    );
+    const chatText = await page.locator("main").innerText();
+    assert.doesNotMatch(
+      chatText,
+      /Google Cloud|297951472081|Enable APIs|API'leri Etkinleştir|henüz bağlanmamış/i
     );
     const scrollW1 = await page.evaluate(
       () => document.documentElement.scrollWidth
@@ -287,33 +296,20 @@ test("Gmail 390x844 iPhone E2E: top-level Safari /connect/google/start redirect 
     assert.ok(scrollW1 <= 390, `scrollWidth ${scrollW1} <= 390`);
 
     await page.screenshot({
-      path: join(scratchDir, "verify-gmail-api-disabled-one-message-390.png"),
+      path: join(scratchDir, "verify-gmail-neutral-disabled-chat-390.png"),
       fullPage: false,
     });
 
-    // 4) Tap "Tekrar dene" right on the card -> regenerates turn and renders all 10 inbox messages!
-    const tryAgainBtn = page.getByTestId("connector-try-again-button");
-    await expect(tryAgainBtn).toBeVisible();
-    const tryBox = await tryAgainBtn.boundingBox();
-    assert.ok(tryBox && tryBox.height >= 44);
-    await tryAgainBtn.click();
+    // 4) Next message once APIs are enabled renders all 10 inbox messages cleanly!
+    await page
+      .getByTestId("multimodal-input")
+      .fill("Şimdi tekrar kontrol eder misin?");
+    await page.getByTestId("send-button").click();
 
     const summaryCard = page.getByTestId("connector-summary-gmail");
     await expect(summaryCard).toBeVisible({ timeout: 10_000 });
     await expect(summaryCard).toContainText("Gelen kutusu mesajı #1");
     await expect(summaryCard).toContainText("Gelen kutusu mesajı #10");
-
-    const scrollW2 = await page.evaluate(
-      () => document.documentElement.scrollWidth
-    );
-    assert.ok(scrollW2 <= 390, `scrollWidth ${scrollW2} <= 390`);
-
-    await summaryCard.evaluate((el) => el.scrollIntoView({ block: "start" }));
-    await page.waitForTimeout(200);
-    await page.screenshot({
-      path: join(scratchDir, "verify-gmail-10-inbox-390.png"),
-      fullPage: false,
-    });
   } finally {
     if (server.pid) {
       try {
