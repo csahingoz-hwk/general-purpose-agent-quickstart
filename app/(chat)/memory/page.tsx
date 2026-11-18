@@ -38,6 +38,7 @@ import {
   type SkippedSensitiveLine,
 } from "@/lib/memory/bulk-import";
 import type {
+  FailedMergeChunk,
   MergedMemoryPreviewItem,
   MultiSourceMergeCounts,
   MultiSourceMergeResult,
@@ -253,6 +254,9 @@ function formatModelUsedBadge(
   if (modelUsed === "gemini-4-hydrogen") {
     return "Gemini 4 Hydrogen · Vertex";
   }
+  if (modelUsed === "claude-haiku-5.5") {
+    return "Claude Haiku 5.5 · Copilot";
+  }
   return null;
 }
 
@@ -287,6 +291,11 @@ export default function MemoryPage() {
     { id: "slot_0", source: "pasted", rawText: "", exportedAt: "" },
   ]);
   const [merging, setMerging] = useState(false);
+  const [mergeProgress, setMergeProgress] = useState<{
+    completed: number;
+    total: number;
+  } | null>(null);
+  const [failedChunks, setFailedChunks] = useState<FailedMergeChunk[]>([]);
   const [previewItems, setPreviewItems] = useState<
     MergedMemoryPreviewItem[] | null
   >(null);
@@ -390,11 +399,13 @@ export default function MemoryPage() {
     if (
       previewItems !== null ||
       mergeCounts !== null ||
-      skippedSensitive.length > 0
+      skippedSensitive.length > 0 ||
+      failedChunks.length > 0
     ) {
       setPreviewItems(null);
       setMergeCounts(null);
       setSkippedSensitive([]);
+      setFailedChunks([]);
       setMergeModelUsed(null);
     }
   }
@@ -450,7 +461,7 @@ export default function MemoryPage() {
     const loadedSlots: SourceSlotState[] = [];
     for (const file of files) {
       try {
-        const text = (await file.text()).slice(0, 120_000);
+        const text = (await file.text()).slice(0, 250_000);
         if (!text.trim()) {
           continue;
         }
@@ -482,10 +493,14 @@ export default function MemoryPage() {
       return;
     }
     setMerging(true);
+    setMergeProgress(null);
     try {
       const response = await fetch(`${basePath}/api/memory/merge`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/x-ndjson, application/json",
+        },
         body: JSON.stringify({
           sources: nonEmpty.map((s) => ({
             id: s.id,
@@ -496,9 +511,69 @@ export default function MemoryPage() {
           })),
         }),
       });
-      const resJson = (await response.json().catch(() => ({}))) as Partial<
-        MultiSourceMergeResult & { error?: string }
-      >;
+
+      const contentType = response.headers.get("content-type") ?? "";
+      let resJson: Partial<MultiSourceMergeResult & { error?: string }> = {};
+
+      if (contentType.includes("application/x-ndjson") && response.body) {
+        const reader = response.body
+          .pipeThrough(new TextDecoderStream())
+          .getReader();
+        let buf = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) {
+            break;
+          }
+          buf += value;
+          const lines = buf.split(/\r?\n/);
+          buf = lines.pop() ?? "";
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) {
+              continue;
+            }
+            const msg = JSON.parse(trimmed) as {
+              type?: string;
+              completedChunks?: number;
+              totalChunks?: number;
+              data?: MultiSourceMergeResult;
+              error?: string;
+            };
+            if (
+              msg.type === "progress" &&
+              typeof msg.totalChunks === "number" &&
+              msg.totalChunks > 1
+            ) {
+              setMergeProgress({
+                completed: msg.completedChunks ?? 0,
+                total: msg.totalChunks,
+              });
+            } else if (msg.type === "result" && msg.data) {
+              resJson = msg.data;
+            } else if (msg.type === "error") {
+              resJson = { error: msg.error };
+            }
+          }
+        }
+        if (buf.trim()) {
+          const msg = JSON.parse(buf.trim()) as {
+            type?: string;
+            data?: MultiSourceMergeResult;
+            error?: string;
+          };
+          if (msg.type === "result" && msg.data) {
+            resJson = msg.data;
+          } else if (msg.type === "error") {
+            resJson = { error: msg.error };
+          }
+        }
+      } else {
+        resJson = (await response.json().catch(() => ({}))) as Partial<
+          MultiSourceMergeResult & { error?: string }
+        >;
+      }
+
       if (!response.ok || !Array.isArray(resJson.items) || !resJson.counts) {
         throw new Error(
           resJson.error ??
@@ -508,6 +583,7 @@ export default function MemoryPage() {
       setPreviewItems(resJson.items);
       setMergeCounts(resJson.counts);
       setSkippedSensitive(resJson.skippedSensitive ?? []);
+      setFailedChunks(resJson.failedChunks ?? []);
       setMergeModelUsed(resJson.modelUsed ?? null);
     } catch (err) {
       toast({
@@ -517,6 +593,7 @@ export default function MemoryPage() {
       });
     } finally {
       setMerging(false);
+      setMergeProgress(null);
     }
   }
 
@@ -617,18 +694,31 @@ export default function MemoryPage() {
         throw new Error(body.error ?? "Could not save memories");
       }
       const resJson = (await response.json()) as { savedCount?: number };
+      const remainingFailedText = failedChunks
+        .map((fc) => fc.retryText)
+        .filter(Boolean)
+        .join("\n");
       setSlots([
-        { id: "slot_0", source: "pasted", rawText: "", exportedAt: "" },
+        {
+          id: "slot_0",
+          source: "pasted",
+          rawText: remainingFailedText,
+          exportedAt: "",
+        },
       ]);
       setPreviewItems(null);
       setMergeCounts(null);
       setSkippedSensitive([]);
+      setFailedChunks([]);
       setMergeModelUsed(null);
       await mutate();
       toast({
         type: "success",
-        description:
-          lang === "tr"
+        description: remainingFailedText
+          ? lang === "tr"
+            ? `${resJson.savedCount ?? selected.length} bilgi kaydedildi. Başarısız kalan bölüm kutuda hazır.`
+            : `Saved ${resJson.savedCount ?? selected.length} facts. The failed section is ready in the box to retry.`
+          : lang === "tr"
             ? `${resJson.savedCount ?? selected.length} bilgi belleğe kaydedildi.`
             : `Saved ${resJson.savedCount ?? selected.length} facts to memory.`,
       });
@@ -1012,7 +1102,13 @@ export default function MemoryPage() {
                 {merging ? (
                   <>
                     <Loader2Icon className="size-4 animate-spin" />
-                    <span>{t.mergingBtn}</span>
+                    <span>
+                      {mergeProgress && mergeProgress.total > 1
+                        ? lang === "tr"
+                          ? `Bölüm ${Math.min(mergeProgress.total, mergeProgress.completed + 1)}/${mergeProgress.total} birleştiriliyor…`
+                          : `Merging part ${Math.min(mergeProgress.total, mergeProgress.completed + 1)}/${mergeProgress.total}…`
+                        : t.mergingBtn}
+                    </span>
                   </>
                 ) : (
                   <>
@@ -1142,6 +1238,36 @@ export default function MemoryPage() {
                   </div>
                 )}
               </div>
+
+              {failedChunks.length > 0 && (
+                <div
+                  className="space-y-2 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs"
+                  data-testid="memory-failed-chunks-banner"
+                >
+                  <div className="flex items-start gap-2 font-medium text-amber-900 dark:text-amber-200">
+                    <AlertTriangleIcon className="mt-0.5 size-4 shrink-0" />
+                    <span>
+                      {lang === "tr"
+                        ? `${failedChunks.length} bölüm şu anda birleştirilemedi — diğer başarılı bölümler aşağıda kaydetmeye hazır:`
+                        : `${failedChunks.length} section${failedChunks.length === 1 ? "" : "s"} could not be merged right now — all other sections succeeded and are ready to save below:`}
+                    </span>
+                  </div>
+                  <ul className="space-y-1 pl-6 text-foreground/85">
+                    {failedChunks.map((fc) => (
+                      <li className="break-words" key={fc.chunkNumber}>
+                        <span className="font-semibold">
+                          {lang === "tr"
+                            ? `Bölüm ${fc.chunkNumber}/${fc.totalChunks} (${fc.lineCount} satır): `
+                            : `Part ${fc.chunkNumber}/${fc.totalChunks} (${fc.lineCount} lines): `}
+                        </span>
+                        <span className="text-muted-foreground">
+                          “{fc.preview}…”
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {skippedSensitive.length > 0 && (
                 <div

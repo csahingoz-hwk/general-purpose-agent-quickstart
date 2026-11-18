@@ -1,15 +1,6 @@
 "use client";
 
 import type { DynamicToolUIPart, ToolUIPart } from "ai";
-import type { ComponentProps, ReactNode } from "react";
-
-import { Badge } from "@/components/ui/badge";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { cn } from "@/lib/utils";
 import {
   CheckCircleIcon,
   ChevronDownIcon,
@@ -18,15 +9,26 @@ import {
   WrenchIcon,
   XCircleIcon,
 } from "lucide-react";
-import { isValidElement } from "react";
-
+import { type ComponentProps, isValidElement, type ReactNode } from "react";
+import { Badge } from "@/components/ui/badge";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { cn } from "@/lib/utils";
 import { CodeBlock } from "./code-block";
 
 export type ToolProps = ComponentProps<typeof Collapsible>;
 
-export const Tool = ({ className, ...props }: ToolProps) => (
+export const Tool = ({
+  className,
+  defaultOpen = false,
+  ...props
+}: ToolProps) => (
   <Collapsible
-    className={cn("group not-prose mb-4 w-full rounded-md border", className)}
+    className={cn("group not-prose mb-2 w-full rounded-xl border", className)}
+    defaultOpen={defaultOpen}
     {...props}
   />
 );
@@ -133,6 +135,33 @@ export type ToolOutputProps = ComponentProps<"div"> & {
   errorText: ToolPart["errorText"];
 };
 
+function isErrorLikePayload(output: unknown): {
+  isError: boolean;
+  friendlySummary?: string;
+} {
+  if (!output || typeof output !== "object" || isValidElement(output)) {
+    return { isError: false };
+  }
+  const obj = output as Record<string, unknown>;
+  const status = typeof obj.status === "string" ? obj.status : "";
+  if (
+    status === "error" ||
+    status === "connector_error" ||
+    status === "blocked" ||
+    status === "blocked_data_boundary" ||
+    typeof obj.error === "string"
+  ) {
+    const summary =
+      typeof obj.message === "string"
+        ? obj.message
+        : typeof obj.error === "string"
+          ? obj.error
+          : undefined;
+    return { isError: true, friendlySummary: summary };
+  }
+  return { isError: false };
+}
+
 export const ToolOutput = ({
   className,
   output,
@@ -142,6 +171,9 @@ export const ToolOutput = ({
   if (!(output || errorText)) {
     return null;
   }
+
+  const errorInspection = isErrorLikePayload(output);
+  const treatAsError = Boolean(errorText) || errorInspection.isError;
 
   let Output = <div>{output as ReactNode}</div>;
 
@@ -153,18 +185,37 @@ export const ToolOutput = ({
     Output = <CodeBlock code={output} language="json" />;
   }
 
+  if (treatAsError) {
+    const summaryText =
+      errorInspection.friendlySummary ||
+      errorText ||
+      "This tool could not complete right now.";
+    return (
+      <div className={cn("space-y-2", className)} {...props}>
+        <p className="rounded-lg border border-[color:var(--hairline)] bg-muted/40 px-3 py-2 text-foreground text-xs">
+          {summaryText}
+        </p>
+        {output !== undefined && (
+          <details
+            className="rounded-lg border border-[color:var(--hairline)] bg-muted/20 px-3 py-2 text-xs"
+            data-testid="tool-error-details"
+          >
+            <summary className="cursor-pointer select-none font-medium text-muted-foreground hover:text-foreground">
+              Details
+            </summary>
+            <div className="mt-2 overflow-x-auto">{Output}</div>
+          </details>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className={cn("space-y-2", className)} {...props}>
       <h4 className="font-medium text-muted-foreground text-xs uppercase tracking-wide">
-        {errorText ? "Error" : "Result"}
+        Result
       </h4>
-      <div
-        className={cn(
-          "overflow-x-auto rounded-md text-xs [&_table]:w-full",
-          errorText && "bg-destructive/10 text-destructive"
-        )}
-      >
-        {errorText && <div>{errorText}</div>}
+      <div className="overflow-x-auto rounded-md text-xs [&_table]:w-full">
         {Output}
       </div>
     </div>

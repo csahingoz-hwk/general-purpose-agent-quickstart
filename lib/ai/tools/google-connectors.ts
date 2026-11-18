@@ -1,10 +1,14 @@
 import { tool } from "ai";
 import { z } from "zod";
-import { resolveGoogleAccessTokenFromVault } from "@/lib/connectors/google-vault-auth";
+import {
+  invalidateGoogleAccessTokenCache,
+  resolveGoogleAccessTokenFromVault,
+} from "@/lib/connectors/google-vault-auth";
 import {
   containsRestrictedWorkData,
   createDrivePrivateDraftDoc,
   createGmailUnsentDraft,
+  GoogleConnectorApiError,
   readDriveFiles,
   readGmailMessages,
 } from "@/lib/connectors/google-workspace";
@@ -18,12 +22,44 @@ export type GoogleConnectorToolsOptions = {
   fetchImpl?: typeof fetch;
 };
 
+function mapGoogleReadError(
+  err: unknown,
+  userId: string,
+  service: "Gmail" | "Google Drive"
+) {
+  if (err instanceof GoogleConnectorApiError) {
+    if (err.statusCode === 401 || err.statusCode === 403) {
+      invalidateGoogleAccessTokenCache(userId);
+    }
+    if (err.reason === "token_expired" || err.reason === "scope_missing") {
+      return {
+        status: "reconnect_required" as const,
+        connectProvider: "google" as const,
+        code: err.reason,
+        message: err.friendlyMessage,
+      };
+    }
+    return {
+      status: "connector_error" as const,
+      connectProvider: "google" as const,
+      code: err.reason,
+      message: err.friendlyMessage,
+    };
+  }
+  return {
+    status: "connector_error" as const,
+    connectProvider: "google" as const,
+    code: "upstream_error" as const,
+    message: `Could not reach ${service} right now. Tap Reconnect Google or try again shortly.`,
+  };
+}
+
 export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
   const { userId, vaultStore, hasUntrustedContext = false, fetchImpl } = opts;
 
   const gmailReadMessages = tool({
     description:
-      "Read recent Gmail messages using encrypted credentials from the owner's Secret Vault. Read-only; returns message excerpts inside <untrusted_content> fences.",
+      "Read recent Gmail messages using encrypted credentials from the owner's Secret Vault. When called with no parameters ({}), defaults to the latest 10 inbox messages (in:inbox). Read-only; never sends mail.",
     inputSchema: z.object({
       query: z
         .string()
@@ -31,9 +67,9 @@ export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
         .max(200)
         .optional()
         .describe(
-          "Optional Gmail search query (e.g. 'is:unread', 'from:alice')."
+          "Optional Gmail search query (e.g. 'is:unread', 'from:alice'). Omit to fetch latest 10 inbox messages."
         ),
-      maxResults: z.number().int().min(1).max(10).default(5).optional(),
+      maxResults: z.number().int().min(1).max(20).default(10).optional(),
     }),
     execute: async ({ query, maxResults }) => {
       const auth = await resolveGoogleAccessTokenFromVault({
@@ -42,8 +78,12 @@ export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
         fetchImpl,
       });
       if (!auth.ok) {
+        const needsReconnect = auth.code === "oauth_refresh_failed";
         return {
-          status: "setup_required" as const,
+          status: needsReconnect
+            ? ("reconnect_required" as const)
+            : ("setup_required" as const),
+          connectProvider: "google" as const,
           code: auth.code,
           message: auth.message,
           messages: [],
@@ -53,7 +93,7 @@ export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
         const messages = await readGmailMessages({
           accessToken: auth.accessToken,
           query,
-          maxResults: maxResults ?? 5,
+          maxResults: maxResults ?? 10,
           fetchImpl,
         });
         return {
@@ -63,11 +103,7 @@ export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
         };
       } catch (err) {
         return {
-          status: "error" as const,
-          message:
-            err instanceof Error
-              ? err.message
-              : "Failed to read Gmail messages.",
+          ...mapGoogleReadError(err, userId, "Gmail"),
           messages: [],
         };
       }
@@ -93,8 +129,12 @@ export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
         fetchImpl,
       });
       if (!auth.ok) {
+        const needsReconnect = auth.code === "oauth_refresh_failed";
         return {
-          status: "setup_required" as const,
+          status: needsReconnect
+            ? ("reconnect_required" as const)
+            : ("setup_required" as const),
+          connectProvider: "google" as const,
           code: auth.code,
           message: auth.message,
           files: [],
@@ -114,11 +154,7 @@ export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
         };
       } catch (err) {
         return {
-          status: "error" as const,
-          message:
-            err instanceof Error
-              ? err.message
-              : "Failed to read Google Drive files.",
+          ...mapGoogleReadError(err, userId, "Google Drive"),
           files: [],
         };
       }
@@ -160,7 +196,11 @@ export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
       });
       if (!auth.ok) {
         return {
-          status: "setup_required" as const,
+          status:
+            auth.code === "oauth_refresh_failed"
+              ? ("reconnect_required" as const)
+              : ("setup_required" as const),
+          connectProvider: "google" as const,
           code: auth.code,
           deliveryMode: "draft_only_never_send" as const,
           digest: review.digest,
@@ -190,14 +230,10 @@ export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
         };
       } catch (err) {
         return {
-          status: "error" as const,
+          ...mapGoogleReadError(err, userId, "Gmail"),
           deliveryMode: "draft_only_never_send" as const,
           digest: review.digest,
           riskLevel: review.riskLevel,
-          message:
-            err instanceof Error
-              ? err.message
-              : "Failed to create Gmail draft.",
         };
       }
     },
@@ -236,7 +272,11 @@ export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
       });
       if (!auth.ok) {
         return {
-          status: "setup_required" as const,
+          status:
+            auth.code === "oauth_refresh_failed"
+              ? ("reconnect_required" as const)
+              : ("setup_required" as const),
+          connectProvider: "google" as const,
           code: auth.code,
           mode: "private_draft_only" as const,
           digest: review.digest,
@@ -263,14 +303,10 @@ export function createGoogleConnectorTools(opts: GoogleConnectorToolsOptions) {
         };
       } catch (err) {
         return {
-          status: "error" as const,
+          ...mapGoogleReadError(err, userId, "Google Drive"),
           mode: "private_draft_only" as const,
           digest: review.digest,
           riskLevel: review.riskLevel,
-          message:
-            err instanceof Error
-              ? err.message
-              : "Failed to create Google Drive draft document.",
         };
       }
     },

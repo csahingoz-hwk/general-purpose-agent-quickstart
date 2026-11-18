@@ -280,7 +280,7 @@ const PurePreviewMessage = ({
       if (isDenied) {
         return (
           <div className={widthClass} key={toolCallId}>
-            <Tool className="w-full" defaultOpen={true}>
+            <Tool className="w-full" defaultOpen={false}>
               <ToolHeader state="output-denied" type="tool-getWeather" />
               <ToolContent>
                 <div className="px-4 py-3 text-muted-foreground text-sm">
@@ -295,7 +295,7 @@ const PurePreviewMessage = ({
       if (state === "approval-responded") {
         return (
           <div className={widthClass} key={toolCallId}>
-            <Tool className="w-full" defaultOpen={true}>
+            <Tool className="w-full" defaultOpen={false}>
               <ToolHeader state={state} type="tool-getWeather" />
               <ToolContent>
                 <ToolInput input={part.input} />
@@ -307,7 +307,7 @@ const PurePreviewMessage = ({
 
       return (
         <div className={widthClass} key={toolCallId}>
-          <Tool className="w-full" defaultOpen={true}>
+          <Tool className="w-full" defaultOpen={state === "approval-requested"}>
             <ToolHeader state={state} type="tool-getWeather" />
             <ToolContent>
               {(state === "input-available" ||
@@ -403,7 +403,7 @@ const PurePreviewMessage = ({
       return (
         <Tool
           className="w-[min(100%,450px)]"
-          defaultOpen={true}
+          defaultOpen={false}
           key={toolCallId}
         >
           <ToolHeader state={state} type="tool-requestSuggestions" />
@@ -553,22 +553,32 @@ const PurePreviewMessage = ({
       }
 
       if (
-        state === "output-available" &&
-        isSetupRequiredOutput(output) &&
+        (state === "output-available" || state === "output-error") &&
+        (isSetupRequiredOutput(output) || state === "output-error") &&
         (toolName.startsWith("gmail") ||
           toolName.startsWith("calendar") ||
           toolName.startsWith("drive") ||
           toolName.startsWith("github"))
       ) {
         const provider =
-          output.connectProvider ??
+          (isSetupRequiredOutput(output)
+            ? output.connectProvider
+            : undefined) ??
           (toolName.startsWith("github") ? "github" : "google");
+        const mode =
+          isSetupRequiredOutput(output) && output.status === "setup_required"
+            ? "connect"
+            : "reconnect";
         return (
           <ConnectorConnectCard
             chatId={chatId}
             key={toolCallId}
             locale={locale}
+            mode={mode}
             provider={provider}
+            reasonMessage={
+              isSetupRequiredOutput(output) ? output.message : undefined
+            }
           />
         );
       }
@@ -651,26 +661,52 @@ const PurePreviewMessage = ({
         );
       }
 
+      const isToolError =
+        state === "output-error" ||
+        Boolean(errorText) ||
+        (Boolean(output) &&
+          typeof output === "object" &&
+          ((output as { status?: string }).status === "error" ||
+            (output as { status?: string }).status === "connector_error" ||
+            "error" in (output as Record<string, unknown>)));
+
       return (
         <Tool
           className="w-[min(100%,450px)]"
           defaultOpen={false}
           key={toolCallId}
         >
-          <ToolHeader state={state as any} type={type as any} />
+          <ToolHeader
+            state={isToolError ? "output-error" : (state as any)}
+            type={type as any}
+          />
           <ToolContent>
-            {input && <ToolInput input={input} />}
-            {(state === "output-available" || state === "output-error") && (
-              <ToolOutput
-                errorText={errorText}
-                output={
-                  output ? (
-                    <pre className="overflow-x-auto p-3 font-mono text-xs">
-                      {JSON.stringify(output, null, 2)}
-                    </pre>
-                  ) : undefined
-                }
-              />
+            {isToolError ? (
+              <>
+                <ToolOutput errorText={errorText} output={output} />
+                {input && (
+                  <details
+                    className="rounded-lg border border-[color:var(--hairline)] bg-muted/20 px-3 py-2 text-xs"
+                    data-testid="tool-input-details"
+                  >
+                    <summary className="cursor-pointer select-none font-medium text-muted-foreground hover:text-foreground">
+                      {locale === "tr"
+                        ? "Parametre detayları"
+                        : "Parameter details"}
+                    </summary>
+                    <div className="mt-2">
+                      <ToolInput input={input} />
+                    </div>
+                  </details>
+                )}
+              </>
+            ) : (
+              <>
+                {input && <ToolInput input={input} />}
+                {state === "output-available" && (
+                  <ToolOutput errorText={errorText} output={output} />
+                )}
+              </>
             )}
           </ToolContent>
         </Tool>

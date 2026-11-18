@@ -126,9 +126,17 @@ export async function readGoogleCalendarEvents(opts: {
   }).catch(() => null);
 
   if (!res || !res.ok) {
+    if (res?.status === 401 || res?.status === 403) {
+      return {
+        status: "setup_required",
+        message:
+          "Your Google Calendar session expired or needs permission. Tap Reconnect Google to refresh.",
+      };
+    }
     return {
       status: "error",
-      message: `Google Calendar read failed${res ? ` (HTTP ${res.status})` : ""}.`,
+      message:
+        "Could not reach Google Calendar right now. Tap Reconnect Google or try again shortly.",
     };
   }
 

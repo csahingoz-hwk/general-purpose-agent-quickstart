@@ -9,7 +9,7 @@ import {
   type ProfileFact,
 } from "@/lib/memory/store";
 
-export const maxDuration = 90;
+export const maxDuration = 300;
 
 const mergeRequestSchema = z.object({
   sources: z
@@ -17,13 +17,13 @@ const mergeRequestSchema = z.object({
       z.object({
         id: z.string().max(80).optional(),
         source: z.enum(IMPORT_MEMORY_SOURCES).default("pasted"),
-        rawText: z.string().max(120_000),
+        rawText: z.string().max(250_000),
         fileName: z.string().max(200).optional(),
         exportedAt: z.string().max(64).optional(),
       })
     )
     .min(1)
-    .max(10),
+    .max(12),
 });
 
 export async function POST(request: Request) {
@@ -62,6 +62,48 @@ export async function POST(request: Request) {
     }
   }
 
+  const wantsStream = (request.headers.get("accept") ?? "").includes(
+    "application/x-ndjson"
+  );
+
+  if (wantsStream) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const writeObj = (obj: Record<string, unknown>) => {
+          controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
+        };
+        try {
+          const result = await mergeMemoryExports({
+            sources: nonEmptySources,
+            existingFacts,
+            onProgress: (progress) => {
+              writeObj({ type: "progress", ...progress });
+            },
+          });
+          writeObj({ type: "result", data: result });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : "unknown_error";
+          console.error("memory multi-source merge error", { msg });
+          writeObj({
+            type: "error",
+            error:
+              "Could not complete the memory merge right now. Nothing was charged or saved — please tap Merge & preview again.",
+          });
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+      },
+    });
+  }
+
   try {
     const result = await mergeMemoryExports({
       sources: nonEmptySources,
@@ -74,7 +116,7 @@ export async function POST(request: Request) {
     return Response.json(
       {
         error:
-          "Vertex AI could not complete the memory merge right now. Nothing was charged or saved — please tap Merge & preview again.",
+          "Could not complete the memory merge right now. Nothing was charged or saved — please tap Merge & preview again.",
       },
       { status: 503 }
     );

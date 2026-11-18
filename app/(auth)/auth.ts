@@ -4,7 +4,10 @@ import GitHub from "next-auth/providers/github";
 import Google from "next-auth/providers/google";
 import { isOwnerIdentity } from "@/lib/access-policy";
 import { GITHUB_VAULT_SECRET_NAME } from "@/lib/connectors/calendar-and-github";
-import { GOOGLE_VAULT_SECRET_NAMES } from "@/lib/connectors/google-vault-auth";
+import {
+  GOOGLE_VAULT_SECRET_NAMES,
+  invalidateGoogleAccessTokenCache,
+} from "@/lib/connectors/google-vault-auth";
 import { getOrCreateGoogleOwner } from "@/lib/db/queries";
 import {
   GOOGLE_IDENTITY_SCOPE,
@@ -120,6 +123,7 @@ export const {
         grantedScope.includes("calendar.");
       if (hasWorkspaceScope && isVaultConfigured()) {
         try {
+          invalidateGoogleAccessTokenCache(owner.id);
           const vault = createPostgresVaultStore();
           if (account.refresh_token?.trim()) {
             await vault.upsertSecret({

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   createPostgresVaultStore,
   type SecretVaultStore,
@@ -36,6 +37,15 @@ export type ResolvedGoogleAuth =
       message: string;
     };
 
+const refreshedTokenCache = new Map<
+  string,
+  { digest: string; accessToken: string; expiresAtMs: number }
+>();
+
+export function invalidateGoogleAccessTokenCache(userId: string): void {
+  refreshedTokenCache.delete(userId);
+}
+
 export function isGoogleConnectorsEnabled(): boolean {
   return process.env.GOOGLE_CONNECTORS_ENABLED !== "false";
 }
@@ -47,12 +57,116 @@ export async function resolveGoogleAccessTokenFromVault(opts: {
 }): Promise<ResolvedGoogleAuth> {
   const store = opts.vaultStore ?? createPostgresVaultStore();
   const fetchFn = opts.fetchImpl ?? fetch;
+  const canUseRuntimeCache = !opts.fetchImpl && !opts.vaultStore;
 
   try {
-    const directToken = await store.resolveSecret({
-      userId: opts.userId,
-      name: GOOGLE_VAULT_SECRET_NAMES.accessToken,
-    });
+    const [directToken, refreshToken, vaultClientId, vaultClientSecret] =
+      await Promise.all([
+        store.resolveSecret({
+          userId: opts.userId,
+          name: GOOGLE_VAULT_SECRET_NAMES.accessToken,
+        }),
+        store.resolveSecret({
+          userId: opts.userId,
+          name: GOOGLE_VAULT_SECRET_NAMES.refreshToken,
+        }),
+        store.resolveSecret({
+          userId: opts.userId,
+          name: GOOGLE_VAULT_SECRET_NAMES.clientId,
+        }),
+        store.resolveSecret({
+          userId: opts.userId,
+          name: GOOGLE_VAULT_SECRET_NAMES.clientSecret,
+        }),
+      ]);
+
+    const clientId =
+      vaultClientId?.trim() || process.env.AUTH_GOOGLE_ID?.trim() || "";
+    const clientSecret =
+      vaultClientSecret?.trim() || process.env.AUTH_GOOGLE_SECRET?.trim() || "";
+
+    // Prefer OAuth refresh_token whenever present so 1-hour access tokens never go stale.
+    if (refreshToken?.trim() && clientId && clientSecret) {
+      const trimmedRefresh = refreshToken.trim();
+      const digest = createHash("sha256")
+        .update(`${opts.userId}:${trimmedRefresh}:${clientId}`)
+        .digest("hex");
+
+      if (canUseRuntimeCache) {
+        const cached = refreshedTokenCache.get(opts.userId);
+        if (
+          cached &&
+          cached.digest === digest &&
+          cached.expiresAtMs > Date.now()
+        ) {
+          return {
+            ok: true,
+            accessToken: cached.accessToken,
+            source: "vault_refresh_token",
+          };
+        }
+      }
+
+      const body = new URLSearchParams({
+        grant_type: "refresh_token",
+        refresh_token: trimmedRefresh,
+        client_id: clientId,
+        client_secret: clientSecret,
+      });
+
+      const response = await fetchFn("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: body.toString(),
+        cache: "no-store",
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (!response.ok) {
+        refreshedTokenCache.delete(opts.userId);
+        return {
+          ok: false,
+          code: "oauth_refresh_failed",
+          message:
+            "Your Google connection expired or needs updated permissions. Tap Reconnect Google to continue.",
+        };
+      }
+
+      const tokenJson = (await response.json()) as {
+        access_token?: string;
+        expires_in?: number;
+      };
+      if (!tokenJson.access_token?.trim()) {
+        return {
+          ok: false,
+          code: "oauth_refresh_failed",
+          message:
+            "Your Google connection expired. Tap Reconnect Google to refresh access.",
+        };
+      }
+
+      const minted = tokenJson.access_token.trim();
+      if (canUseRuntimeCache) {
+        const ttlSec = Math.max(
+          60,
+          Math.min(2700, Number(tokenJson.expires_in ?? 3300) - 300)
+        );
+        refreshedTokenCache.set(opts.userId, {
+          digest,
+          accessToken: minted,
+          expiresAtMs: Date.now() + ttlSec * 1000,
+        });
+      }
+
+      return {
+        ok: true,
+        accessToken: minted,
+        source: "vault_refresh_token",
+      };
+    }
+
     if (directToken?.trim()) {
       return {
         ok: true,
@@ -61,73 +175,11 @@ export async function resolveGoogleAccessTokenFromVault(opts: {
       };
     }
 
-    const [refreshToken, vaultClientId, vaultClientSecret] = await Promise.all([
-      store.resolveSecret({
-        userId: opts.userId,
-        name: GOOGLE_VAULT_SECRET_NAMES.refreshToken,
-      }),
-      store.resolveSecret({
-        userId: opts.userId,
-        name: GOOGLE_VAULT_SECRET_NAMES.clientId,
-      }),
-      store.resolveSecret({
-        userId: opts.userId,
-        name: GOOGLE_VAULT_SECRET_NAMES.clientSecret,
-      }),
-    ]);
-
-    const clientId =
-      vaultClientId?.trim() || process.env.AUTH_GOOGLE_ID?.trim() || "";
-    const clientSecret =
-      vaultClientSecret?.trim() || process.env.AUTH_GOOGLE_SECRET?.trim() || "";
-
-    if (!refreshToken || !clientId || !clientSecret) {
-      return {
-        ok: false,
-        code: "connector_secret_missing",
-        message:
-          "Google Workspace isn't connected yet. Open Settings and tap Connect Google to allow Gmail, Calendar, and Drive read/draft access.",
-      };
-    }
-
-    const body = new URLSearchParams({
-      grant_type: "refresh_token",
-      refresh_token: refreshToken.trim(),
-      client_id: clientId,
-      client_secret: clientSecret,
-    });
-
-    const response = await fetchFn("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: body.toString(),
-      cache: "no-store",
-      signal: AbortSignal.timeout(10_000),
-    });
-
-    if (!response.ok) {
-      return {
-        ok: false,
-        code: "oauth_refresh_failed",
-        message: `Google OAuth token refresh failed (HTTP ${response.status}). Re-save a valid scoped token in Secret Vault.`,
-      };
-    }
-
-    const tokenJson = (await response.json()) as { access_token?: string };
-    if (!tokenJson.access_token?.trim()) {
-      return {
-        ok: false,
-        code: "oauth_refresh_failed",
-        message: "Google OAuth token response did not contain an access_token.",
-      };
-    }
-
     return {
-      ok: true,
-      accessToken: tokenJson.access_token.trim(),
-      source: "vault_refresh_token",
+      ok: false,
+      code: "connector_secret_missing",
+      message:
+        "Google isn't connected yet. Tap Connect Google to allow read-only Gmail, Calendar, and Drive access.",
     };
   } catch (error) {
     if (
@@ -144,7 +196,8 @@ export async function resolveGoogleAccessTokenFromVault(opts: {
     return {
       ok: false,
       code: "oauth_refresh_failed",
-      message: "Google connection expired. Tap Connect in Setup to refresh it.",
+      message:
+        "Your Google connection expired. Tap Reconnect Google to refresh it.",
     };
   }
 }

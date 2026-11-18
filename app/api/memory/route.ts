@@ -42,6 +42,8 @@ const profileBodySchema = z.object({
   sharedAcrossBots: z.boolean().default(true),
 });
 
+export const maxDuration = 60;
+
 const profileBatchBodySchema = z.object({
   type: z.literal("profile_batch"),
   source: sourceSchema.default("pasted"),
@@ -59,7 +61,7 @@ const profileBatchBodySchema = z.object({
       })
     )
     .min(1)
-    .max(250),
+    .max(1000),
 });
 
 const journalBodySchema = z.object({

@@ -138,6 +138,78 @@ function headerValue(
   );
 }
 
+export type GoogleConnectorErrorReason =
+  | "token_expired"
+  | "scope_missing"
+  | "service_disabled"
+  | "upstream_error";
+
+export class GoogleConnectorApiError extends Error {
+  readonly statusCode: number;
+  readonly reason: GoogleConnectorErrorReason;
+  readonly friendlyMessage: string;
+
+  constructor(opts: {
+    statusCode: number;
+    reason: GoogleConnectorErrorReason;
+    friendlyMessage: string;
+    internalMessage: string;
+  }) {
+    super(opts.internalMessage);
+    this.name = "GoogleConnectorApiError";
+    this.statusCode = opts.statusCode;
+    this.reason = opts.reason;
+    this.friendlyMessage = opts.friendlyMessage;
+  }
+}
+
+async function buildGoogleApiError(
+  serviceLabel: "Gmail" | "Google Drive",
+  res: Response
+): Promise<GoogleConnectorApiError> {
+  let rawBody = "";
+  try {
+    rawBody = await res.text();
+  } catch {
+    rawBody = "";
+  }
+  const status = res.status;
+  if (status === 401) {
+    return new GoogleConnectorApiError({
+      statusCode: 401,
+      reason: "token_expired",
+      friendlyMessage: `Your Google session expired. Tap Reconnect Google to refresh read-only ${serviceLabel} access.`,
+      internalMessage: `${serviceLabel} API unauthorized (HTTP 401)`,
+    });
+  }
+  if (status === 403) {
+    const isDisabled =
+      /SERVICE_DISABLED|accessNotConfigured|has not been used in project/i.test(
+        rawBody
+      );
+    if (isDisabled) {
+      return new GoogleConnectorApiError({
+        statusCode: 403,
+        reason: "service_disabled",
+        friendlyMessage: `${serviceLabel} API is still activating on Google Cloud — wait a minute or tap Reconnect Google.`,
+        internalMessage: `${serviceLabel} API disabled on GCP project (HTTP 403)`,
+      });
+    }
+    return new GoogleConnectorApiError({
+      statusCode: 403,
+      reason: "scope_missing",
+      friendlyMessage: `${serviceLabel} read permission isn't granted yet. Tap Reconnect Google and allow ${serviceLabel} access.`,
+      internalMessage: `${serviceLabel} API forbidden / missing scope (HTTP 403)`,
+    });
+  }
+  return new GoogleConnectorApiError({
+    statusCode: status,
+    reason: "upstream_error",
+    friendlyMessage: `Could not reach ${serviceLabel} right now. Tap Reconnect Google or try again shortly.`,
+    internalMessage: `${serviceLabel} API failed (HTTP ${status})`,
+  });
+}
+
 export type FencedGmailMessage = {
   id: string;
   threadId: string;
@@ -155,15 +227,16 @@ export async function readGmailMessages(opts: {
   fetchImpl?: typeof fetch;
 }): Promise<FencedGmailMessage[]> {
   const fetchFn = opts.fetchImpl ?? fetch;
-  const maxResults = Math.min(Math.max(1, opts.maxResults ?? 5), 10);
+  const maxResults = Math.min(Math.max(1, opts.maxResults ?? 10), 20);
+  const effectiveQuery = opts.query?.trim()
+    ? opts.query.trim().slice(0, 200)
+    : "in:inbox";
 
   const listUrl = new URL(
     "https://gmail.googleapis.com/gmail/v1/users/me/messages"
   );
   listUrl.searchParams.set("maxResults", String(maxResults));
-  if (opts.query?.trim()) {
-    listUrl.searchParams.set("q", opts.query.trim().slice(0, 200));
-  }
+  listUrl.searchParams.set("q", effectiveQuery);
   assertSafeGoogleRequest("GET", listUrl.toString());
 
   const listRes = await fetchFn(listUrl.toString(), {
@@ -175,7 +248,7 @@ export async function readGmailMessages(opts: {
     signal: AbortSignal.timeout(12_000),
   });
   if (!listRes.ok) {
-    throw new Error(`Gmail message list failed (HTTP ${listRes.status})`);
+    throw await buildGoogleApiError("Gmail", listRes);
   }
 
   const listJson = (await listRes.json()) as {
@@ -363,9 +436,7 @@ export async function readDriveFiles(opts: {
   });
 
   if (!listRes.ok) {
-    throw new Error(
-      `Google Drive file listing failed (HTTP ${listRes.status})`
-    );
+    throw await buildGoogleApiError("Google Drive", listRes);
   }
 
   const listJson = (await listRes.json()) as {

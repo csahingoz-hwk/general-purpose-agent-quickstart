@@ -5,64 +5,92 @@ import {
   FolderIcon,
   GitPullRequestIcon,
   MailIcon,
+  RefreshCwIcon,
 } from "lucide-react";
 import {
   connectGithubAccount,
   connectGoogleWorkspace,
 } from "@/app/(auth)/actions";
-import { cn } from "@/lib/utils";
 
-export function isSetupRequiredOutput(output: unknown): output is {
-  status: "setup_required";
-  message?: string;
-  connectProvider?: "google" | "github";
-} {
-  return (
-    Boolean(output) &&
-    typeof output === "object" &&
-    (output as { status?: string }).status === "setup_required"
-  );
-}
+export {
+  type ConnectorCardActionOutput,
+  isSetupRequiredOutput,
+} from "@/lib/connectors/card-state";
+
+import { cn } from "@/lib/utils";
 
 export function ConnectorConnectCard({
   provider,
   chatId,
   locale = "en",
+  mode = "connect",
+  reasonMessage,
 }: {
   provider: "google" | "github";
   chatId: string;
   locale?: "en" | "tr";
+  mode?: "connect" | "reconnect";
+  reasonMessage?: string;
 }) {
   const isGoogle = provider === "google";
+  const isReconnect = mode === "reconnect";
   const returnTo = chatId ? `/chat/${chatId}` : "/setup";
 
   const title = isGoogle
-    ? locale === "tr"
-      ? "Google hesabınız henüz bağlı değil"
-      : "Google isn't connected yet"
-    : locale === "tr"
-      ? "GitHub hesabınız henüz bağlı değil"
-      : "GitHub isn't connected yet";
+    ? isReconnect
+      ? locale === "tr"
+        ? "Gmail'i okumak için Google'ı yeniden bağlayın"
+        : "Reconnect Google to read your Gmail"
+      : locale === "tr"
+        ? "Google hesabınız henüz bağlı değil"
+        : "Google isn't connected yet"
+    : isReconnect
+      ? locale === "tr"
+        ? "GitHub bağlantısını yenileyin"
+        : "Reconnect your GitHub account"
+      : locale === "tr"
+        ? "GitHub hesabınız henüz bağlı değil"
+        : "GitHub isn't connected yet";
 
-  const subtitle = isGoogle
-    ? locale === "tr"
-      ? "Gmail, Takvim ve Drive'ı tek dokunuşla bağlayın."
-      : "Tap once to connect Gmail, Calendar & Drive."
+  const defaultSubtitle = isGoogle
+    ? isReconnect
+      ? locale === "tr"
+        ? "Oturum süresi doldu veya salt-okunur Gmail izni gerekiyor. Tek dokunuşla yenileyin (yalnızca okur, asla göndermez)."
+        : "Your session expired or needs Gmail read permission. Tap once to refresh — strictly read-only, never sends."
+      : locale === "tr"
+        ? "Gmail, Takvim ve Drive'ı tek dokunuşla bağlayın (yalnızca okur, asla göndermez)."
+        : "Tap once to connect Gmail, Calendar & Drive (read-only + drafts, never sends)."
     : locale === "tr"
       ? "Pull request'leri okumak için tek dokunuşla bağlayın."
       : "Tap once to connect your GitHub repositories.";
 
+  const subtitle =
+    isReconnect &&
+    reasonMessage &&
+    !/^\{|HTTP \d{3}|failed \(HTTP/i.test(reasonMessage)
+      ? reasonMessage
+      : defaultSubtitle;
+
   const cta = isGoogle
-    ? locale === "tr"
-      ? "Google'ı Bağla"
-      : "Connect Google"
-    : locale === "tr"
-      ? "GitHub'ı Bağla"
-      : "Connect GitHub";
+    ? isReconnect
+      ? locale === "tr"
+        ? "Google'ı Yeniden Bağla"
+        : "Reconnect Google"
+      : locale === "tr"
+        ? "Google'ı Bağla"
+        : "Connect Google"
+    : isReconnect
+      ? locale === "tr"
+        ? "GitHub'ı Yeniden Bağla"
+        : "Reconnect GitHub"
+      : locale === "tr"
+        ? "GitHub'ı Bağla"
+        : "Connect GitHub";
 
   return (
     <div
-      className="flex w-[min(100%,440px)] flex-wrap items-center justify-between gap-3 rounded-2xl border border-[color:var(--hairline)] bg-card px-4 py-3.5 text-sm shadow-2xs"
+      className="flex w-[min(100%,440px)] flex-col items-start justify-between gap-3 rounded-2xl border border-[color:var(--hairline)] bg-card px-4 py-3.5 text-sm shadow-2xs sm:flex-row sm:items-center"
+      data-mode={mode}
       data-provider={provider}
       data-testid="connector-connect-card"
     >
@@ -71,23 +99,26 @@ export function ConnectorConnectCard({
           aria-hidden="true"
           className="mt-1.5 size-2.5 shrink-0 rounded-full bg-amber-500"
         />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="font-medium text-foreground">{title}</p>
-          <p className="mt-0.5 text-muted-foreground text-xs">{subtitle}</p>
+          <p className="mt-0.5 break-words text-muted-foreground text-xs leading-relaxed">
+            {subtitle}
+          </p>
         </div>
       </div>
 
       <form
         action={isGoogle ? connectGoogleWorkspace : connectGithubAccount}
-        className="shrink-0"
+        className="shrink-0 pl-5 sm:pl-0"
       >
         <input name="returnTo" type="hidden" value={returnTo} />
         <button
-          className="inline-flex min-h-11 items-center rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs transition-colors hover:bg-primary/90"
+          className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs transition-colors hover:bg-primary/90"
           data-testid={`connect-${provider}-button`}
           type="submit"
         >
-          {cta}
+          {isReconnect && <RefreshCwIcon className="size-3.5" />}
+          <span>{cta}</span>
         </button>
       </form>
     </div>
@@ -124,8 +155,8 @@ export function ConnectorSummaryCard({
           <MailIcon className="size-3.5" />
           <span>
             {locale === "tr"
-              ? `Gmail · ${items.length} ileti`
-              : `Gmail · ${items.length} message${items.length === 1 ? "" : "s"}`}
+              ? `Gmail Gelen Kutusu · ${items.length} ileti`
+              : `Gmail Inbox · ${items.length} message${items.length === 1 ? "" : "s"}`}
           </span>
         </div>
         {items.length === 0 ? (
@@ -134,7 +165,7 @@ export function ConnectorSummaryCard({
           </p>
         ) : (
           <ul className="divide-y divide-[color:var(--hairline)]">
-            {items.slice(0, 5).map((m, idx) => (
+            {items.slice(0, 10).map((m, idx) => (
               <li
                 className="py-2 first:pt-0 last:pb-0"
                 key={String(m.id ?? idx)}
@@ -174,7 +205,7 @@ export function ConnectorSummaryCard({
           </p>
         ) : (
           <ul className="divide-y divide-[color:var(--hairline)]">
-            {events.slice(0, 5).map((e, idx) => (
+            {events.slice(0, 8).map((e, idx) => (
               <li
                 className="py-2 first:pt-0 last:pb-0"
                 key={String(e.id ?? idx)}
@@ -214,7 +245,7 @@ export function ConnectorSummaryCard({
           </p>
         ) : (
           <ul className="divide-y divide-[color:var(--hairline)]">
-            {files.slice(0, 5).map((f, idx) => (
+            {files.slice(0, 8).map((f, idx) => (
               <li
                 className="py-2 first:pt-0 last:pb-0"
                 key={String(f.id ?? idx)}
@@ -256,7 +287,7 @@ export function ConnectorSummaryCard({
           </p>
         ) : (
           <ul className="divide-y divide-[color:var(--hairline)]">
-            {prs.slice(0, 5).map((pr, idx) => (
+            {prs.slice(0, 8).map((pr, idx) => (
               <li
                 className="py-2 first:pt-0 last:pb-0"
                 key={String(pr.number ?? idx)}

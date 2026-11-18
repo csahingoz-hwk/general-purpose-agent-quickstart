@@ -1,3 +1,4 @@
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider";
 import { z } from "zod";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import {
@@ -70,14 +71,38 @@ export type MultiSourceMergeCounts = {
   alreadySavedCount: number;
 };
 
+export type FailedMergeChunk = {
+  chunkNumber: number;
+  totalChunks: number;
+  lineCount: number;
+  preview: string;
+  retryText: string;
+  error: string;
+};
+
+export type MergeProgressEvent = {
+  completedChunks: number;
+  totalChunks: number;
+  activeChunk: number;
+};
+
+export type MergeModelUsed =
+  | "gemini-4-argon"
+  | "gemini-4-hydrogen"
+  | "claude-haiku-5.5"
+  | "local-deterministic";
+
 export type MultiSourceMergeResult = {
   items: MergedMemoryPreviewItem[];
   counts: MultiSourceMergeCounts;
   skippedSensitive: SkippedSensitiveLine[];
-  modelUsed: "gemini-4-argon" | "gemini-4-hydrogen" | "local-deterministic";
+  modelUsed: MergeModelUsed;
+  chunksTotal?: number;
+  chunksSucceeded?: number;
+  failedChunks?: FailedMergeChunk[];
 };
 
-type ExtractedCandidateStatement = {
+export type ExtractedCandidateStatement = {
   idx: number;
   source: ImportMemorySource;
   sourceOrder: number;
@@ -86,10 +111,14 @@ type ExtractedCandidateStatement = {
   text: string;
 };
 
+export const DEFAULT_MERGE_CHUNK_CHARS = 7200;
+export const DEFAULT_MERGE_CHUNK_MAX_ITEMS = 60;
+const MERGE_CONCURRENCY = 3;
+
 const BULLET_PREFIX_RE =
   /^\s*(?:[-*•◦▪‣⁃–—➤→]+|\[\s*[xX ]?\s*\]|\(?\d{1,3}[.)]|\(?[a-zA-Z][.)])\s+/u;
 const HEADING_RE = /^\s*#{1,6}\s+(.+?)\s*$/;
-const BOLD_HEADING_RE = /^\s*\*\*([^*]{2,48}?)\*\*\s*:?\s*$/;
+const BOLD_HEADING_RE = /^\s*\*\*([^*]{2,64}?)\*\*\s*:?\s*$/;
 const DIVIDER_RE = /^\s*(?:[-*_]\s*){3,}$/;
 const GROK_EXPORT_META_RE =
   /\s*_\(\s*source:\s*([^,)]+?)(?:,\s*learned:\s*([0-9]{4}-[0-9]{2}-[0-9]{2}))?(?:,\s*(pinned|searchable))?\s*\)_\s*$/iu;
@@ -102,7 +131,6 @@ function normalizeIsoDateOrNull(raw?: string | number | null): string | null {
     return null;
   }
   if (typeof raw === "number") {
-    // Seconds vs milliseconds epoch
     const ms = raw < 10_000_000_000 ? raw * 1000 : raw;
     const d = new Date(ms);
     return Number.isNaN(d.getTime()) ? null : d.toISOString();
@@ -144,19 +172,45 @@ function parseHeadingHint(heading: string): CanonicalMemoryCategory | null {
   return null;
 }
 
+/**
+ * Splits multi-sentence paragraphs (such as Claude narrative memory exports)
+ * into clean individual statements without abandoning the split when an
+ * abbreviation or short fragment appears.
+ */
 function splitParagraphIntoSentences(line: string): string[] {
   const trimmed = line.trim();
-  if (trimmed.length <= 150) {
+  if (trimmed.length <= 140) {
     return [trimmed];
   }
-  const parts = trimmed
-    .split(/(?<=[.!?])\s+(?=[\p{Lu}])/u)
+  const rawParts = trimmed
+    .split(/(?<=[.!?])\s+(?=[\p{Lu}\d])/u)
     .map((s) => s.trim())
-    .filter((s) => s.length >= 4);
-  if (parts.length <= 1 || parts.some((p) => p.length < 10)) {
-    return [trimmed];
+    .filter(Boolean);
+
+  const stitched: string[] = [];
+  for (const part of rawParts) {
+    if (stitched.length > 0 && part.length < 12) {
+      stitched[stitched.length - 1] = `${stitched.at(-1)} ${part}`;
+    } else if (stitched.length > 0 && (stitched.at(-1)?.length ?? 0) < 12) {
+      stitched[stitched.length - 1] = `${stitched.at(-1)} ${part}`;
+    } else {
+      stitched.push(part);
+    }
   }
-  return parts;
+
+  const expanded: string[] = [];
+  for (const seg of stitched.length > 0 ? stitched : [trimmed]) {
+    if (seg.length > 420 && seg.includes("; ")) {
+      for (const sub of seg.split(/;\s+/)) {
+        if (sub.trim().length >= 4) {
+          expanded.push(sub.trim());
+        }
+      }
+    } else {
+      expanded.push(seg);
+    }
+  }
+  return expanded.length > 0 ? expanded : [trimmed];
 }
 
 type RawExtractedLine = {
@@ -171,13 +225,21 @@ function extractFromJsonNode(
   acc: RawExtractedLine[],
   headingHint: CanonicalMemoryCategory | null = null
 ): void {
-  if (acc.length >= 400 || node === null || node === undefined) {
+  if (acc.length >= 1200 || node === null || node === undefined) {
     return;
   }
   if (typeof node === "string") {
     const trimmed = node.trim();
     if (trimmed.length >= 3) {
-      acc.push({ text: trimmed, observedAt: fallbackDate, headingHint });
+      for (const seg of splitParagraphIntoSentences(trimmed)) {
+        if (seg.trim().length >= 3) {
+          acc.push({
+            text: seg.trim(),
+            observedAt: fallbackDate,
+            headingHint,
+          });
+        }
+      }
     }
     return;
   }
@@ -215,7 +277,6 @@ function extractFromJsonNode(
       record.conversations_memory;
 
     if (typeof textField === "string" && textField.trim()) {
-      // A JSON field like Claude's `conversations_memory` may itself be multi-line Markdown
       const nestedLines = extractRawLinesFromText(textField, itemDate);
       for (const nl of nestedLines) {
         acc.push({
@@ -312,7 +373,6 @@ function extractRawLinesFromText(
     return [];
   }
 
-  // 1. JSON array / object export (ChatGPT / Claude / Gemini Takeout / custom)
   if (trimmedWhole.startsWith("{") || trimmedWhole.startsWith("[")) {
     try {
       const parsed = JSON.parse(trimmedWhole) as unknown;
@@ -326,13 +386,11 @@ function extractRawLinesFromText(
     }
   }
 
-  // 2. CSV export with header row
   const csvResult = parseSimpleCsvLines(trimmedWhole, fallbackDate);
   if (csvResult) {
     return csvResult;
   }
 
-  // 3. Markdown / Grok Bot / ChatGPT / Claude / Gemini bulleted or paragraph text
   const out: RawExtractedLine[] = [];
   let activeHeading: CanonicalMemoryCategory | null = null;
   let exportHeaderDate = fallbackDate;
@@ -342,7 +400,6 @@ function extractRawLinesFromText(
     if (!trimmed || DIVIDER_RE.test(trimmed)) {
       continue;
     }
-    // Skip boilerplate export header lines while capturing top-level `Exported: ...` date
     const exportedHeaderMatch = trimmed.match(
       /^(?:exported|date|updated|dışa aktarıldı)\s*:\s*(.+)$/iu
     );
@@ -375,7 +432,6 @@ function extractRawLinesFromText(
     let cleaned = trimmed.replace(BULLET_PREFIX_RE, "").trim();
     let lineDate = exportHeaderDate;
 
-    // Strip Grok Bot export suffix `_(source: ..., learned: YYYY-MM-DD, pinned)_`
     const grokMeta = cleaned.match(GROK_EXPORT_META_RE);
     if (grokMeta) {
       if (grokMeta[2]) {
@@ -384,7 +440,6 @@ function extractRawLinesFromText(
       cleaned = cleaned.replace(GROK_EXPORT_META_RE, "").trim();
     }
 
-    // Strip leading date prefix `[2026-10-14] ...` or `2026-10-14: ...`
     const datePrefix = cleaned.match(LEADING_DATE_PREFIX_RE);
     if (datePrefix) {
       const capturedDate =
@@ -425,13 +480,11 @@ function recencyRankForCandidate(c: {
       return ts + c.sourceOrder;
     }
   }
-  // Extract latest explicit calendar year inside text (e.g. 2026 > 2024)
   const years = [...c.text.matchAll(INLINE_YEAR_RE)].map((m) => Number(m[1]));
   if (years.length > 0) {
     const maxYear = Math.max(...years);
     return Date.UTC(maxYear, 6, 1) + c.sourceOrder;
   }
-  // Fall back to source slot order (later slot = newer)
   return 1_000_000 + c.sourceOrder * 1000;
 }
 
@@ -455,10 +508,6 @@ function extractKfRoleSignature(sentence: string): string {
   return "role";
 }
 
-/**
- * Merges short Korn Ferry job-title/region context lines 100% locally so ZERO
- * Korn Ferry text ever leaves for Vertex during multi-source merge.
- */
 function mergeShortKornFerryCandidatesLocally(
   kfCandidates: readonly ExtractedCandidateStatement[],
   existingFacts: readonly ProfileFact[]
@@ -471,12 +520,10 @@ function mergeShortKornFerryCandidatesLocally(
     isAllowedShortKornFerryContextFact(f.value)
   );
 
-  // Order newest first
   const ordered = [...kfCandidates].sort(
     (a, b) => recencyRankForCandidate(b) - recencyRankForCandidate(a)
   );
 
-  // Check if distinct role levels conflict across sources (e.g. Manager vs Director/Controller)
   const distinctRoles = new Map<string, ExtractedCandidateStatement>();
   for (const cand of ordered) {
     const sig = extractKfRoleSignature(cand.text);
@@ -524,7 +571,6 @@ function mergeShortKornFerryCandidatesLocally(
     ];
   }
 
-  // Pick richest allowed short context line (prefer English if mixed TR+EN and longest <= 180 chars)
   const englishCandidates = ordered.filter(
     (c) => !/[çğıöşüÇĞİÖŞÜ]|çalış|görev|bölge/u.test(c.text)
   );
@@ -588,16 +634,17 @@ const vertexMergedItemSchema = z.object({
   ]),
   candidateIndices: z.array(z.number().int().min(0)).min(1),
   existingFactId: z.string().nullable().optional(),
-  conflictTopic: z.string().max(120).nullable().optional(),
+  conflictTopic: z.string().max(200).nullable().optional(),
   conflictOptions: z
     .array(
       z.object({
         fact: z.string().min(2).max(1500),
         candidateIndex: z.number().int().min(0).nullable().optional(),
         existingFactId: z.string().nullable().optional(),
-        isNewest: z.boolean().optional(),
+        isNewest: z.boolean().nullable().optional(),
       })
     )
+    .nullable()
     .optional(),
 });
 
@@ -707,7 +754,7 @@ function buildVertexMergePrompt(
       headingHint: c.headingHint,
       text: c.text,
     })),
-    existingMemories: existingFacts.slice(0, 150).map((f) => ({
+    existingMemories: existingFacts.slice(0, 80).map((f) => ({
       id: f.id,
       category: f.category,
       learnedAt: f.learnedAt,
@@ -721,10 +768,6 @@ function buildVertexMergePrompt(
   };
 }
 
-/**
- * Local deterministic fallback used ONLY in offline unit tests when Vertex WIF
- * is not configured and no custom runner is injected.
- */
 export function deterministicFallbackMerge(
   candidates: readonly ExtractedCandidateStatement[],
   existingFacts: readonly ProfileFact[]
@@ -778,74 +821,313 @@ export type VertexMergeRunner = (input: {
   preferredModel: "gemini-4-argon" | "gemini-4-hydrogen";
 }) => Promise<{
   payload: VertexMergeStructuredPayload;
-  modelUsed: "gemini-4-argon" | "gemini-4-hydrogen" | "local-deterministic";
+  modelUsed: MergeModelUsed;
 }>;
 
-async function defaultVertexMergeRunner({
-  candidates,
-  existingFacts,
-  preferredModel,
-}: {
-  candidates: readonly ExtractedCandidateStatement[];
-  existingFacts: readonly ProfileFact[];
-  preferredModel: "gemini-4-argon" | "gemini-4-hydrogen";
-}): Promise<{
-  payload: VertexMergeStructuredPayload;
-  modelUsed: "gemini-4-argon" | "gemini-4-hydrogen" | "local-deterministic";
-}> {
-  const { vertexEnabled } = await import("@/lib/ai/routing/catalog");
-  if (!vertexEnabled()) {
-    return {
-      payload: deterministicFallbackMerge(candidates, existingFacts),
-      modelUsed: "local-deterministic",
-    };
-  }
-
-  const { createVertexGeminiAdapter } = await import("@/lib/ai/vertex-model");
-  const { system, user } = buildVertexMergePrompt(candidates, existingFacts);
-
-  const modelsToTry: Array<"gemini-4-argon" | "gemini-4-hydrogen"> =
-    preferredModel === "gemini-4-argon"
-      ? ["gemini-4-argon", "gemini-4-hydrogen"]
-      : ["gemini-4-hydrogen", "gemini-4-argon"];
-
-  let lastError: unknown;
-  for (const modelId of modelsToTry) {
-    try {
-      const adapter = createVertexGeminiAdapter(modelId);
-      const res = await adapter.doGenerate({
-        prompt: [
-          { role: "system", content: system },
-          { role: "user", content: [{ type: "text", text: user }] },
-        ],
-        maxOutputTokens: 8192,
-        temperature: 0.1,
-        responseFormat: {
-          type: "json",
-          schema: VERTEX_MERGE_RESPONSE_JSON_SCHEMA,
-        },
-        providerOptions: {
-          openai: { reasoningEffort: "medium" },
-        },
-      });
-      const rawJsonText = res.content
-        .filter((part) => part.type === "text")
-        .map((part) => part.text)
-        .join("")
-        .trim();
-      const cleanedJson = rawJsonText
-        .replace(/^```(?:json)?\s*/i, "")
-        .replace(/\s*```$/i, "")
-        .trim();
-      const parsed = vertexMergePayloadSchema.parse(JSON.parse(cleanedJson));
-      return { payload: parsed, modelUsed: modelId };
-    } catch (err) {
-      lastError = err;
+function parseStructuredMergeOutput(
+  rawText: string
+): VertexMergeStructuredPayload {
+  const cleaned = rawText
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  let rawParsed: unknown;
+  try {
+    rawParsed = JSON.parse(cleaned);
+  } catch {
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      rawParsed = JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+    } else {
+      throw new Error(
+        "Invalid structured JSON returned from memory merge model"
+      );
     }
   }
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("Vertex memory merge failed");
+
+  if (
+    rawParsed &&
+    typeof rawParsed === "object" &&
+    Array.isArray((rawParsed as { items?: unknown }).items)
+  ) {
+    const validItems: z.infer<typeof vertexMergedItemSchema>[] = [];
+    for (const entry of (rawParsed as { items: unknown[] }).items) {
+      if (entry && typeof entry === "object") {
+        const mut = { ...(entry as Record<string, unknown>) };
+        if (typeof mut.fact === "string" && mut.fact.length > 1500) {
+          mut.fact = mut.fact.slice(0, 1500);
+        }
+        if (
+          typeof mut.conflictTopic === "string" &&
+          mut.conflictTopic.length > 200
+        ) {
+          mut.conflictTopic = mut.conflictTopic.slice(0, 200);
+        }
+        const check = vertexMergedItemSchema.safeParse(mut);
+        if (check.success) {
+          validItems.push(check.data);
+        }
+      }
+    }
+    return { items: validItems };
+  }
+
+  return vertexMergePayloadSchema.parse(rawParsed);
+}
+
+export type MergeTextGenerator = {
+  doGenerate: (params: LanguageModelV4CallOptions) => PromiseLike<{
+    content: ReadonlyArray<
+      { type: string; text?: string } | Record<string, unknown>
+    >;
+  }>;
+};
+
+/**
+ * Per-chunk resilient model chain:
+ * 1) `gemini-4-hydrogen` (`low` effort, `maxOutputTokens: 16384`, `timeoutMs: 45s`)
+ * 2) Retry once on `gemini-4-hydrogen`
+ * 3) Escalate to `gemini-4-argon` (`medium` effort, `maxOutputTokens: 16384`, `timeoutMs: 55s`)
+ * 4) Fallback to `claude-haiku-5.5` via GitHub Copilot SDK on Cloud VM bridge
+ */
+export function createResilientChunkMergeRunner(deps?: {
+  hasVertex?: boolean;
+  hasCopilot?: boolean;
+  createVertexModel?: (
+    modelId: "gemini-4-hydrogen" | "gemini-4-argon",
+    opts: { timeoutMs: number }
+  ) => MergeTextGenerator;
+  createCopilotModel?: (opts: { timeoutMs: number }) => MergeTextGenerator;
+}): VertexMergeRunner {
+  return async ({ candidates, existingFacts }) => {
+    const catalog =
+      deps?.hasVertex === undefined || deps?.hasCopilot === undefined
+        ? await import("@/lib/ai/routing/catalog")
+        : null;
+    const hasVertex = deps?.hasVertex ?? catalog?.vertexEnabled() ?? false;
+    const hasCopilot =
+      deps?.hasCopilot ?? catalog?.copilotFallbackEnabled() ?? false;
+
+    if (!hasVertex && !hasCopilot) {
+      return {
+        payload: deterministicFallbackMerge(candidates, existingFacts),
+        modelUsed: "local-deterministic",
+      };
+    }
+
+    const { system, user } = buildVertexMergePrompt(candidates, existingFacts);
+    const prompt = [
+      { role: "system" as const, content: system },
+      {
+        role: "user" as const,
+        content: [{ type: "text" as const, text: user }],
+      },
+    ];
+
+    let lastError: unknown;
+
+    if (hasVertex) {
+      const buildVertex =
+        deps?.createVertexModel ??
+        (await import("@/lib/ai/vertex-model")).createVertexGeminiAdapter;
+      const vertexPlan: ReadonlyArray<{
+        modelId: "gemini-4-hydrogen" | "gemini-4-argon";
+        effort: "low" | "medium";
+        timeoutMs: number;
+      }> = [
+        { modelId: "gemini-4-hydrogen", effort: "low", timeoutMs: 45_000 },
+        { modelId: "gemini-4-hydrogen", effort: "low", timeoutMs: 45_000 },
+        { modelId: "gemini-4-argon", effort: "medium", timeoutMs: 55_000 },
+      ];
+
+      for (const step of vertexPlan) {
+        try {
+          const adapter = buildVertex(step.modelId, {
+            timeoutMs: step.timeoutMs,
+          });
+          const res = await adapter.doGenerate({
+            prompt,
+            maxOutputTokens: 16_384,
+            temperature: 0.1,
+            responseFormat: {
+              type: "json",
+              schema: VERTEX_MERGE_RESPONSE_JSON_SCHEMA,
+            },
+            providerOptions: {
+              openai: { reasoningEffort: step.effort },
+            },
+          });
+          const rawJsonText = res.content
+            .map((part) =>
+              part.type === "text" &&
+              "text" in part &&
+              typeof part.text === "string"
+                ? part.text
+                : ""
+            )
+            .join("");
+          const parsed = parseStructuredMergeOutput(rawJsonText);
+          return { payload: parsed, modelUsed: step.modelId };
+        } catch (err) {
+          lastError = err;
+        }
+      }
+    }
+
+    if (hasCopilot) {
+      try {
+        const buildCopilot =
+          deps?.createCopilotModel ??
+          (await import("@/lib/ai/copilot-vm-model"))
+            .createCopilotHaikuVmAdapter;
+        const copilot = buildCopilot({ timeoutMs: 45_000 });
+        const res = await copilot.doGenerate({
+          prompt,
+          maxOutputTokens: 8192,
+          responseFormat: {
+            type: "json",
+            schema: VERTEX_MERGE_RESPONSE_JSON_SCHEMA,
+          },
+        });
+        const rawJsonText = res.content
+          .map((part) =>
+            part.type === "text" &&
+            "text" in part &&
+            typeof part.text === "string"
+              ? part.text
+              : ""
+          )
+          .join("");
+        const parsed = parseStructuredMergeOutput(rawJsonText);
+        return { payload: parsed, modelUsed: "claude-haiku-5.5" };
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("Memory merge failed across Vertex and Copilot fallback");
+  };
+}
+
+const defaultVertexMergeRunner: VertexMergeRunner =
+  createResilientChunkMergeRunner();
+
+type DedupedCandidateGroup = {
+  rep: ExtractedCandidateStatement;
+  memberIndices: number[];
+};
+
+function preDedupeCandidatesLocally(
+  candidates: readonly ExtractedCandidateStatement[]
+): DedupedCandidateGroup[] {
+  const byNorm = new Map<string, ExtractedCandidateStatement[]>();
+  for (const cand of candidates) {
+    const norm = normalizeMemoryComparisonText(cand.text);
+    const key = norm && norm.length >= 6 ? norm : `__idx_${cand.idx}`;
+    const bucket = byNorm.get(key) ?? [];
+    bucket.push(cand);
+    byNorm.set(key, bucket);
+  }
+
+  const out: DedupedCandidateGroup[] = [];
+  for (const members of byNorm.values()) {
+    const ordered = [...members].sort(
+      (a, b) => recencyRankForCandidate(b) - recencyRankForCandidate(a)
+    );
+    const rep = ordered[0] as ExtractedCandidateStatement;
+    out.push({
+      rep,
+      memberIndices: members.map((m) => m.idx),
+    });
+  }
+  return out;
+}
+
+export type CandidateMergeChunk = {
+  chunkIndex: number;
+  groups: DedupedCandidateGroup[];
+  chunkCandidates: ExtractedCandidateStatement[];
+  charCount: number;
+};
+
+/**
+ * Splits pre-deduped candidates into ~6.8k-char chunks (<=36 candidates/chunk).
+ * When multiple chunks are needed, groups candidates by inferred category first
+ * so related statements across/within exports land in the same chunk.
+ */
+export function chunkCandidatesForMerge(
+  groups: readonly DedupedCandidateGroup[],
+  opts?: { maxChunkChars?: number; maxChunkItems?: number }
+): CandidateMergeChunk[] {
+  if (groups.length === 0) {
+    return [];
+  }
+  const maxChars = Math.max(
+    1200,
+    opts?.maxChunkChars ?? DEFAULT_MERGE_CHUNK_CHARS
+  );
+  const maxItems = Math.max(
+    5,
+    opts?.maxChunkItems ?? DEFAULT_MERGE_CHUNK_MAX_ITEMS
+  );
+
+  const totalRawChars = groups.reduce(
+    (sum, g) => sum + JSON.stringify(g.rep).length,
+    0
+  );
+  const needsMultiChunk = totalRawChars > maxChars || groups.length > maxItems;
+
+  const orderedGroups = needsMultiChunk
+    ? [...groups].sort((a, b) => {
+        const catA = inferMemoryCategory(a.rep.text, a.rep.headingHint);
+        const catB = inferMemoryCategory(b.rep.text, b.rep.headingHint);
+        if (catA !== catB) {
+          return catA.localeCompare(catB);
+        }
+        return a.rep.idx - b.rep.idx;
+      })
+    : [...groups];
+
+  const chunks: CandidateMergeChunk[] = [];
+  let current: DedupedCandidateGroup[] = [];
+  let currentChars = 0;
+
+  const flush = () => {
+    if (current.length === 0) {
+      return;
+    }
+    const chunkIndex = chunks.length;
+    chunks.push({
+      chunkIndex,
+      groups: current,
+      chunkCandidates: current.map((g, localIdx) => ({
+        ...g.rep,
+        idx: localIdx,
+      })),
+      charCount: currentChars,
+    });
+    current = [];
+    currentChars = 0;
+  };
+
+  for (const grp of orderedGroups) {
+    const entryLen = JSON.stringify(grp.rep).length + 12;
+    if (
+      current.length > 0 &&
+      (currentChars + entryLen > maxChars || current.length >= maxItems)
+    ) {
+      flush();
+    }
+    current.push(grp);
+    currentChars += entryLen;
+  }
+  flush();
+
+  return chunks;
 }
 
 const STATUS_DISPLAY_ORDER: Record<MergedMemoryPreviewStatus, number> = {
@@ -855,20 +1137,20 @@ const STATUS_DISPLAY_ORDER: Record<MergedMemoryPreviewStatus, number> = {
   already_saved: 3,
 };
 
-/**
- * Multi-source memory import & consolidation pipeline:
- * 1. Parses exports from 1..N tagged sources (JSON, Markdown, CSV, plain text, TR/EN).
- * 2. Strips passwords, card numbers, and street addresses BEFORE any model call.
- * 3. Handles Korn Ferry statements strictly locally (keeping ONLY short job-title/region
- *    context lines and blocking all KF financials/codes/documents; ZERO KF bytes go to Vertex).
- * 4. Consolidates all remaining facts via Gemini 4 Hydrogen/Argon on Vertex AI:
- *    one-sentence normalization, cross-source near-duplicate merging, conflict detection
- *    (keeping newest, flagging alternatives), and category assignment.
- */
+const MODEL_PRIORITY_RANK: Record<MergeModelUsed, number> = {
+  "claude-haiku-5.5": 3,
+  "gemini-4-argon": 2,
+  "gemini-4-hydrogen": 1,
+  "local-deterministic": 0,
+};
+
 export async function mergeMemoryExports(input: {
   sources: readonly RawMemoryExportSource[];
   existingFacts: readonly ProfileFact[];
   runner?: VertexMergeRunner;
+  maxChunkChars?: number;
+  maxChunkItems?: number;
+  onProgress?: (event: MergeProgressEvent) => void;
 }): Promise<MultiSourceMergeResult> {
   const skippedSensitive: SkippedSensitiveLine[] = [];
   const safeCandidates: ExtractedCandidateStatement[] = [];
@@ -930,7 +1212,7 @@ export async function mergeMemoryExports(input: {
         continue;
       }
 
-      if (safeCandidates.length < 250) {
+      if (safeCandidates.length < 1200) {
         safeCandidates.push({
           idx: safeCandidates.length,
           source: block.source,
@@ -943,13 +1225,11 @@ export async function mergeMemoryExports(input: {
     }
   }
 
-  // Merge short Korn Ferry role/region context lines strictly locally
   const localKfMergedItems = mergeShortKornFerryCandidatesLocally(
     shortKfCandidates,
     input.existingFacts
   );
 
-  // Filter existing facts sent to Vertex so zero Korn Ferry text ever enters Vertex merge prompt
   const nonKfExistingFacts = input.existingFacts.filter(
     (f) =>
       !containsRestrictedWorkData(`${f.key} ${f.value}`) &&
@@ -957,182 +1237,296 @@ export async function mergeMemoryExports(input: {
   );
   const existingById = new Map(nonKfExistingFacts.map((f) => [f.id, f]));
 
-  let modelUsed:
-    | "gemini-4-argon"
-    | "gemini-4-hydrogen"
-    | "local-deterministic" = "local-deterministic";
+  let modelUsed: MergeModelUsed = "local-deterministic";
   const vertexItems: MergedMemoryPreviewItem[] = [];
+  const failedChunks: FailedMergeChunk[] = [];
+  let chunksTotal = 0;
+  let chunksSucceeded = 0;
 
   if (safeCandidates.length > 0) {
+    const dedupedGroups = preDedupeCandidatesLocally(safeCandidates);
+    const chunks = chunkCandidatesForMerge(dedupedGroups, {
+      maxChunkChars: input.maxChunkChars,
+      maxChunkItems: input.maxChunkItems,
+    });
+    chunksTotal = chunks.length;
+
     const distinctSourceCount = new Set(safeCandidates.map((c) => c.source))
       .size;
     const preferredModel: "gemini-4-argon" | "gemini-4-hydrogen" =
-      distinctSourceCount >= 3 || safeCandidates.length > 20
+      chunks.length === 1 &&
+      (distinctSourceCount >= 3 || safeCandidates.length > 20)
         ? "gemini-4-argon"
         : "gemini-4-hydrogen";
 
     const runMerge = input.runner ?? defaultVertexMergeRunner;
-    const mergeOut = await runMerge({
-      candidates: safeCandidates,
-      existingFacts: nonKfExistingFacts,
-      preferredModel,
+    const coveredGlobalIndices = new Set<number>();
+    const failedGlobalIndices = new Set<number>();
+
+    type ChunkOutcome =
+      | {
+          ok: true;
+          chunk: CandidateMergeChunk;
+          payload: VertexMergeStructuredPayload;
+          modelUsed: MergeModelUsed;
+        }
+      | {
+          ok: false;
+          chunk: CandidateMergeChunk;
+          error: string;
+        };
+
+    const outcomes: ChunkOutcome[] = new Array(chunks.length);
+    let completedCount = 0;
+    let cursor = 0;
+
+    input.onProgress?.({
+      completedChunks: 0,
+      totalChunks: chunks.length,
+      activeChunk: 1,
     });
-    modelUsed = mergeOut.modelUsed;
 
-    const coveredIndices = new Set<number>();
-
-    for (let i = 0; i < mergeOut.payload.items.length; i++) {
-      const rawItem = mergeOut.payload.items[i];
-      if (!rawItem) {
-        continue;
-      }
-      const validCands = rawItem.candidateIndices
-        .map((idx) => safeCandidates[idx])
-        .filter((c): c is ExtractedCandidateStatement => Boolean(c));
-      if (validCands.length === 0) {
-        continue;
-      }
-      for (const vc of validCands) {
-        coveredIndices.add(vc.idx);
-      }
-
-      const sentence = toSelfContainedSentence(rawItem.fact).slice(0, 1500);
-      const postDisallowed = detectDisallowedProfileFactReason(sentence);
-      if (postDisallowed) {
-        skippedSensitive.push({
-          id: `sens_${skippedSensitive.length}`,
-          preview: maskSensitivePreview(sentence),
-          reason: postDisallowed,
-        });
-        continue;
-      }
-
-      const category = normalizeMemoryCategory(rawItem.category);
-      const matchedExisting = rawItem.existingFactId
-        ? existingById.get(rawItem.existingFactId)
-        : undefined;
-
-      const sortedCands = [...validCands].sort(
-        (a, b) => recencyRankForCandidate(b) - recencyRankForCandidate(a)
-      );
-      const newestCand = sortedCands[0] as ExtractedCandidateStatement;
-      const itemSources = [
-        ...new Set(
-          sortedCands.map((c) => normalizeMemorySource(c.source, "pasted"))
-        ),
-      ];
-      if (matchedExisting && rawItem.status === "merged") {
-        const exSrc = normalizeMemorySource(matchedExisting.source, "chat");
-        if (!itemSources.includes(exSrc)) {
-          itemSources.push(exSrc);
-        }
-      }
-      const combinedSource = joinMemorySources(itemSources, "pasted");
-
-      if (rawItem.status === "conflict") {
-        const rawOptions = rawItem.conflictOptions ?? [];
-        const options: MergedConflictOption[] = [];
-        for (const opt of rawOptions) {
-          const optSentence = toSelfContainedSentence(opt.fact).slice(0, 1500);
-          if (
-            !optSentence ||
-            detectDisallowedProfileFactReason(optSentence) !== null
-          ) {
-            continue;
+    const workerCount = Math.min(MERGE_CONCURRENCY, chunks.length);
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        for (;;) {
+          const idx = cursor++;
+          if (idx >= chunks.length) {
+            return;
           }
-          const optCand =
-            opt.candidateIndex !== null && opt.candidateIndex !== undefined
-              ? safeCandidates[opt.candidateIndex]
-              : undefined;
-          const optExisting = opt.existingFactId
-            ? existingById.get(opt.existingFactId)
-            : undefined;
-          options.push({
-            fact: optSentence,
-            source: optCand
-              ? normalizeMemorySource(optCand.source, "pasted")
-              : optExisting
-                ? normalizeMemorySource(optExisting.source, "chat")
-                : combinedSource,
-            observedAt: optCand?.observedAt ?? optExisting?.learnedAt ?? null,
-            isNewest: Boolean(opt.isNewest),
-          });
-        }
-
-        // Ensure at least 2 clean options ordered with newest first
-        if (options.length < 2 && sortedCands.length >= 2) {
-          options.length = 0;
-          for (const [oIdx, cand] of sortedCands.slice(0, 3).entries()) {
-            options.push({
-              fact: toSelfContainedSentence(cand.text),
-              source: normalizeMemorySource(cand.source, "pasted"),
-              observedAt: cand.observedAt,
-              isNewest: oIdx === 0,
+          const chunk = chunks[idx] as CandidateMergeChunk;
+          try {
+            const res = await runMerge({
+              candidates: chunk.chunkCandidates,
+              existingFacts: nonKfExistingFacts,
+              preferredModel,
+            });
+            outcomes[idx] = {
+              ok: true,
+              chunk,
+              payload: res.payload,
+              modelUsed: res.modelUsed,
+            };
+          } catch (err) {
+            outcomes[idx] = {
+              ok: false,
+              chunk,
+              error: err instanceof Error ? err.message : "chunk_merge_failed",
+            };
+          } finally {
+            completedCount += 1;
+            input.onProgress?.({
+              completedChunks: completedCount,
+              totalChunks: chunks.length,
+              activeChunk: Math.min(chunks.length, completedCount + 1),
             });
           }
         }
-        options.sort((a, b) => Number(b.isNewest) - Number(a.isNewest));
-        if (options[0]) {
-          options[0].isNewest = true;
-        }
-        const winning = options[0];
-        const finalFact = winning?.fact ?? sentence;
+      })
+    );
 
-        vertexItems.push({
-          id: `mrg_${i}_${deriveFactKey(finalFact)}`,
-          key: deriveFactKey(finalFact),
-          value: finalFact,
-          category,
-          pinned: matchedExisting?.pinned ?? defaultPinnedForCategory(category),
-          source: winning?.source ?? combinedSource,
-          sources: itemSources,
-          learnedAt: winning?.observedAt ?? newestCand.observedAt,
-          status: "conflict",
-          checked: true,
-          conflictTopic: rawItem.conflictTopic ?? undefined,
-          conflictOptions: options.length >= 2 ? options : undefined,
-          selectedOptionIndex: 0,
-          mergedOriginals: sortedCands.map((c) => c.text),
-          replaceFactId: matchedExisting?.id,
+    let firstChunkError: string | null = null;
+    let itemSeq = 0;
+
+    for (const outcome of outcomes) {
+      if (!outcome) {
+        continue;
+      }
+      if (!outcome.ok) {
+        firstChunkError ??= outcome.error;
+        const memberIds = outcome.chunk.groups.flatMap((g) => g.memberIndices);
+        for (const mId of memberIds) {
+          failedGlobalIndices.add(mId);
+        }
+        const rawLines = outcome.chunk.groups.map((g) => `- ${g.rep.text}`);
+        failedChunks.push({
+          chunkNumber: outcome.chunk.chunkIndex + 1,
+          totalChunks: chunks.length,
+          lineCount: memberIds.length,
+          preview:
+            outcome.chunk.groups[0]?.rep.text.slice(0, 96) ?? "Memory section",
+          retryText: rawLines.join("\n"),
+          error: outcome.error,
         });
         continue;
       }
 
-      const effectiveStatus: MergedMemoryPreviewStatus =
-        rawItem.status === "already_saved" && matchedExisting
-          ? "already_saved"
-          : rawItem.status === "merged" ||
-              validCands.length >= 2 ||
-              Boolean(matchedExisting)
-            ? "merged"
-            : "new";
+      chunksSucceeded += 1;
+      if (
+        MODEL_PRIORITY_RANK[outcome.modelUsed] > MODEL_PRIORITY_RANK[modelUsed]
+      ) {
+        modelUsed = outcome.modelUsed;
+      }
 
-      vertexItems.push({
-        id: `mrg_${i}_${deriveFactKey(sentence)}`,
-        key:
-          effectiveStatus === "already_saved" && matchedExisting
-            ? matchedExisting.key
-            : deriveFactKey(sentence),
-        value: sentence,
-        category,
-        pinned: matchedExisting?.pinned ?? defaultPinnedForCategory(category),
-        source: combinedSource,
-        sources: itemSources,
-        learnedAt: newestCand.observedAt ?? matchedExisting?.learnedAt ?? null,
-        status: effectiveStatus,
-        checked: effectiveStatus !== "already_saved",
-        mergedOriginals:
-          effectiveStatus === "merged"
-            ? sortedCands.map((c) => c.text)
-            : undefined,
-        replaceFactId:
-          effectiveStatus === "merged" ? matchedExisting?.id : undefined,
-      });
+      for (const rawItem of outcome.payload.items) {
+        const globalIndices = rawItem.candidateIndices.flatMap(
+          (localIdx) => outcome.chunk.groups[localIdx]?.memberIndices ?? []
+        );
+        const validCands = globalIndices
+          .map((gIdx) => safeCandidates[gIdx])
+          .filter((c): c is ExtractedCandidateStatement => Boolean(c));
+        if (validCands.length === 0) {
+          continue;
+        }
+        for (const vc of validCands) {
+          coveredGlobalIndices.add(vc.idx);
+        }
+
+        const sentence = toSelfContainedSentence(rawItem.fact).slice(0, 1500);
+        const postDisallowed = detectDisallowedProfileFactReason(sentence);
+        if (postDisallowed) {
+          skippedSensitive.push({
+            id: `sens_${skippedSensitive.length}`,
+            preview: maskSensitivePreview(sentence),
+            reason: postDisallowed,
+          });
+          continue;
+        }
+
+        const category = normalizeMemoryCategory(rawItem.category);
+        const matchedExisting = rawItem.existingFactId
+          ? existingById.get(rawItem.existingFactId)
+          : undefined;
+
+        const sortedCands = [...validCands].sort(
+          (a, b) => recencyRankForCandidate(b) - recencyRankForCandidate(a)
+        );
+        const newestCand = sortedCands[0] as ExtractedCandidateStatement;
+        const itemSources = [
+          ...new Set(
+            sortedCands.map((c) => normalizeMemorySource(c.source, "pasted"))
+          ),
+        ];
+        if (matchedExisting && rawItem.status === "merged") {
+          const exSrc = normalizeMemorySource(matchedExisting.source, "chat");
+          if (!itemSources.includes(exSrc)) {
+            itemSources.push(exSrc);
+          }
+        }
+        const combinedSource = joinMemorySources(itemSources, "pasted");
+        const seqId = itemSeq++;
+
+        if (rawItem.status === "conflict") {
+          const rawOptions = rawItem.conflictOptions ?? [];
+          const options: MergedConflictOption[] = [];
+          for (const opt of rawOptions) {
+            const optSentence = toSelfContainedSentence(opt.fact).slice(
+              0,
+              1500
+            );
+            if (
+              !optSentence ||
+              detectDisallowedProfileFactReason(optSentence) !== null
+            ) {
+              continue;
+            }
+            const optGlobalIdx =
+              opt.candidateIndex !== null && opt.candidateIndex !== undefined
+                ? outcome.chunk.groups[opt.candidateIndex]?.memberIndices[0]
+                : undefined;
+            const optCand =
+              optGlobalIdx !== undefined
+                ? safeCandidates[optGlobalIdx]
+                : undefined;
+            const optExisting = opt.existingFactId
+              ? existingById.get(opt.existingFactId)
+              : undefined;
+            options.push({
+              fact: optSentence,
+              source: optCand
+                ? normalizeMemorySource(optCand.source, "pasted")
+                : optExisting
+                  ? normalizeMemorySource(optExisting.source, "chat")
+                  : combinedSource,
+              observedAt: optCand?.observedAt ?? optExisting?.learnedAt ?? null,
+              isNewest: Boolean(opt.isNewest),
+            });
+          }
+
+          if (options.length < 2 && sortedCands.length >= 2) {
+            options.length = 0;
+            for (const [oIdx, cand] of sortedCands.slice(0, 3).entries()) {
+              options.push({
+                fact: toSelfContainedSentence(cand.text),
+                source: normalizeMemorySource(cand.source, "pasted"),
+                observedAt: cand.observedAt,
+                isNewest: oIdx === 0,
+              });
+            }
+          }
+          options.sort((a, b) => Number(b.isNewest) - Number(a.isNewest));
+          if (options[0]) {
+            options[0].isNewest = true;
+          }
+          const winning = options[0];
+          const finalFact = winning?.fact ?? sentence;
+
+          vertexItems.push({
+            id: `mrg_${seqId}_${deriveFactKey(finalFact)}`,
+            key: deriveFactKey(finalFact),
+            value: finalFact,
+            category,
+            pinned:
+              matchedExisting?.pinned ?? defaultPinnedForCategory(category),
+            source: winning?.source ?? combinedSource,
+            sources: itemSources,
+            learnedAt: winning?.observedAt ?? newestCand.observedAt,
+            status: "conflict",
+            checked: true,
+            conflictTopic: rawItem.conflictTopic ?? undefined,
+            conflictOptions: options.length >= 2 ? options : undefined,
+            selectedOptionIndex: 0,
+            mergedOriginals: sortedCands.map((c) => c.text),
+            replaceFactId: matchedExisting?.id,
+          });
+          continue;
+        }
+
+        const effectiveStatus: MergedMemoryPreviewStatus =
+          rawItem.status === "already_saved" && matchedExisting
+            ? "already_saved"
+            : rawItem.status === "merged" ||
+                validCands.length >= 2 ||
+                Boolean(matchedExisting)
+              ? "merged"
+              : "new";
+
+        vertexItems.push({
+          id: `mrg_${seqId}_${deriveFactKey(sentence)}`,
+          key:
+            effectiveStatus === "already_saved" && matchedExisting
+              ? matchedExisting.key
+              : deriveFactKey(sentence),
+          value: sentence,
+          category,
+          pinned: matchedExisting?.pinned ?? defaultPinnedForCategory(category),
+          source: combinedSource,
+          sources: itemSources,
+          learnedAt:
+            newestCand.observedAt ?? matchedExisting?.learnedAt ?? null,
+          status: effectiveStatus,
+          checked: effectiveStatus !== "already_saved",
+          mergedOriginals:
+            effectiveStatus === "merged"
+              ? sortedCands.map((c) => c.text)
+              : undefined,
+          replaceFactId:
+            effectiveStatus === "merged" ? matchedExisting?.id : undefined,
+        });
+      }
     }
 
-    // Safety net: ensure any candidate index omitted by the model is never silently lost
+    // Only throw if EVERY chunk failed and zero local items were produced
+    if (chunksSucceeded === 0 && localKfMergedItems.length === 0) {
+      throw new Error(firstChunkError ?? "All memory merge chunks failed");
+    }
+
+    // Safety net for candidates inside successful chunks omitted by the model
     for (const cand of safeCandidates) {
-      if (coveredIndices.has(cand.idx)) {
+      if (
+        coveredGlobalIndices.has(cand.idx) ||
+        failedGlobalIndices.has(cand.idx)
+      ) {
         continue;
       }
       const sentence = toSelfContainedSentence(cand.text).slice(0, 1500);
@@ -1166,13 +1560,37 @@ export async function mergeMemoryExports(input: {
     }
   }
 
-  const combinedItems = [...localKfMergedItems, ...vertexItems].sort((a, b) => {
+  // Cross-chunk deduplication in case two chunks emitted the same normalized fact
+  const dedupedOutputByNorm = new Map<string, MergedMemoryPreviewItem>();
+  for (const item of [...localKfMergedItems, ...vertexItems]) {
+    const norm =
+      item.status === "conflict"
+        ? `__conflict_${item.id}`
+        : normalizeMemoryComparisonText(item.value) || item.id;
+    const prev = dedupedOutputByNorm.get(norm);
+    if (!prev) {
+      dedupedOutputByNorm.set(norm, item);
+      continue;
+    }
+    const combinedSources = [...new Set([...prev.sources, ...item.sources])];
+    dedupedOutputByNorm.set(norm, {
+      ...prev,
+      status: prev.status === "already_saved" ? "already_saved" : "merged",
+      source: joinMemorySources(combinedSources, prev.source),
+      sources: combinedSources,
+      mergedOriginals: [
+        ...new Set([
+          ...(prev.mergedOriginals ?? [prev.value]),
+          ...(item.mergedOriginals ?? [item.value]),
+        ]),
+      ],
+    });
+  }
+
+  const combinedItems = [...dedupedOutputByNorm.values()].sort((a, b) => {
     const statusDiff =
       STATUS_DISPLAY_ORDER[a.status] - STATUS_DISPLAY_ORDER[b.status];
-    if (statusDiff !== 0) {
-      return statusDiff;
-    }
-    return 0;
+    return statusDiff !== 0 ? statusDiff : 0;
   });
 
   const counts: MultiSourceMergeCounts = {
@@ -1189,5 +1607,8 @@ export async function mergeMemoryExports(input: {
     counts,
     skippedSensitive,
     modelUsed,
+    chunksTotal,
+    chunksSucceeded,
+    ...(failedChunks.length > 0 ? { failedChunks } : {}),
   };
 }

@@ -948,7 +948,7 @@ export function normalizeMemorySource(
 
 export function joinMemorySources(
   sources: readonly string[],
-  fallback: AtomicMemorySource = "pasted"
+  fallback: MemorySource = "pasted"
 ): MemorySource {
   const normalized = sources
     .flatMap((s) => s.split("+"))
