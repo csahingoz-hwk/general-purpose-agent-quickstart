@@ -4,10 +4,8 @@ import { ChevronLeftIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
-import { getCopy } from "@/lib/ui-copy";
+import { useUiLocale } from "@/hooks/use-ui-locale";
 import { cn } from "@/lib/utils";
-
-const copy = getCopy();
 
 const PREVIEW_TOOLBAR_SELECTORS = [
   "vercel-live-feedback",
@@ -27,18 +25,19 @@ function parkPreviewToolbar(slot: HTMLElement) {
   }
 }
 
-const WORKSPACE_SECTIONS = [
-  { href: "/usage", label: "Settings" },
-  { href: "/setup", label: "Setup" },
-  { href: "/teammates", label: "Teammates" },
-  { href: "/memory", label: "Memory" },
-  { href: "/routines", label: "Routines" },
-  { href: "/skills", label: "Skills" },
-] as const;
-
 export function SubpageHeader({ badge }: { badge?: React.ReactNode }) {
   const pathname = usePathname();
+  const { copy } = useUiLocale();
   const toolbarSlotRef = useRef<HTMLDivElement>(null);
+
+  const sections = [
+    { href: "/usage", label: copy.subpageSettings },
+    { href: "/setup", label: copy.subpageSetup },
+    { href: "/teammates", label: copy.subpageTeammates },
+    { href: "/memory", label: copy.subpageMemory },
+    { href: "/routines", label: copy.subpageRoutines },
+    { href: "/skills", label: copy.subpageSkills },
+  ] as const;
 
   useEffect(() => {
     const slot = toolbarSlotRef.current;
@@ -78,7 +77,7 @@ export function SubpageHeader({ badge }: { badge?: React.ReactNode }) {
         aria-label="Workspace sections"
         className="-mx-4 flex items-center gap-1.5 overflow-x-auto px-4 pb-1 no-scrollbar md:mx-0 md:px-0"
       >
-        {WORKSPACE_SECTIONS.map((section) => {
+        {sections.map((section) => {
           const active = pathname === section.href;
           return (
             <Link

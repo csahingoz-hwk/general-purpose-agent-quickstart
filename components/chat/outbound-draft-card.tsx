@@ -189,7 +189,7 @@ export function OutboundDraftCard({
         <div className="flex items-center gap-2">
           <ChannelIcon channel={channel} />
           <h3 className="font-semibold text-[15px] leading-snug">
-            {locale === "tr" ? "Mesaj taslağı kaydet" : "Save message draft"}
+            {copy.titleOutboundDraft}
           </h3>
           <span className="rounded-full border border-[color:var(--hairline)] bg-muted/50 px-2.5 py-0.5 font-medium text-xs">
             {CHANNEL_LABELS[locale][channel] ?? channel}

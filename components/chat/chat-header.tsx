@@ -17,8 +17,8 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { useSidebar } from "@/components/ui/sidebar";
+import { useUiLocale } from "@/hooks/use-ui-locale";
 import type { MascotState } from "@/lib/mascot";
-import { getCopy } from "@/lib/ui-copy";
 import { fetcher } from "@/lib/utils";
 import { AgentMascot } from "./agent-mascot";
 import { HomeLocationPanel } from "./home-location";
@@ -29,8 +29,6 @@ import {
   getChatHistoryPaginationKey,
 } from "./sidebar-history";
 import type { VisibilityType } from "./visibility-selector";
-
-const copy = getCopy();
 
 const floatButtonClass =
   "size-[52px]! rounded-full border border-[color:var(--hairline)] bg-card text-foreground shadow-[var(--shadow-float)] hover:bg-card md:size-11!";
@@ -64,6 +62,7 @@ function PureChatHeader({
   isReadonly: boolean;
 }) {
   const { variant } = useMascotPreference();
+  const { copy, locale } = useUiLocale();
   const { openMobile, setOpenMobile, toggleSidebar } = useSidebar();
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [activeBotLabel, setActiveBotLabel] = useState<string>("");
@@ -168,6 +167,7 @@ function PureChatHeader({
           <AgentMascot
             animated
             className="rounded-full shadow-[0_0_0_1px_color-mix(in_srgb,var(--bot-avatar-ring)_28%,transparent)]"
+            locale={locale}
             size={36}
             state={activity}
             variant={variant}

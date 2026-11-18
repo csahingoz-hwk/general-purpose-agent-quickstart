@@ -222,10 +222,10 @@ function UsagePageContent() {
     if (searchParams.get("connected") === "google") {
       toast({
         type: "success",
-        description: "Google Gmail, Calendar & Drive connected.",
+        description: copy.toastGoogleConnected,
       });
     }
-  }, [searchParams]);
+  }, [searchParams, copy.toastGoogleConnected]);
 
   useEffect(() => {
     const win = window as unknown as {
@@ -295,8 +295,8 @@ function UsagePageContent() {
           type: "success",
           description:
             provider === "google"
-              ? "Disconnected Google Workspace."
-              : "Disconnected GitHub.",
+              ? copy.toastGoogleDisconnected
+              : copy.toastGithubDisconnected,
         });
       }
     } finally {
@@ -312,23 +312,28 @@ function UsagePageContent() {
         <section className="space-y-3">
           <div>
             <h2 className="font-semibold text-xl tracking-tight">
-              Appearance &amp; personalisation
+              {copy.appearanceHeading}
             </h2>
             <p className="mt-1 text-muted-foreground text-sm">
-              Adjust theme, mascot accent, and default home location for weather
-              and local time.
+              {copy.appearanceDescription}
             </p>
           </div>
 
           <div className="divide-y divide-[color:var(--hairline)] rounded-2xl border border-[color:var(--hairline)] bg-card">
             <div className="space-y-2.5 p-4">
-              <p className="text-[13px] text-muted-foreground">Appearance</p>
+              <p className="text-[13px] text-muted-foreground">
+                {copy.appearanceLabel}
+              </p>
               <div className="grid grid-cols-3 gap-2">
                 {(
                   [
-                    { id: "system", label: "System", icon: MonitorIcon },
-                    { id: "light", label: "Light", icon: SunIcon },
-                    { id: "dark", label: "Dark", icon: MoonIcon },
+                    {
+                      id: "system",
+                      label: copy.themeSystem,
+                      icon: MonitorIcon,
+                    },
+                    { id: "light", label: copy.themeLight, icon: SunIcon },
+                    { id: "dark", label: copy.themeDark, icon: MoonIcon },
                   ] as const
                 ).map((item) => {
                   const Icon = item.icon;
@@ -527,12 +532,10 @@ function UsagePageContent() {
         <section className="space-y-3" data-testid="settings-memory-section">
           <div>
             <h2 className="font-semibold text-xl tracking-tight">
-              Memory · Bellek
+              {copy.memory}
             </h2>
             <p className="mt-1 text-muted-foreground text-sm">
-              Paste a long list of personal facts, edit or search saved
-              memories, or export everything. Stored in private Postgres and
-              used automatically in chat and voice.
+              {copy.memorySectionDescription}
             </p>
           </div>
 
@@ -547,17 +550,18 @@ function UsagePageContent() {
               </span>
               <div className="min-w-0">
                 <p className="font-semibold text-[15px] text-foreground">
-                  Manage memories &amp; paste list
+                  {copy.memoryManageTitle}
                 </p>
                 <p className="text-muted-foreground text-xs tabular-nums">
-                  {savedMemoriesCount} saved{" "}
-                  {savedMemoriesCount === 1 ? "memory" : "memories"} · Search,
-                  edit, delete &amp; export
+                  {savedMemoriesCount}{" "}
+                  {savedMemoriesCount === 1
+                    ? copy.memoryManageSubtitleSingular
+                    : copy.memoryManageSubtitlePlural}
                 </p>
               </div>
             </div>
             <span className="inline-flex min-h-10 shrink-0 items-center gap-1 rounded-full bg-primary px-3.5 font-medium text-primary-foreground text-xs">
-              Open
+              {copy.openButton}
               <ChevronRightIcon className="size-3.5" />
             </span>
           </Link>
@@ -567,17 +571,17 @@ function UsagePageContent() {
           <div className="flex flex-wrap items-end justify-between gap-2">
             <div>
               <h2 className="font-semibold text-xl tracking-tight">
-                Personal apps &amp; capabilities
+                {copy.capabilitiesHeading}
               </h2>
               <p className="mt-1 text-muted-foreground text-sm">
-                Chat, search, voice, and images work automatically.
+                {copy.capabilitiesDescription}
               </p>
             </div>
             <Link
               className="inline-flex min-h-10 items-center rounded-full border border-[color:var(--hairline)] bg-card px-3.5 font-medium text-foreground text-xs transition-colors hover:bg-muted"
               href="/setup"
             >
-              Setup checklist
+              {copy.setupChecklist}
             </Link>
           </div>
 
@@ -585,25 +589,27 @@ function UsagePageContent() {
             <li className="flex items-center justify-between gap-3 px-4 py-3.5">
               <div>
                 <p className="font-medium text-foreground">
-                  Voice dictation &amp; Live speech
+                  {copy.voiceCapabilityTitle}
                 </p>
                 <p className="text-muted-foreground text-xs">
-                  Included automatically — speak hands-free or dictate into chat
+                  {copy.voiceCapabilityDesc}
                 </p>
               </div>
               <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300">
                 <CheckCircle2Icon className="size-3.5" />
                 {voice?.liveReady || voice?.serverSttReady || hasSpeechApi
-                  ? "Active"
-                  : "Ready"}
+                  ? copy.statusActive
+                  : copy.statusReady}
               </span>
             </li>
 
             <li className="flex items-center justify-between gap-3 px-4 py-3.5">
               <div>
-                <p className="font-medium text-foreground">Image Studio</p>
+                <p className="font-medium text-foreground">
+                  {copy.imageCapabilityTitle}
+                </p>
                 <p className="text-muted-foreground text-xs">
-                  Included automatically — ask in chat to generate images
+                  {copy.imageCapabilityDesc}
                 </p>
               </div>
               <span
@@ -617,10 +623,10 @@ function UsagePageContent() {
                 {connectors?.mediaReady || connectors?.geminiReady ? (
                   <>
                     <CheckCircle2Icon className="size-3.5" />
-                    Active
+                    {copy.statusActive}
                   </>
                 ) : (
-                  "Standby"
+                  copy.statusStandby
                 )}
               </span>
             </li>
@@ -628,22 +634,21 @@ function UsagePageContent() {
             <li className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-foreground">
-                  Gmail, Calendar &amp; Drive
+                  {copy.googleCapabilityTitle}
                 </p>
                 <p className="text-muted-foreground text-xs">
-                  Read &amp; unsent drafts only — never sends emails or invites
-                  without you
+                  {copy.googleCapabilityDesc}
                 </p>
               </div>
               {connectorsLoading ? (
                 <span className="rounded-full bg-muted px-3 py-1 text-muted-foreground text-xs">
-                  Checking…
+                  {copy.statusChecking}
                 </span>
               ) : googleConnected ? (
                 <div className="flex shrink-0 items-center gap-2">
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300">
                     <CheckCircle2Icon className="size-3.5" />
-                    Connected
+                    {copy.statusConnected}
                   </span>
                   <button
                     className="min-h-10 rounded-full border border-[color:var(--hairline)] px-3 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
@@ -651,7 +656,7 @@ function UsagePageContent() {
                     onClick={() => handleDisconnect("google")}
                     type="button"
                   >
-                    Disconnect
+                    {copy.disconnectButton}
                   </button>
                 </div>
               ) : googleSignInReady ? (
@@ -661,7 +666,7 @@ function UsagePageContent() {
                   rel="noopener noreferrer"
                   target="_blank"
                 >
-                  Connect Google
+                  {copy.connectGoogleButton}
                 </a>
               ) : (
                 <button
@@ -669,7 +674,7 @@ function UsagePageContent() {
                   disabled
                   type="button"
                 >
-                  Connect Google
+                  {copy.connectGoogleButton}
                 </button>
               )}
             </li>
@@ -677,20 +682,20 @@ function UsagePageContent() {
             <li className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
               <div className="min-w-0 flex-1">
                 <p className="font-medium text-foreground">
-                  GitHub Pull Requests{" "}
+                  {copy.githubCapabilityTitle}{" "}
                   <span className="font-normal text-muted-foreground text-xs">
-                    (optional)
+                    {copy.githubCapabilityOptional}
                   </span>
                 </p>
                 <p className="text-muted-foreground text-xs">
-                  Read pull requests &amp; prepare unpublished draft reviews
+                  {copy.githubCapabilityDesc}
                 </p>
               </div>
               {githubConnected ? (
                 <div className="flex shrink-0 items-center gap-2">
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300">
                     <CheckCircle2Icon className="size-3.5" />
-                    Connected
+                    {copy.statusConnected}
                   </span>
                   <button
                     className="min-h-10 rounded-full border border-[color:var(--hairline)] px-3 text-muted-foreground text-xs hover:bg-muted hover:text-foreground"
@@ -698,7 +703,7 @@ function UsagePageContent() {
                     onClick={() => handleDisconnect("github")}
                     type="button"
                   >
-                    Disconnect
+                    {copy.disconnectButton}
                   </button>
                 </div>
               ) : (
@@ -706,7 +711,7 @@ function UsagePageContent() {
                   className="inline-flex min-h-10 shrink-0 items-center rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-foreground text-xs transition-colors hover:bg-muted"
                   href="/setup"
                 >
-                  Open setup
+                  {copy.openSetupButton}
                 </Link>
               )}
             </li>
@@ -719,12 +724,10 @@ function UsagePageContent() {
               aria-label="Conversation usage"
               className="font-semibold text-xl tracking-tight"
             >
-              Vertex AI &amp; Aylık Kredi Özeti
+              {copy.usageHeading}
             </h1>
             <p className="mt-1 text-muted-foreground text-sm">
-              Harcama ve bütçe uyarıları doğrudan Google Cloud üzerinde
-              yönetilir; uygulama içinde hiçbir yanıt engeli veya yapay kota
-              yoktur.
+              {copy.usageDescription}
             </p>
           </div>
 
@@ -753,7 +756,7 @@ function UsagePageContent() {
                 <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
                   <div className="min-w-0">
                     <p className="text-muted-foreground text-xs">
-                      Ay İçi Kredi Kullanımı
+                      {copy.usageMtdCreditUsed}
                     </p>
                     <p
                       className="mt-0.5 font-semibold text-base text-foreground tabular-nums"
@@ -763,26 +766,28 @@ function UsagePageContent() {
                     </p>
                     <p className="text-[11px] text-muted-foreground">
                       {gcp?.reachable
-                        ? "Google Cloud gerçek veri"
-                        : "Token referans tahmini"}
+                        ? copy.usageSourceGcpLive
+                        : copy.usageSourceTokenEstimate}
                     </p>
                   </div>
 
                   <div className="min-w-0">
-                    <p className="text-muted-foreground text-xs">Kalan Kredi</p>
+                    <p className="text-muted-foreground text-xs">
+                      {copy.usageRemainingCredit}
+                    </p>
                     <p className="mt-0.5 font-semibold text-base text-emerald-700 tabular-nums dark:text-emerald-300">
                       {rows
                         ? `${gcp?.reachable ? "" : "~"}${fmtUsd(effectiveRemainingUsd)}`
                         : "—"}
                     </p>
                     <p className="text-[11px] text-muted-foreground">
-                      /${monthlyPool.toFixed(2)} Ultra kredi
+                      /${monthlyPool.toFixed(2)} {copy.usageUltraCreditSuffix}
                     </p>
                   </div>
 
                   <div className="min-w-0">
                     <p className="text-muted-foreground text-xs">
-                      Toplam Token (Ay)
+                      {copy.usageTotalTokensMonth}
                     </p>
                     <p className="mt-0.5 font-semibold text-base text-foreground tabular-nums">
                       {data
@@ -793,19 +798,21 @@ function UsagePageContent() {
                         : "—"}
                     </p>
                     <p className="text-[11px] text-muted-foreground">
-                      {data ? `${data.invocations} model çağrısı` : "Bu ay"}
+                      {data
+                        ? `${data.invocations} ${copy.usageModelCallsSuffix}`
+                        : copy.usageThisMonth}
                     </p>
                   </div>
 
                   <div className="min-w-0">
                     <p className="text-muted-foreground text-xs">
-                      Net Nakit Maliyet
+                      {copy.usageNetCashCost}
                     </p>
                     <p className="mt-0.5 font-semibold text-base text-foreground tabular-nums">
                       $0.00
                     </p>
                     <p className="text-[11px] text-muted-foreground">
-                      Ultra kredi + Copilot aboneliği
+                      {copy.usageZeroCashNote}
                     </p>
                   </div>
                 </div>
@@ -817,24 +824,22 @@ function UsagePageContent() {
                   >
                     <p className="min-w-0 flex-1 text-muted-foreground">
                       <span className="font-medium text-foreground">
-                        Canlı Google Cloud fatura verisi bekleniyor:{" "}
+                        {copy.usageGcpPendingLead}{" "}
                       </span>
-                      {gcp.missingReason} Aşağıda uygulama içi aylık token
-                      kayıtları gösteriliyor.
+                      {gcp.missingReason} {copy.usageGcpPendingTrail}
                     </p>
                     <Link
                       className="inline-flex min-h-9 shrink-0 items-center rounded-full border border-[color:var(--hairline)] bg-background px-3 font-medium text-foreground text-xs hover:bg-muted"
                       href="/setup#setup-gcp_billing"
                     >
-                      Kurulumda aç
+                      {copy.usageOpenInSetup}
                     </Link>
                   </div>
                 )}
 
                 {error && !data && (
                   <div className="px-4 py-3 text-muted-foreground text-xs">
-                    Kullanım tablosu şu an yenilenemedi; sohbet kesintisiz devam
-                    eder.
+                    {copy.usageRefreshError}
                   </div>
                 )}
 
@@ -845,15 +850,17 @@ function UsagePageContent() {
                   >
                     <thead className="border-[color:var(--hairline)] border-b bg-muted/25 text-muted-foreground">
                       <tr>
-                        <th className="px-4 py-2.5 font-medium">Model</th>
-                        <th className="px-3 py-2.5 text-right font-medium">
-                          Token (Giriş / Çıkış)
+                        <th className="px-4 py-2.5 font-medium">
+                          {copy.usageColModel}
                         </th>
                         <th className="px-3 py-2.5 text-right font-medium">
-                          Tahmini Maliyet
+                          {copy.usageColTokensIo}
+                        </th>
+                        <th className="px-3 py-2.5 text-right font-medium">
+                          {copy.usageColEstimatedCost}
                         </th>
                         <th className="px-4 py-2.5 text-right font-medium">
-                          Kalan Kredi
+                          {copy.usageColRemainingCredit}
                         </th>
                       </tr>
                     </thead>
@@ -869,24 +876,26 @@ function UsagePageContent() {
                                       row.model}
                                   </span>
                                   <span className="block text-[11px] text-muted-foreground">
-                                    {row.calls} çağrı
+                                    {row.calls} {copy.usageCallsSuffix}
                                   </span>
                                 </td>
                                 <td className="whitespace-nowrap px-3 py-2.5 text-right text-foreground">
                                   {row.totalTokens.toLocaleString()}
                                   <span className="block text-[11px] text-muted-foreground">
-                                    {row.inputTokens.toLocaleString()} G /{" "}
-                                    {row.outputTokens.toLocaleString()} Ç
+                                    {row.inputTokens.toLocaleString()}{" "}
+                                    {copy.usageInputShort} /{" "}
+                                    {row.outputTokens.toLocaleString()}{" "}
+                                    {copy.usageOutputShort}
                                   </span>
                                 </td>
                                 <td className="whitespace-nowrap px-3 py-2.5 text-right text-foreground">
                                   {isCopilot
-                                    ? "$0.00 (Abonelik)"
+                                    ? copy.usageSubscriptionZero
                                     : `$${row.referenceCostUsd.toFixed(4)}`}
                                 </td>
                                 <td className="whitespace-nowrap px-4 py-2.5 text-right text-muted-foreground">
                                   {isCopilot
-                                    ? "Copilot dahil"
+                                    ? copy.usageCopilotIncluded
                                     : `${gcp?.reachable ? "" : "~"}${fmtUsd(effectiveRemainingUsd)}`}
                                 </td>
                               </tr>

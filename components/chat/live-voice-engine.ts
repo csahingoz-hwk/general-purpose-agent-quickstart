@@ -8,7 +8,6 @@ import {
   buildLiveToolOutputItemMessage,
   type CommittedLiveTurn,
   EchoGate,
-  echoSimilarity,
   int16ToBase64,
   LIVE_FRAME_MS,
   LIVE_FRAME_SAMPLES,
@@ -17,6 +16,7 @@ import {
   LiveTurnAssembler,
   parseLiveServerMessage,
   pcm16ToFloat32,
+  stripAssistantEchoFromUserTranscript,
 } from "@/lib/voice/live-protocol";
 
 export type LivePhase =
@@ -234,8 +234,8 @@ export class LiveVoiceEngine {
   private thinkingTimer: ReturnType<typeof setTimeout> | null = null;
   private goAwayTimer: ReturnType<typeof setTimeout> | null = null;
   private goAwayPending = false;
-  private userOverlappedAssistant = false;
   private lastAssistantText = "";
+  private readonly recentAssistantTexts: string[] = [];
   private activeAssistantCaption = "";
   private turnCompleteReceived = true;
   private readonly seenToolCalls = new Set<string>();
@@ -581,8 +581,28 @@ export class LiveVoiceEngine {
             this.setPhase("listening");
           }
           break;
-        case "input-transcript":
+        case "input-transcript": {
           this.dropStaleAudio = false;
+          const liveRefs = [
+            ...this.recentAssistantTexts,
+            this.lastAssistantText,
+            this.turns.assistantCaption,
+            this.activeAssistantCaption,
+          ].filter(Boolean);
+          if (
+            this.assistantAudible &&
+            !this.gateIsOpen &&
+            liveRefs.length > 0
+          ) {
+            const echoCheck = stripAssistantEchoFromUserTranscript(
+              event.text,
+              liveRefs
+            );
+            if (!echoCheck.cleaned) {
+              this.gate.reportEchoLeak();
+              break;
+            }
+          }
           if (this.sources.size === 0) {
             this.activeAssistantCaption = "";
           }
@@ -597,6 +617,7 @@ export class LiveVoiceEngine {
             this.armThinkingTimer();
           }
           break;
+        }
         case "audio":
           if (!this.dropStaleAudio) {
             this.turns.markOutputStarted();
@@ -607,6 +628,7 @@ export class LiveVoiceEngine {
           if (!this.dropStaleAudio) {
             this.turns.addOutput(event.text);
             this.activeAssistantCaption = this.turns.assistantCaption;
+            this.lastAssistantText = this.turns.assistantCaption;
             this.emitCaptions();
           }
           break;
@@ -722,7 +744,6 @@ export class LiveVoiceEngine {
 
     if (decision.bargeIn) {
       this.turns.markBargeIn();
-      this.userOverlappedAssistant = true;
       this.duckForBargeIn();
     }
     if (decision.open && !wasOpen) {
@@ -730,9 +751,6 @@ export class LiveVoiceEngine {
       if (!audible || decision.bargeIn) {
         this.activeAssistantCaption = "";
         this.emitCaptions();
-      }
-      if (audible) {
-        this.userOverlappedAssistant = true;
       }
       this.clearThinkingTimer();
       if (!audible || decision.bargeIn) {
@@ -772,6 +790,11 @@ export class LiveVoiceEngine {
     this.clearThinkingTimer();
 
     const locale = detectTurkishText(this.turns.userCaption) ? "tr" : "en";
+    if (this.turns.hasPendingUser || this.turns.assistantCaption) {
+      // Commit the pre-tool utterance cleanly so follow-up remarks spoken while
+      // the tool runs don't merge into the pre-tool bubble or absorb bot speech.
+      this.commitTurn(false);
+    }
     const filler =
       (locale === "tr" ? CLIENT_FILLERS_TR[name] : CLIENT_FILLERS_EN[name]) ??
       (locale === "tr" ? "Kontrol ediyorum…" : "Checking that now…");
@@ -998,31 +1021,44 @@ export class LiveVoiceEngine {
     this.nextStartTime = 0;
   }
 
+  private recordAssistantUtterance(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return;
+    }
+    this.lastAssistantText = trimmed;
+    if (this.recentAssistantTexts.at(-1) !== trimmed) {
+      this.recentAssistantTexts.push(trimmed);
+      if (this.recentAssistantTexts.length > 6) {
+        this.recentAssistantTexts.shift();
+      }
+    }
+  }
+
   private commitTurn(interrupted: boolean) {
-    const overlapped = this.userOverlappedAssistant;
-    this.userOverlappedAssistant = false;
     const turn = this.turns.commit(interrupted);
     this.emitCaptions();
     if (!turn) {
       return;
     }
     let leaked = false;
-    if (
-      overlapped &&
-      turn.user &&
-      this.lastAssistantText &&
-      turn.user.split(" ").length <= 12 &&
-      echoSimilarity(turn.user, this.lastAssistantText) >= 0.65
-    ) {
-      // Speaker leaked into the mic while assistant was audible: harden barge-in.
-      this.gate.reportEchoLeak();
-      turn.user = "";
-      leaked = true;
-    } else if (turn.user && turn.assistant) {
-      this.gate.decayEchoPenalty();
+    if (turn.user) {
+      const refs = [
+        ...this.recentAssistantTexts,
+        this.lastAssistantText,
+        turn.assistant,
+      ].filter(Boolean);
+      const echoCheck = stripAssistantEchoFromUserTranscript(turn.user, refs);
+      if (echoCheck.strippedEcho) {
+        this.gate.reportEchoLeak();
+        turn.user = echoCheck.cleaned;
+        leaked = !echoCheck.cleaned;
+      } else if (turn.assistant) {
+        this.gate.decayEchoPenalty();
+      }
     }
     if (!leaked && turn.assistant) {
-      this.lastAssistantText = turn.assistant;
+      this.recordAssistantUtterance(turn.assistant);
     }
     if (turn.user || turn.assistant) {
       this.cb.onTurn(turn);
