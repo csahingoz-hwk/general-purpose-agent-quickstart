@@ -36,8 +36,39 @@ export function syncDocumentLocale(locale: UiLocale): boolean {
 }
 
 /**
+ * Observes ONLY the document's `<head> <title>` element (never all of
+ * `document.head`) so late Next.js metadata commits on hydration or reload
+ * (e.g. resetting `"Asistan"` back to `"Assistant"`) are corrected once
+ * without looping.
+ */
+export function observeDocumentTitleLocale(locale: UiLocale): () => void {
+  if (
+    typeof document === "undefined" ||
+    typeof MutationObserver === "undefined"
+  ) {
+    return () => undefined;
+  }
+  const titleElement = document.head?.querySelector("title") ?? null;
+  if (!titleElement) {
+    return () => undefined;
+  }
+  const observer = new MutationObserver(() => {
+    if (syncDocumentLocale(locale)) {
+      observer.takeRecords();
+    }
+  });
+  observer.observe(titleElement, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+  });
+  return () => observer.disconnect();
+}
+
+/**
  * Mounted once in `AppProviders` so document title and `<html lang>` are synced
- * from a single place after locale resolution, with zero MutationObservers.
+ * from a single place after locale resolution, with at most one `<title>`-only
+ * MutationObserver.
  */
 export function UiLocaleDocumentSync() {
   const { locale, resolved } = useUiLocale();
@@ -49,6 +80,7 @@ export function UiLocaleDocumentSync() {
       return;
     }
     syncDocumentLocale(locale);
+    return observeDocumentTitleLocale(locale);
   }, [locale, pathname, resolved]);
 
   return null;

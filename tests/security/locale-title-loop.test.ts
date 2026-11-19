@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+  observeDocumentTitleLocale,
   syncDocumentLocale,
   UiLocaleDocumentSync,
 } from "../../components/ui-locale-document-sync";
@@ -36,6 +37,9 @@ type MockObserverInstance = {
   options: unknown;
   disconnected: boolean;
   callback: () => void;
+  callbackCount: number;
+  pendingRecords: Array<{ type: string; target: unknown }>;
+  flushScheduled: boolean;
 };
 
 function installMockBrowserDom(opts: {
@@ -58,7 +62,53 @@ function installMockBrowserDom(opts: {
     storageMap.set("assistant-ui-locale", opts.storedLocale);
   }
 
-  const headSentinel = { tagName: "HEAD" };
+  const titleElement = {
+    tagName: "TITLE",
+    get textContent() {
+      return currentTitle;
+    },
+    set textContent(next: string) {
+      currentTitle = next;
+    },
+  };
+
+  const headSentinel = {
+    tagName: "HEAD",
+    querySelector(selector: string) {
+      return selector === "title" ? titleElement : null;
+    },
+  };
+
+  const notifyObservers = (
+    target: unknown,
+    type: "childList" | "characterData"
+  ) => {
+    for (const obs of observers) {
+      if (obs.disconnected) {
+        continue;
+      }
+      const matchesTarget =
+        obs.target === target ||
+        (obs.target === headSentinel && target === titleElement);
+      if (!matchesTarget) {
+        continue;
+      }
+      obs.pendingRecords.push({ type, target });
+      if (!obs.flushScheduled) {
+        obs.flushScheduled = true;
+        queueMicrotask(() => {
+          obs.flushScheduled = false;
+          if (obs.disconnected || obs.pendingRecords.length === 0) {
+            return;
+          }
+          obs.pendingRecords.length = 0;
+          obs.callbackCount += 1;
+          obs.callback();
+        });
+      }
+    }
+  };
+
   const documentElement = {
     get lang() {
       return currentLang;
@@ -83,15 +133,7 @@ function installMockBrowserDom(opts: {
         );
       }
       currentTitle = next;
-      for (const obs of observers) {
-        if (!obs.disconnected && obs.target === headSentinel) {
-          queueMicrotask(() => {
-            if (!obs.disconnected) {
-              obs.callback();
-            }
-          });
-        }
-      }
+      notifyObservers(titleElement, "childList");
     },
   };
 
@@ -104,6 +146,9 @@ function installMockBrowserDom(opts: {
         options: null,
         disconnected: false,
         callback,
+        callbackCount: 0,
+        pendingRecords: [],
+        flushScheduled: false,
       };
       observers.push(this.instance);
     }
@@ -113,8 +158,13 @@ function installMockBrowserDom(opts: {
       this.instance.options = options;
     }
 
+    takeRecords() {
+      return this.instance.pendingRecords.splice(0);
+    }
+
     disconnect() {
       this.instance.disconnected = true;
+      this.instance.pendingRecords.length = 0;
     }
   }
 
@@ -184,12 +234,25 @@ function installMockBrowserDom(opts: {
     restoreProp("MutationObserver", prevMutationObserver);
   };
 
+  const simulateNextMetadataTitleCommit = (nextTitle: string) => {
+    currentTitle = nextTitle;
+    notifyObservers(titleElement, "characterData");
+  };
+
+  const simulateUnrelatedHeadMutation = () => {
+    notifyObservers(headSentinel, "childList");
+  };
+
   return {
     mockDocument,
+    headSentinel,
+    titleElement,
     titleWrites,
     langWrites,
     observers,
     storageMap,
+    simulateNextMetadataTitleCommit,
+    simulateUnrelatedHeadMutation,
     restore,
   };
 }
@@ -219,11 +282,13 @@ test("Regression: useUiLocale creates zero MutationObservers and never writes do
   );
 });
 
-test("Regression: document.title is written from a single guarded React component mounted once in AppProviders", () => {
+test("Regression: document.title and its single <title>-only MutationObserver live solely in UiLocaleDocumentSync mounted once in AppProviders", () => {
   const searchRoots = ["hooks", "components", "app"].map((d) =>
     resolve(ROOT, d)
   );
   const titleWriteSites: string[] = [];
+  const headObserverSites: string[] = [];
+  const titleObserverSites: string[] = [];
 
   for (const dir of searchRoots) {
     for (const file of collectSourceFiles(dir)) {
@@ -231,6 +296,18 @@ test("Regression: document.title is written from a single guarded React componen
       const src = readFileSync(file, "utf8");
       if (/\bdocument\.title\s*=/.test(src)) {
         titleWriteSites.push(rel);
+      }
+      if (/\.observe\s*\(\s*document\.head\b/.test(src)) {
+        headObserverSites.push(rel);
+      }
+      if (
+        /\bMutationObserver\b/.test(src) &&
+        (/\btitleElement\b/.test(src) ||
+          /querySelector\(\s*["'](?:head\s*>\s*)?title["']\s*\)/.test(src) ||
+          /\bdocument\.title\b/.test(src)) &&
+        rel !== "app/layout.tsx"
+      ) {
+        titleObserverSites.push(rel);
       }
     }
   }
@@ -244,20 +321,52 @@ test("Regression: document.title is written from a single guarded React componen
     ["components/ui-locale-document-sync.tsx"],
     `Expected exactly one React document.title write site, found: ${reactTitleWriters.join(", ")}`
   );
+  assert.deepEqual(
+    headObserverSites,
+    [],
+    `No file may observe all of document.head, found: ${headObserverSites.join(", ")}`
+  );
+  assert.deepEqual(
+    titleObserverSites,
+    ["components/ui-locale-document-sync.tsx"],
+    `Expected MutationObserver for document title only in UiLocaleDocumentSync, found: ${titleObserverSites.join(", ")}`
+  );
 
   const syncSrc = readFileSync(
     resolve(ROOT, "components/ui-locale-document-sync.tsx"),
     "utf8"
   );
+  const syncObserverCreations =
+    syncSrc.match(/\bnew\s+MutationObserver\b/g) ?? [];
+  assert.equal(
+    syncObserverCreations.length,
+    1,
+    "UiLocaleDocumentSync must register at most one MutationObserver"
+  );
   assert.doesNotMatch(
     syncSrc,
-    /\bMutationObserver\b/,
-    "UiLocaleDocumentSync must not register a MutationObserver"
+    /\.observe\s*\(\s*document\.head\b/,
+    "UiLocaleDocumentSync must observe only the <title> element, not document.head"
+  );
+  assert.match(
+    syncSrc,
+    /document\.head\?\.querySelector\(\s*"title"\s*\)/,
+    "UiLocaleDocumentSync must locate the <head> <title> element specifically"
+  );
+  assert.match(
+    syncSrc,
+    /observer\.observe\(\s*titleElement\b/,
+    "UiLocaleDocumentSync must observe only titleElement"
   );
   assert.match(
     syncSrc,
     /if\s*\(\s*!resolved\s*\)/,
-    "UiLocaleDocumentSync must wait until locale is resolved from storage before writing document.title"
+    "UiLocaleDocumentSync must wait until locale is resolved from storage before writing document.title or attaching its observer"
+  );
+  assert.match(
+    syncSrc,
+    /MANAGED_PAGE_TITLES\.has\(\s*currentTitle\s*\)/,
+    "UiLocaleDocumentSync must only rewrite managed default page titles"
   );
   assert.match(
     syncSrc,
@@ -299,7 +408,7 @@ test("Regression: document.title is written from a single guarded React componen
   );
 });
 
-test("Behavioral: multiple useUiLocale consumers + mid-session mounts + title changes produce 0 observers and zero ping-pong flips", async () => {
+test("Behavioral: single <title>-only observer recovers Next.js metadata overwrites across reload and multi-consumer mounts with zero ping-pong", async () => {
   const env = installMockBrowserDom({
     initialTitle: "Assistant",
     initialLang: "en",
@@ -307,6 +416,10 @@ test("Behavioral: multiple useUiLocale consumers + mid-session mounts + title ch
     navigatorLanguage: "tr-TR",
     navigatorLanguages: ["tr-TR", "tr"],
   });
+
+  const activeObservers = () =>
+    env.observers.filter((obs) => !obs.disconnected);
+  let disconnectObserver: () => void = () => undefined;
 
   try {
     // 1. Simulate first-paint boot script (agreeing with stored Turkish locale)
@@ -357,7 +470,7 @@ test("Behavioral: multiple useUiLocale consumers + mid-session mounts + title ch
     assert.equal(
       env.observers.length,
       0,
-      "Zero MutationObservers should be created by useUiLocale consumers"
+      "Zero MutationObservers should be created before resolution or by useUiLocale consumers"
     );
 
     // 3. Simulate resolution from storage & browser signals (like mount effect)
@@ -366,53 +479,116 @@ test("Behavioral: multiple useUiLocale consumers + mid-session mounts + title ch
     const resolvedLocale = storedPref === "auto" ? detected : storedPref;
     assert.equal(resolvedLocale, "tr");
 
-    // Single app-level sync runs after resolution: title is already "Asistan", so 0 extra writes
+    // Single app-level sync runs after resolution: title is already "Asistan", so 0 extra writes,
+    // and exactly ONE observer attaches to <title> only (never document.head)
     const didWriteAfterResolve = syncDocumentLocale(resolvedLocale);
+    disconnectObserver = observeDocumentTitleLocale(resolvedLocale);
     assert.equal(didWriteAfterResolve, false);
     assert.equal(env.mockDocument.title, "Asistan");
     assert.equal(env.titleWrites.length, 1);
+    assert.equal(activeObservers().length, 1);
+    assert.equal(
+      activeObservers()[0]?.target,
+      env.titleElement,
+      "Single observer must observe only the <title> element"
+    );
+    assert.notEqual(
+      activeObservers()[0]?.target,
+      env.headSentinel,
+      "Single observer must not observe document.head"
+    );
 
-    // 4. Simulate chat send: new consumers (StopButton, MessageActions) mount mid-session
+    // 4. Simulate Next.js metadata hydration/reload overwriting <title> text back to "Assistant"
+    const writesBeforeMetadata = env.titleWrites.length;
+    env.simulateNextMetadataTitleCommit("Assistant");
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(
+      env.mockDocument.title,
+      "Asistan",
+      "Single <title> observer must restore 'Asistan' after Next.js metadata overwrite"
+    );
+    assert.equal(
+      env.titleWrites.length,
+      writesBeforeMetadata + 1,
+      "Restoring 'Asistan' must perform exactly 1 write with zero ping-pong"
+    );
+
+    // 5. Unrelated <head> mutations (<style>, <meta>) must NOT wake the <title> observer
+    const callbacksBeforeHeadMutation =
+      activeObservers()[0]?.callbackCount ?? 0;
+    env.simulateUnrelatedHeadMutation();
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(
+      activeObservers()[0]?.callbackCount,
+      callbacksBeforeHeadMutation,
+      "Unrelated document.head mutations must not invoke the <title> observer"
+    );
+
+    // 6. Simulate chat send: new consumers (StopButton, MessageActions) mount mid-session
     //    while existing consumers are already on "tr"
     renderToStaticMarkup(createElement(MockConsumer, { id: 99 }));
     renderToStaticMarkup(createElement(MockConsumer, { id: 100 }));
     await new Promise((r) => setTimeout(r, 0));
-    assert.equal(env.observers.length, 0);
+    assert.equal(activeObservers().length, 1);
     assert.equal(env.mockDocument.title, "Asistan");
-    assert.equal(env.titleWrites.length, 1);
+    assert.equal(env.titleWrites.length, writesBeforeMetadata + 1);
 
-    // 5. Simulate route navigation resetting metadata title back to "Assistant",
-    //    then UiLocaleDocumentSync running on pathname change
+    // 7. Simulate route navigation resetting document.title back to "Assistant":
+    //    observer recovers in 1 write and does not loop
+    const writesBeforeNav = env.titleWrites.length;
     env.mockDocument.title = "Assistant";
-    const writesBeforeRecovery = env.titleWrites.length;
-    assert.equal(syncDocumentLocale("tr"), true);
+    await new Promise((r) => setTimeout(r, 0));
     assert.equal(env.mockDocument.title, "Asistan");
-    assert.equal(env.titleWrites.length, writesBeforeRecovery + 1);
+    assert.equal(
+      env.titleWrites.length,
+      writesBeforeNav + 2,
+      "Route reset ('Assistant') + single recovery ('Asistan') must settle immediately"
+    );
     // Repeated sync is a strict no-op
     assert.equal(syncDocumentLocale("tr"), false);
-    assert.equal(env.titleWrites.length, writesBeforeRecovery + 1);
+    assert.equal(env.titleWrites.length, writesBeforeNav + 2);
 
-    // 6. Explicit user switch TR -> EN -> TR
+    // 8. Explicit user switch TR -> EN -> TR (cleanup old observer before attaching new one)
+    disconnectObserver();
+    assert.equal(activeObservers().length, 0);
     assert.equal(syncDocumentLocale("en"), true);
+    disconnectObserver = observeDocumentTitleLocale("en");
+    assert.equal(activeObservers().length, 1);
     assert.equal(env.mockDocument.title, "Assistant");
     assert.equal(env.mockDocument.documentElement.lang, "en");
     assert.equal(syncDocumentLocale("en"), false);
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(env.mockDocument.title, "Assistant");
 
+    // External flip to "Asistan" while in "en" restores "Assistant" once without looping
+    const writesBeforeEnRecover = env.titleWrites.length;
+    env.simulateNextMetadataTitleCommit("Asistan");
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(env.mockDocument.title, "Assistant");
+    assert.equal(env.titleWrites.length, writesBeforeEnRecover + 1);
+
+    // Switch back EN -> TR
+    disconnectObserver();
     assert.equal(syncDocumentLocale("tr"), true);
+    disconnectObserver = observeDocumentTitleLocale("tr");
+    assert.equal(activeObservers().length, 1);
     assert.equal(env.mockDocument.title, "Asistan");
     assert.equal(env.mockDocument.documentElement.lang, "tr");
 
-    // 7. Non-managed custom titles are never clobbered
+    // 9. Non-managed custom titles are never clobbered even when observer fires
     env.mockDocument.title = "Shared Chat — Q3 Plan";
     const writesBeforeCustom = env.titleWrites.length;
+    await new Promise((r) => setTimeout(r, 0));
     assert.equal(syncDocumentLocale("tr"), false);
     assert.equal(syncDocumentLocale("en"), false);
     assert.equal(env.mockDocument.title, "Shared Chat — Q3 Plan");
     assert.equal(env.titleWrites.length, writesBeforeCustom);
 
-    await new Promise((r) => setTimeout(r, 0));
-    assert.equal(env.observers.length, 0);
+    // 10. Unmount cleanup leaves 0 active observers
+    disconnectObserver();
+    assert.equal(activeObservers().length, 0);
   } finally {
+    disconnectObserver();
     env.restore();
   }
 });
