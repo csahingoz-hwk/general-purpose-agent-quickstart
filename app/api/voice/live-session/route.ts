@@ -8,17 +8,23 @@ import {
   filterFactsForBot,
 } from "@/lib/bots/roster";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
-import { getChatById, getMessagesByChatId } from "@/lib/db/queries";
+import {
+  getChatById,
+  getMessagesByChatId,
+  getUserHomeLocation,
+} from "@/lib/db/queries";
 import {
   buildGroupedMemoryPromptBlock,
   isAllowedShortKornFerryContextFact,
 } from "@/lib/memory/bulk-import";
 import { createPostgresMemoryStore } from "@/lib/memory/store";
 import {
+  buildCompactVoiceRecentTurns,
   buildVoiceSystemInstruction,
   LiveVoiceSetupError,
   mintLiveVoiceToken,
   resolveLiveGeminiKey,
+  resolveLiveSessionTimeZone,
 } from "@/lib/voice/live-session";
 import { isVoiceEnabled } from "@/lib/voice/voice-service";
 
@@ -30,18 +36,6 @@ const bodySchema = z
     resumeHandle: z.string().max(2048).optional(),
   })
   .default({});
-
-function validTimeZone(value: string | undefined): string {
-  if (!value) {
-    return "Europe/London";
-  }
-  try {
-    new Intl.DateTimeFormat("en-GB", { timeZone: value });
-    return value;
-  } catch {
-    return "Europe/London";
-  }
-}
 
 export async function POST(request: Request) {
   const session = await auth();
@@ -78,68 +72,59 @@ export async function POST(request: Request) {
 
   const hasDb = Boolean(process.env.POSTGRES_URL?.trim());
   const voiceMemoryStore = hasDb ? createPostgresMemoryStore() : null;
-  const [teammate, facts, journalEntries, recentTurns, capabilityManifest] =
-    await Promise.all([
-      body.selectedBotSlug && hasDb
-        ? createPostgresBotRosterStore()
-            .getBotBySlug(userId, body.selectedBotSlug)
-            .catch(() => null)
-        : Promise.resolve(null),
-      voiceMemoryStore
-        ? voiceMemoryStore.listProfileFacts({ userId }).catch(() => [])
-        : Promise.resolve([]),
-      voiceMemoryStore
-        ? voiceMemoryStore
-            .listJournalEntries({ userId, limit: 25 })
-            .catch(() => [])
-        : Promise.resolve([]),
-      body.chatId && hasDb
-        ? (async () => {
-            const [chat, rows] = await Promise.all([
-              getChatById({ id: body.chatId as string }).catch(() => null),
-              getMessagesByChatId({ id: body.chatId as string }).catch(
-                () => []
-              ),
-            ]);
-            if (!chat || chat.userId !== userId) {
-              return [];
-            }
-            return rows
-              .slice(-8)
-              .map((row) => {
-                const parts = Array.isArray(row.parts)
-                  ? (row.parts as Array<{ type?: string; text?: string }>)
-                  : [];
-                const text = parts
-                  .filter(
-                    (p) => p.type === "text" && typeof p.text === "string"
-                  )
-                  .map((p) => p.text)
-                  .join(" ")
-                  .trim();
-                return text
-                  ? {
-                      role:
-                        row.role === "assistant"
-                          ? ("assistant" as const)
-                          : ("user" as const),
-                      text,
-                    }
-                  : null;
-              })
-              .filter(
-                (t): t is { role: "user" | "assistant"; text: string } =>
-                  t !== null
-              );
-          })()
-        : Promise.resolve([]),
-      resolveLiveCapabilityManifest({
-        userId,
-        isGuest: false,
-        webSearchAvailable: useVertex,
-        skipLiveProbe: true,
-      }),
-    ]);
+  const [
+    teammate,
+    facts,
+    journalEntries,
+    homeLocation,
+    chatRows,
+    capabilityManifest,
+  ] = await Promise.all([
+    body.selectedBotSlug && hasDb
+      ? createPostgresBotRosterStore()
+          .getBotBySlug(userId, body.selectedBotSlug)
+          .catch(() => null)
+      : Promise.resolve(null),
+    voiceMemoryStore
+      ? voiceMemoryStore.listProfileFacts({ userId }).catch(() => [])
+      : Promise.resolve([]),
+    voiceMemoryStore
+      ? voiceMemoryStore
+          .listJournalEntries({ userId, limit: 25 })
+          .catch(() => [])
+      : Promise.resolve([]),
+    hasDb
+      ? getUserHomeLocation({ userId }).catch(() => null)
+      : Promise.resolve(null),
+    body.chatId && hasDb
+      ? (async () => {
+          const [chat, rows] = await Promise.all([
+            getChatById({ id: body.chatId as string }).catch(() => null),
+            getMessagesByChatId({ id: body.chatId as string }).catch(() => []),
+          ]);
+          if (!chat || chat.userId !== userId) {
+            return [];
+          }
+          return rows;
+        })()
+      : Promise.resolve([]),
+    resolveLiveCapabilityManifest({
+      userId,
+      isGuest: false,
+      webSearchAvailable: useVertex,
+      skipLiveProbe: true,
+    }),
+  ]);
+
+  const sessionTimeZone = resolveLiveSessionTimeZone(
+    body.timeZone,
+    homeLocation?.timeZone
+  );
+  const recentTurns = buildCompactVoiceRecentTurns(chatRows, {
+    maxRows: 20,
+    maxChars: 6000,
+    timeZone: sessionTimeZone,
+  });
 
   const latestRecentText = recentTurns.at(-1)?.text ?? "";
   const safeVoiceFacts = filterFactsForBot(
@@ -161,7 +146,7 @@ export async function POST(request: Request) {
       session.user.name?.trim() ||
       process.env.APP_OWNER_NAME?.trim() ||
       "Çağlar",
-    timeZone: validTimeZone(body.timeZone),
+    timeZone: sessionTimeZone,
     teammate: teammate ? { name: teammate.name, soul: teammate.soul } : null,
     groupedMemoryBlock,
     capabilityManifest,

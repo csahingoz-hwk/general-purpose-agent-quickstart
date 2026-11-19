@@ -16,6 +16,7 @@ import {
   createPostgresMemoryStore,
   isMemoryToolsEnabled,
 } from "@/lib/memory/store";
+import { isFillerOnlyUtterance } from "@/lib/voice/live-protocol";
 
 const turnSchema = z.object({
   chatId: z.string().uuid(),
@@ -42,7 +43,10 @@ export async function POST(request: Request) {
   }
 
   const userText = body.userText.trim();
-  const assistantText = body.assistantText.trim();
+  const rawAssistantText = body.assistantText.trim();
+  const assistantText = isFillerOnlyUtterance(rawAssistantText)
+    ? ""
+    : rawAssistantText;
   if (!userText && !assistantText) {
     return NextResponse.json({ saved: false });
   }

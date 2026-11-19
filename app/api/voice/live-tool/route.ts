@@ -7,12 +7,14 @@ import {
 } from "@/lib/ai/tools/shared-registry";
 import {
   getChatById,
+  getMessagesByChatId,
   getUserHomeLocation,
   saveChat,
   saveMessages,
 } from "@/lib/db/queries";
 import { validTimeZone } from "@/lib/temporal";
 import { generateUUID } from "@/lib/utils";
+import { buildCompactVoiceRecentTurns } from "@/lib/voice/live-session";
 import { executeVoiceTextAgentHandoff } from "@/lib/voice/text-agent-handoff";
 
 const requestSchema = z.object({
@@ -43,13 +45,33 @@ export async function POST(request: Request) {
   }
 
   const userId = session.user.id;
-  const resolvedTz = validTimeZone(body.timeZone) ?? "Europe/London";
+  const browserTz = validTimeZone(body.timeZone);
   const hasDb = Boolean(process.env.POSTGRES_URL?.trim());
   const homeLocation = hasDb
     ? await getUserHomeLocation({ userId }).catch(() => null)
     : null;
+  const knownTz = browserTz ?? validTimeZone(homeLocation?.timeZone) ?? null;
+  const resolvedTz = knownTz ?? "Europe/London";
 
   const isTextAgentHandoff = body.toolName === "handOffToTextAgent";
+  const handoffRecentTurns =
+    isTextAgentHandoff && hasDb
+      ? await (async () => {
+          const [chat, rows] = await Promise.all([
+            getChatById({ id: body.chatId }).catch(() => null),
+            getMessagesByChatId({ id: body.chatId }).catch(() => []),
+          ]);
+          if (!chat || chat.userId !== userId) {
+            return [];
+          }
+          return buildCompactVoiceRecentTurns(rows, {
+            maxRows: 20,
+            maxChars: 6000,
+            timeZone: resolvedTz,
+          });
+        })()
+      : [];
+
   const handoffOutcome = isTextAgentHandoff
     ? await executeVoiceTextAgentHandoff({
         session,
@@ -57,8 +79,9 @@ export async function POST(request: Request) {
         chatId: body.chatId,
         request: typeof body.args.request === "string" ? body.args.request : "",
         locale: body.locale,
-        timeZone: resolvedTz,
+        timeZone: knownTz,
         homeLocation,
+        recentTurns: handoffRecentTurns,
       })
     : null;
 
@@ -73,7 +96,8 @@ export async function POST(request: Request) {
         ...(await executeSharedVoiceToolCall({
           session,
           userId,
-          timeZone: resolvedTz,
+          timeZone: knownTz,
+          locale: body.locale,
           homeLocation,
           toolCallId: body.toolCallId.replace(/[^a-zA-Z0-9_-]/g, "_"),
           toolName: body.toolName,

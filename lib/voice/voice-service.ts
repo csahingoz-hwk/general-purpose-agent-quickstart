@@ -31,6 +31,11 @@ export const VOICE_STT_GEMINI_MODEL = "gemini-4-hydrogen";
 export const VOICE_STT_OPENAI_MODEL = "gpt-4o-mini-transcribe";
 export const DEFAULT_GEMINI_LIVE_MODEL = DEFAULT_LIVE_MODEL;
 
+export const VOICE_STT_SPORTS_VOCABULARY_HINT =
+  "Şampiyonlar Ligi, Shakhtar Donetsk, Fenerbahçe, Galatasaray, Beşiktaş, Trabzonspor, Süper Lig, UEFA";
+
+const VOICE_STT_PROMPT = `Transcribe this voice memo verbatim in its spoken language (English or Turkish). Return only the transcript text with no commentary. Pay attention to proper names when spoken (for example: ${VOICE_STT_SPORTS_VOCABULARY_HINT}).`;
+
 export const VOICE_VAULT_SECRET_NAMES = {
   geminiApiKey: "GEMINI_API_KEY",
   openaiApiKey: "OPENAI_VOICE_API_KEY",
@@ -201,7 +206,7 @@ export async function transcribeVoiceMemo(opts: {
             role: "user",
             parts: [
               {
-                text: "Transcribe this voice memo verbatim in its spoken language (English or Turkish). Return only the transcript text with no commentary.",
+                text: VOICE_STT_PROMPT,
               },
               {
                 inlineData: {
@@ -275,7 +280,7 @@ export async function transcribeVoiceMemo(opts: {
             role: "user",
             parts: [
               {
-                text: "Transcribe this voice memo verbatim in its spoken language (English or Turkish). Return only the transcript text with no commentary.",
+                text: VOICE_STT_PROMPT,
               },
               {
                 inlineData: {
@@ -335,6 +340,7 @@ export async function transcribeVoiceMemo(opts: {
       "memo.webm"
     );
     form.append("model", VOICE_STT_OPENAI_MODEL);
+    form.append("prompt", VOICE_STT_SPORTS_VOCABULARY_HINT);
 
     const response = await fetchFn(
       "https://api.openai.com/v1/audio/transcriptions",

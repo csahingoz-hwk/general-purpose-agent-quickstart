@@ -20,12 +20,15 @@ import { createVisualStudioTools } from "@/lib/ai/tools/visual-studio";
 import { webSearch } from "@/lib/ai/tools/web-search";
 import { isGithubConnectorEnabled } from "@/lib/connectors/calendar-and-github";
 import {
+  extractRelevantWebPassage,
   isFirecrawlConfigured,
   runFirecrawlSearch,
+  unwrapUntrustedContentFence,
 } from "@/lib/connectors/firecrawl";
 import { isGoogleConnectorsEnabled } from "@/lib/connectors/google-vault-auth";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import { isRoutinesEnabled } from "@/lib/cron/routine-presets";
+import { FIXTURES_COVERAGE_NOTE, type FixturePayload } from "@/lib/fixtures";
 import {
   createInMemoryMemoryStore,
   createPostgresMemoryStore,
@@ -35,7 +38,7 @@ import {
 import { reviewActionRisk } from "@/lib/safety/action-review";
 import { fenceUntrustedContent } from "@/lib/safety/untrusted-content";
 import type { BackgroundTaskStore } from "@/lib/tasks/runner";
-import type { HomeLocation } from "@/lib/temporal";
+import { type HomeLocation, validTimeZone } from "@/lib/temporal";
 import { generateUUID } from "@/lib/utils";
 import type { SecretVaultStore } from "@/lib/vault/secret-vault";
 import { APPROVAL_REQUIRED_VOICE_TOOLS } from "@/lib/voice/live-protocol";
@@ -75,6 +78,8 @@ export function buildCoreSharedTools(opts: {
   userId: string;
   homeLocation: HomeLocation | null;
   defaultTimeZone: string | null;
+  fixtureTimeZone?: string | null;
+  locale?: "en" | "tr";
   now?: Date;
   hasUntrustedContext?: boolean;
   vaultStore?: SecretVaultStore;
@@ -87,6 +92,8 @@ export function buildCoreSharedTools(opts: {
     userId,
     homeLocation,
     defaultTimeZone,
+    fixtureTimeZone,
+    locale,
     now = new Date(),
     hasUntrustedContext = false,
     vaultStore,
@@ -104,7 +111,11 @@ export function buildCoreSharedTools(opts: {
     getWeather: getWeather({ home: homeLocation }),
     getFixtures: getFixtures({
       now: () => now,
+      fetchImpl,
       footballDataKey: process.env.FOOTBALL_DATA_API_KEY ?? null,
+      timeZone:
+        fixtureTimeZone !== undefined ? fixtureTimeZone : defaultTimeZone,
+      locale,
     }),
     getCurrentTime: getCurrentTime({ defaultTimeZone }),
     draftOutboundMessage: draftOutboundMessage({ hasUntrustedContext }),
@@ -162,7 +173,12 @@ export type ServerWebSearchSource = {
   title: string;
   url: string;
   snippet?: string;
+  content?: string;
 };
+
+const VOICE_WEB_CONTENT_TOP_N = 3;
+const VOICE_WEB_CONTENT_PER_SOURCE_CHARS = 1500;
+const VOICE_WEB_CONTENT_TOTAL_CAP_CHARS = 5000;
 
 export type ServerWebSearchResult = {
   status: "ok" | "blocked_data_boundary" | "empty" | "error";
@@ -312,13 +328,61 @@ export async function runServerWebSearch(
       } else if (fc.status === "ok") {
         primaryAttempted += 1;
         anyPrimarySucceeded = true;
+        let totalFencedContentChars = 0;
         const sources: ServerWebSearchSource[] = fc.results
           .slice(0, 5)
-          .map((item) => ({
-            title: item.title,
-            url: item.url,
-            snippet: item.description,
-          }));
+          .map((item, idx) => {
+            const rawBody = unwrapUntrustedContentFence(
+              item.fencedMarkdown ?? ""
+            );
+            const fallbackSnippet =
+              item.description ||
+              extractRelevantWebPassage(rawBody, query, 240).slice(0, 240);
+            let content: string | undefined;
+            if (idx < VOICE_WEB_CONTENT_TOP_N) {
+              const sourceText = rawBody || item.description;
+              const remaining =
+                VOICE_WEB_CONTENT_TOTAL_CAP_CHARS - totalFencedContentChars;
+              if (sourceText && remaining > 180) {
+                const fenceOverhead = 140;
+                const innerMax = Math.min(
+                  VOICE_WEB_CONTENT_PER_SOURCE_CHARS,
+                  Math.max(120, remaining - fenceOverhead)
+                );
+                const passage = extractRelevantWebPassage(
+                  sourceText,
+                  query,
+                  innerMax
+                );
+                if (passage) {
+                  let fenced = fenceUntrustedContent({
+                    text: passage,
+                    source: `webSearch:${item.url}`,
+                    maxChars: innerMax,
+                  }).fencedText;
+                  if (fenced.length > remaining) {
+                    const excess = fenced.length - remaining;
+                    const tightMax = Math.max(64, innerMax - excess - 16);
+                    fenced = fenceUntrustedContent({
+                      text: passage,
+                      source: `webSearch:${item.url}`,
+                      maxChars: tightMax,
+                    }).fencedText;
+                  }
+                  if (fenced.length <= remaining) {
+                    totalFencedContentChars += fenced.length;
+                    content = fenced;
+                  }
+                }
+              }
+            }
+            return {
+              title: item.title,
+              url: item.url,
+              snippet: fallbackSnippet,
+              ...(content ? { content } : {}),
+            };
+          });
         if (sources.length > 0) {
           const rawSummary = sources
             .slice(0, 3)
@@ -538,7 +602,9 @@ async function resolveLazyDbTool(
 export async function executeSharedVoiceToolCall(opts: {
   session: Session;
   userId: string;
-  timeZone: string;
+  timeZone?: string | null;
+  locale?: "en" | "tr";
+  now?: Date;
   homeLocation: HomeLocation | null;
   toolCallId: string;
   toolName: string;
@@ -634,6 +700,10 @@ export async function executeSharedVoiceToolCall(opts: {
         },
       };
     }
+    const plainSummary = unwrapUntrustedContentFence(searchRes.summary)
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 350);
     return {
       blocked: searchRes.status === "blocked_data_boundary",
       toolPart: {
@@ -647,26 +717,44 @@ export async function executeSharedVoiceToolCall(opts: {
             url: s.url,
             snippet: s.snippet ?? "",
           })),
+          ...(plainSummary ? { summary: plainSummary } : {}),
         },
       },
       voiceResult: {
         status: searchRes.status,
         summary: searchRes.summary,
-        sources: searchRes.sources.map((s) => ({ title: s.title, url: s.url })),
-        ...(searchRes.status === "empty"
+        sources: searchRes.sources.map((s, idx) => ({
+          title: s.title,
+          url: s.url,
+          ...(s.snippet ? { snippet: s.snippet } : {}),
+          ...(idx < VOICE_WEB_CONTENT_TOP_N && s.content
+            ? { content: s.content }
+            : {}),
+        })),
+        ...(searchRes.status === "ok"
           ? {
               spokenInstruction:
-                "Tell the owner in one short sentence, in the owner's language, that no web results came back right now and offer to retry — never answer about a different league, team, or topic.",
+                "Answer directly from these web sources with the concrete facts found in their content (date, kickoff time converted to the user's local time zone, opponent, and venue), cite the source name aloud (never read URLs), and only say details are unavailable if none of the provided content contains them.",
             }
-          : {}),
+          : searchRes.status === "empty"
+            ? {
+                spokenInstruction:
+                  "Tell the owner in one short sentence, in the owner's language, that no web results came back right now and offer to retry — never answer about a different league, team, or topic.",
+              }
+            : {}),
       },
     };
   }
 
+  const explicitTz = validTimeZone(opts.timeZone);
+  const homeTz = validTimeZone(opts.homeLocation?.timeZone);
   const core = buildCoreSharedTools({
     userId: opts.userId,
     homeLocation: opts.homeLocation ?? LONDON_FALLBACK_HOME,
-    defaultTimeZone: opts.timeZone || "Europe/London",
+    defaultTimeZone: explicitTz ?? homeTz ?? "Europe/London",
+    fixtureTimeZone: explicitTz ?? homeTz ?? null,
+    locale: opts.locale,
+    now: opts.now,
     vaultStore: opts.vaultStore,
     memoryStore: opts.memoryStore,
     memorySource: "voice",
@@ -701,6 +789,65 @@ export async function executeSharedVoiceToolCall(opts: {
     toolCallId,
     messages: [],
   });
+
+  if (
+    toolName === "getFixtures" &&
+    rawOutput &&
+    typeof rawOutput === "object" &&
+    "upcoming" in rawOutput
+  ) {
+    const payload = rawOutput as FixturePayload;
+    const next = payload.upcoming[0];
+    return {
+      toolPart: {
+        type: "tool-getFixtures",
+        toolCallId,
+        state: "output-available",
+        input: args,
+        output: rawOutput,
+      },
+      voiceResult: {
+        status: "ok",
+        team: payload.team.name,
+        timeZone: payload.timeZone,
+        kickoffTimeZone: payload.kickoffTimeZone,
+        competitions: payload.competitions ?? [],
+        coverageNote: payload.coverageNote ?? FIXTURES_COVERAGE_NOTE,
+        next: next
+          ? {
+              home: next.home.name,
+              away: next.away.name,
+              kickoffLocal: next.kickoffLocal,
+              kickoffTimeZone: next.kickoffTimeZone ?? payload.kickoffTimeZone,
+              competition: next.competition,
+              venue: next.venue,
+            }
+          : null,
+        upcoming: payload.upcoming.map((match) => ({
+          home: match.home.name,
+          away: match.away.name,
+          kickoffLocal: match.kickoffLocal,
+          kickoffTimeZone: match.kickoffTimeZone ?? payload.kickoffTimeZone,
+          competition: match.competition,
+          venue: match.venue,
+        })),
+        last: payload.last
+          ? {
+              home: payload.last.home.name,
+              away: payload.last.away.name,
+              homeScore: payload.last.homeScore,
+              awayScore: payload.last.awayScore,
+              kickoffLocal: payload.last.kickoffLocal,
+              kickoffTimeZone:
+                payload.last.kickoffTimeZone ?? payload.kickoffTimeZone,
+              competition: payload.last.competition,
+            }
+          : null,
+        spokenInstruction:
+          "State match kickoffs ONLY in the user's local time using kickoffLocal and name the local time zone aloud (for example 'Türkiye saatiyle' for Europe/Istanbul or 'London time' for Europe/London); never give raw UTC times. Respect coverageNote: this feed may list domestic league matches only — for European (Champions League/Europa/Conference) or cup matches, or if another source/earlier turn mentioned one, do NOT deny that match; call webSearch and trust the web sources.",
+      },
+    };
+  }
 
   if (
     toolName === "getWeather" &&

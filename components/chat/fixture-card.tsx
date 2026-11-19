@@ -44,7 +44,7 @@ function FixtureBody({
   const text = copy[locale];
   const next = payload.upcoming[0];
   const label = next
-    ? labelKickoff(next.kickoffUtc, payload.now, locale)
+    ? labelKickoff(next.kickoffUtc, payload.now, locale, payload.timeZone)
     : null;
   return (
     <div className="space-y-3">
@@ -71,6 +71,11 @@ function FixtureBody({
           </p>
           <p className="text-[15px] leading-snug">
             {label.fullDate} · {label.clock}
+            {payload.kickoffTimeZone ? (
+              <span className="ml-1.5 text-[12px] text-muted-foreground">
+                ({payload.kickoffTimeZone})
+              </span>
+            ) : null}
           </p>
           {next.venue && (
             <p className="text-[13px] text-muted-foreground">{next.venue}</p>
@@ -91,6 +96,7 @@ function FixtureBody({
                 locale={locale}
                 match={match}
                 now={payload.now}
+                timeZone={payload.timeZone}
               />
             ))}
           </div>
@@ -106,6 +112,7 @@ function FixtureBody({
             match={payload.last}
             now={payload.now}
             score={scoreLine(payload.last)}
+            timeZone={payload.timeZone}
           />
         </div>
       )}
@@ -117,14 +124,16 @@ function CompactRow({
   match,
   now,
   locale,
+  timeZone,
   score,
 }: {
   match: FixtureMatch;
   now: string;
   locale: "en" | "tr";
+  timeZone: string;
   score?: string | null;
 }) {
-  const label = labelKickoff(match.kickoffUtc, now, locale);
+  const label = labelKickoff(match.kickoffUtc, now, locale, timeZone);
   return (
     <div className="flex min-w-0 items-baseline justify-between gap-2 text-[13px] leading-tight">
       <span className="min-w-0 truncate">
