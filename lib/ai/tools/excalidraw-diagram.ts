@@ -23,15 +23,22 @@ export type ExcalidrawToolPayload =
       message: string;
     };
 
+function stripJsonCodeFence(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^```(?:json|excalidraw)?\s*/i, "")
+    .replace(/\s*```$/, "")
+    .trim();
+}
+
 export function createExcalidrawDiagramTool() {
   return tool({
     description:
       "Create an interactive, editable Excalidraw diagram in chat (validated scene JSON with shapes, arrows, and labels; exports PNG, SVG, and .excalidraw) with optional Mermaid fallback for simple flows.",
     inputSchema: z.object({
-      title: z.string().trim().min(2).max(120),
+      title: z.string().trim().min(1).max(300),
       mode: z
         .enum(["excalidraw", "mermaid"])
-        .default("excalidraw")
         .optional()
         .describe(
           "Use 'excalidraw' for architecture, system, ER, or rich visual diagrams; 'mermaid' only as a simple-flow fallback."
@@ -40,7 +47,7 @@ export function createExcalidrawDiagramTool() {
         .string()
         .trim()
         .min(2)
-        .max(36_000)
+        .max(64_000)
         .optional()
         .describe(
           'JSON-serialized array of Excalidraw elements (`rectangle`, `ellipse`, `diamond`, `arrow`, `line`, `text`, `frame`), e.g. \'[{"id":"api","type":"rectangle","x":80,"y":120,"width":180,"height":76,"backgroundColor":"#dbeafe","label":"API Gateway"}]\'.'
@@ -48,7 +55,7 @@ export function createExcalidrawDiagramTool() {
       viewBackgroundColor: z.string().trim().max(32).optional(),
       mermaidFallback: z
         .string()
-        .max(8000)
+        .max(16_000)
         .optional()
         .describe(
           "Optional Mermaid diagram syntax (`flowchart TD ...` or `sequenceDiagram ...`) as a fallback for simple flows."
@@ -74,11 +81,14 @@ export function createExcalidrawDiagramTool() {
         ? slug
         : `${slug}.excalidraw`;
       const validMermaid = validateMermaidCode(input.mermaidFallback);
+      const requestedMode = input.mode ?? "excalidraw";
 
       if (input.elementsJson) {
         let parsedElements: unknown;
         try {
-          const rawParsed = JSON.parse(input.elementsJson) as unknown;
+          const rawParsed = JSON.parse(
+            stripJsonCodeFence(input.elementsJson)
+          ) as unknown;
           parsedElements =
             rawParsed &&
             typeof rawParsed === "object" &&
@@ -122,7 +132,7 @@ export function createExcalidrawDiagramTool() {
               title: input.title,
               filename,
               mode:
-                input.mode === "mermaid" && validMermaid
+                requestedMode === "mermaid" && validMermaid
                   ? "mermaid"
                   : "excalidraw",
               scene: checked.scene,
@@ -167,5 +177,20 @@ export function createExcalidrawDiagramTool() {
           "Provide valid Excalidraw `elementsJson` (or `mermaidFallback` for a simple flow).",
       });
     },
+    toModelOutput: ({ output }) => ({
+      type: "json" as const,
+      value:
+        output.status === "ok"
+          ? {
+              status: "ok",
+              kind: output.kind,
+              title: output.title,
+              filename: output.filename,
+              mode: output.mode,
+              elementCount: output.scene?.elements.length ?? 0,
+              note: "Interactive Excalidraw diagram card (with PNG, SVG, and .excalidraw export) is already rendered in chat. Reply with a brief 1-2 sentence explanation in the user's language.",
+            }
+          : output,
+    }),
   });
 }

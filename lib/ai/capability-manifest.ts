@@ -48,7 +48,7 @@ export type CapabilityId =
   | "memory"
   | "routines"
   | "model_hydrogen"
-  | "model_argon"
+  | "model_neon"
   | "model_copilot_fallback";
 
 export type CapabilityState =
@@ -549,8 +549,9 @@ export function buildCapabilityManifestFromStatus(
           },
     input.vertexErrorReason
       ? {
-          id: "model_argon",
-          label: "Model: Gemini 4 Argon (deep research & reasoning escalation)",
+          id: "model_neon",
+          label:
+            "Model: Gemini 4 Neon (deep reasoning, research & visual escalation)",
           category: "model",
           state: "error",
           reason: input.vertexErrorReason,
@@ -560,18 +561,18 @@ export function buildCapabilityManifestFromStatus(
         }
       : input.vertexReady
         ? {
-            id: "model_argon",
+            id: "model_neon",
             label:
-              "Model: Gemini 4 Argon (deep research & reasoning escalation)",
+              "Model: Gemini 4 Neon (deep reasoning, research & visual escalation)",
             category: "model",
             state: "connected_and_healthy",
             setupHref: "/setup#setup-core_ai",
             tools: [],
           }
         : {
-            id: "model_argon",
+            id: "model_neon",
             label:
-              "Model: Gemini 4 Argon (deep research & reasoning escalation)",
+              "Model: Gemini 4 Neon (deep reasoning, research & visual escalation)",
             category: "model",
             state: "not_connected",
             reason: "Vertex AI Workload Identity Federation is not configured",

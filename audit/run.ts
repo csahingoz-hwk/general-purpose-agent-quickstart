@@ -72,7 +72,7 @@ for (const s of scenarios) {
   const tools = selectActiveTools(msgs, !s.guest, true);
   const esc = resolveTurnModelAndEffort({
     selectedModelId: "gemini-4-hydrogen",
-    availableModelIds: ["gemini-4-hydrogen", "gemini-4-argon"],
+    availableModelIds: ["gemini-4-hydrogen", "gemini-4-neon"],
     userText: s.prompt.startsWith("(approve")
       ? (s.history?.[0]?.text ?? "")
       : s.prompt,
@@ -111,7 +111,7 @@ for (const s of scenarios) {
   const sayNoGmail = sp.includes("Personal Gmail/Calendar access") && !op;
   const remember = s.guest ? null : extractExplicitRememberFact(s.prompt);
   const kf = containsRestrictedWorkData(s.prompt);
-  const model = esc.modelId.includes("argon") ? "argon" : "hydrogen";
+  const model = esc.modelId.includes("neon") ? "neon" : "hydrogen";
   const reasons: string[] = [];
 
   for (const t of s.include ?? []) {

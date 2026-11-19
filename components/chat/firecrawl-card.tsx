@@ -38,13 +38,11 @@ export function FirecrawlCard({
           />
           <div className="min-w-0 flex-1">
             <p className="font-medium text-foreground">
-              {isTr
-                ? "Firecrawl henüz bağlı değil"
-                : "Firecrawl isn't connected yet"}
+              {isTr ? "Firecrawl bağlı değil" : "Firecrawl isn't connected yet"}
             </p>
             <p className="mt-0.5 break-words text-muted-foreground text-xs leading-relaxed">
               {isTr
-                ? "Sunucu taraflı web arama, sayfa kazıma (scrape) ve site haritası için Vercel ortam değişkenlerine FIRECRAWL_API_KEY ekleyin."
+                ? "Sunucu taraflı web arama, sayfa okuma (scrape) ve site haritası için FIRECRAWL_API_KEY henüz eklenmemiş. Kurulum sayfasındaki Bağla adımından anahtarınızı ekleyebilirsiniz."
                 : "Add FIRECRAWL_API_KEY in your Vercel environment variables to enable server-side Firecrawl search, URL-to-Markdown scrape, and site mapping."}
             </p>
           </div>
@@ -56,9 +54,7 @@ export function FirecrawlCard({
             data-testid="firecrawl-open-setup"
             href={`${basePath}${setupHref}`}
           >
-            <span>
-              {isTr ? "Kurulum listesini aç" : "Open Setup checklist"}
-            </span>
+            <span>{isTr ? "Kurulumda bağla" : "Open Setup checklist"}</span>
           </a>
           <a
             className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-foreground text-xs transition-colors hover:bg-muted"

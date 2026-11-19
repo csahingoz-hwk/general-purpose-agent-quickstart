@@ -1,9 +1,9 @@
 import { createGateway } from "ai";
 import type { ChatModel } from "../models";
 import {
-  ARGON,
   gatewayEnabled,
   HYDROGEN,
+  NEON,
   type PremiumModelId,
   TERRA,
 } from "./catalog";
@@ -53,7 +53,7 @@ const HINTS: Record<Exclude<ReadinessReason, "ready">, string> = {
 
 /** Exact provider-prefixed slug used by AI Gateway. */
 export function gatewaySlug(model: PremiumModelId | string) {
-  if (model === HYDROGEN || model === ARGON) {
+  if (model === HYDROGEN || model === NEON) {
     return `google/${model}`;
   }
   return `openai/${model}`;
@@ -110,7 +110,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 /**
  * Establish readiness for the Gateway fallback lane (`openai/gpt-6.1-terra`).
- * Note: Google Gemini 4 models (`gemini-4-hydrogen`, `gemini-4-argon`) run on
+ * Note: Google Gemini 4 models (`gemini-4-hydrogen`, `gemini-4-neon`) run on
  * Vertex AI via WIF (not Gateway) in production so they bill to the Google AI
  * Ultra Cloud credit (`0140A2-72DEB2-62EDCD`).
  */

@@ -47,7 +47,7 @@ function buildRealistic31kMixedClaudeExport(): string {
     "Exported: 2026-11-18",
     "",
     "## Rules & Preferences",
-    "Never use pay-per-use API models without asking first. Everyday chat must route through Gemini 4 Hydrogen on Google AI Ultra credit, deep research escalates to Gemini 4 Argon, and GitHub Copilot SDK Claude Haiku 5.5 is the sole fallback via the Cloud VM bridge.",
+    "Never use pay-per-use API models without asking first. Everyday chat must route through Gemini 4 Hydrogen on Google AI Ultra credit, deep research escalates to Gemini 4 Neon, and GitHub Copilot SDK Claude Haiku 5.5 is the sole fallback via the Cloud VM bridge.",
     "- Onayım olmadan asla kullandıkça öde API modeli kullanma ve yedek model devreye girdiğinde gerçek model adını arayüzde göster.",
     "- Never use pay-per-use API models without asking first.",
     "- Wi-Fi password is SecretVault9988! and Visa 4532 1111 2222 3333",

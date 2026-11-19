@@ -141,7 +141,7 @@ function PureChatHeader({
       <div className="relative size-[52px] md:size-11">
         <Button
           aria-expanded={openMobile}
-          aria-label="Open History"
+          aria-label={copy.openHistory}
           className={`${floatButtonClass} absolute inset-0 md:hidden`}
           onClick={() => setOpenMobile(!openMobile)}
           size="icon"
@@ -151,7 +151,7 @@ function PureChatHeader({
           <PanelLeftIcon className="size-5" />
         </Button>
         <Button
-          aria-label="Toggle sidebar"
+          aria-label={copy.toggleSidebar}
           className={`${floatButtonClass} absolute inset-0 hidden md:inline-flex`}
           onClick={() => toggleSidebar()}
           size="icon"
@@ -206,7 +206,7 @@ function PureChatHeader({
         <Popover onOpenChange={setOptionsOpen} open={optionsOpen}>
           <PopoverTrigger asChild>
             <Button
-              aria-label="Chat options"
+              aria-label={copy.chatOptions}
               className={floatButtonClass}
               data-testid="home-location-trigger"
               size="icon"

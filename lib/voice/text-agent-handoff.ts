@@ -18,6 +18,10 @@ import {
   inferenceSession,
 } from "@/lib/ai/routing/session";
 import {
+  createMemoryTurnState,
+  dedupeAssistantMemoryParts,
+} from "@/lib/ai/tools/memory-tools";
+import {
   buildCoreSharedTools,
   LONDON_FALLBACK_HOME,
 } from "@/lib/ai/tools/shared-registry";
@@ -279,6 +283,7 @@ export async function executeVoiceTextAgentHandoff(opts: {
     toolBoundary: false,
     fallbackUsed: false,
     activeModelId: HYDROGEN,
+    memoryTurnState: createMemoryTurnState(),
   };
 
   const model =
@@ -299,7 +304,7 @@ export async function executeVoiceTextAgentHandoff(opts: {
     })
   );
 
-  const toolParts: Record<string, unknown>[] = [];
+  const rawToolParts: (Record<string, unknown> & { type: string })[] = [];
   for (const step of agentRun.steps ?? []) {
     const resultByCallId = new Map<string, unknown>();
     for (const tr of step.toolResults ?? []) {
@@ -320,7 +325,7 @@ export async function executeVoiceTextAgentHandoff(opts: {
                   : "google",
               }
             : out;
-        toolParts.push({
+        rawToolParts.push({
           type: `tool-${tc.toolName}`,
           toolCallId: safeCallId,
           state: "output-available",
@@ -329,7 +334,7 @@ export async function executeVoiceTextAgentHandoff(opts: {
         });
       } else {
         // Tool paused at approval gate (`needsApproval: true`)
-        toolParts.push({
+        rawToolParts.push({
           type: `tool-${tc.toolName}`,
           toolCallId: safeCallId,
           state: "approval-requested",
@@ -339,6 +344,7 @@ export async function executeVoiceTextAgentHandoff(opts: {
       }
     }
   }
+  const toolParts = dedupeAssistantMemoryParts(rawToolParts);
 
   const cleanedSpoken = stripMarkdownForSpeech(agentRun.text ?? "");
   const spokenSummary =

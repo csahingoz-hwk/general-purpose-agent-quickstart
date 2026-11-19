@@ -19,7 +19,7 @@ const REFERENCE_RATES_PER_1M_USD: Record<
   { input: number; output: number; funding: "ultra_credit" | "copilot_sub" }
 > = {
   "gemini-4-hydrogen": { input: 0.15, output: 0.6, funding: "ultra_credit" },
-  "gemini-4-argon": { input: 1.25, output: 5.0, funding: "ultra_credit" },
+  "gemini-4-neon": { input: 1.25, output: 5.0, funding: "ultra_credit" },
   "claude-haiku-5.5": { input: 0, output: 0, funding: "copilot_sub" },
 };
 

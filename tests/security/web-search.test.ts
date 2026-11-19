@@ -10,9 +10,9 @@ import { selectActiveTools } from "../../lib/ai/context/select-tools";
 import { DEFAULT_CHAT_MODEL } from "../../lib/ai/models";
 import { systemPrompt } from "../../lib/ai/prompts";
 import {
-  ARGON,
   HYDROGEN,
   LUNA,
+  NEON,
   premiumModels,
   TERRA,
   WEB_SEARCH_COST_USD,
@@ -158,7 +158,7 @@ test("Default chat is Gemini 4 Hydrogen and searches via Vertex Google Search gr
     Reflect.deleteProperty(process.env, "CHAT_PROVIDER");
     Reflect.deleteProperty(process.env, "ENABLE_LEGACY_GROQ");
     assert.equal(webSearchLane(DEFAULT_CHAT_MODEL), true);
-    assert.equal(webSearchLane(ARGON), true);
+    assert.equal(webSearchLane(NEON), true);
     assert.equal(webSearchLane("openai/gpt-oss-20b"), false);
   } finally {
     for (const key of keys) {

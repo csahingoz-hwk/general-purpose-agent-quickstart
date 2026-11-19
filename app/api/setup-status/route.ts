@@ -148,7 +148,7 @@ export async function GET(request: Request) {
       id: "core_ai",
       label: "Chat, web search, voice & images",
       summary: vertexReady
-        ? "Active via Google Cloud Vertex AI (Gemini 4 Hydrogen -> Argon escalation on Google AI Ultra credit — zero pay-per-use APIs, no internal spend cap)."
+        ? "Active via Google Cloud Vertex AI (Gemini 4 Hydrogen -> Neon escalation on Google AI Ultra credit — zero pay-per-use APIs, no internal spend cap)."
         : "Turn on Vertex AI WIF (GOOGLE_VERTEX_PROJECT_ID + GOOGLE_VERTEX_WORKLOAD_AUDIENCE) in your Vercel project settings.",
       status: aiReady ? "ready" : "action_needed",
       actionKind: aiReady ? "none" : "external_link",

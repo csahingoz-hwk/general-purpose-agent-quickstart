@@ -1,4 +1,4 @@
-import { ARGON, HYDROGEN } from "./routing/catalog";
+import { HYDROGEN, NEON } from "./routing/catalog";
 
 export type ActiveReasoningEffort = "low" | "medium" | "high";
 
@@ -65,9 +65,10 @@ const DEEP_PROOF_PATTERN =
  * Owner Vertex + Ultra routing rule:
  * - Default everyday chat runs on `gemini-4-hydrogen` with `low` effort (~1s first token)
  *   via Vertex AI (Ultra credit).
- * - Research, multi-search, comparisons, and hard questions automatically escalate to
- *   `gemini-4-argon` with `medium` effort (~2.5-3.5s first token) or `high` effort on
- *   deep proofs/root-cause tasks, via the same zero-key Vertex AI route.
+ * - Hard, research, multi-search, comparison, and visual creation turns automatically
+ *   escalate to `gemini-4-neon` (`global` endpoint, default `HIGH` thinking_level;
+ *   `MEDIUM` for latency-sensitive interactive tool turns; never `MINIMAL` or `thinking_budget`),
+ *   via the same zero-key Vertex AI route.
  * - Never selects or escalates to Luna or Gemini 3.8 Flash.
  */
 export function resolveTurnModelAndEffort(input: {
@@ -75,7 +76,7 @@ export function resolveTurnModelAndEffort(input: {
   availableModelIds: readonly string[];
   userText: string;
   requestedTools: readonly string[];
-  baseEffort?: "none" | "minimal" | "low" | "medium" | "high";
+  baseEffort?: "low" | "medium" | "high" | string;
 }): {
   modelId: string;
   reasoningEffort: ActiveReasoningEffort;
@@ -89,13 +90,30 @@ export function resolveTurnModelAndEffort(input: {
   const normalizedBase: ActiveReasoningEffort =
     input.baseEffort === "high"
       ? "high"
-      : input.baseEffort === "low" ||
-          input.baseEffort === "minimal" ||
-          input.baseEffort === "none"
-        ? "low"
-        : "medium";
+      : input.baseEffort === "medium"
+        ? "medium"
+        : input.baseEffort === "low"
+          ? "low"
+          : input.selectedModelId === NEON
+            ? "high"
+            : input.selectedModelId === HYDROGEN
+              ? "low"
+              : "medium";
 
   if (!escalate) {
+    // When Neon is explicitly selected, keep default HIGH on non-tool turns and
+    // use MEDIUM on latency-sensitive multi-step tool turns.
+    if (input.selectedModelId === NEON) {
+      const neonEffort: ActiveReasoningEffort =
+        input.requestedTools.length > 0 && input.baseEffort !== "low"
+          ? "medium"
+          : normalizedBase;
+      return {
+        modelId: NEON,
+        reasoningEffort: neonEffort,
+        escalated: false,
+      };
+    }
     const everydayEffort: ActiveReasoningEffort =
       input.selectedModelId === HYDROGEN && !input.baseEffort
         ? "low"
@@ -110,20 +128,25 @@ export function resolveTurnModelAndEffort(input: {
   let targetModel = input.selectedModelId;
   let escalated = false;
 
-  if (targetModel === HYDROGEN && input.availableModelIds.includes(ARGON)) {
-    targetModel = ARGON;
+  if (targetModel === HYDROGEN && input.availableModelIds.includes(NEON)) {
+    targetModel = NEON;
     escalated = true;
   }
 
+  const isLatencySensitiveToolTurn = input.requestedTools.length > 0;
   const needsHighEffort =
     DEEP_PROOF_PATTERN.test(input.userText) &&
     !input.requestedTools.includes("webSearch");
 
   const targetEffort: ActiveReasoningEffort = needsHighEffort
     ? "high"
-    : input.baseEffort === "high"
-      ? "high"
-      : "medium";
+    : isLatencySensitiveToolTurn
+      ? "medium"
+      : targetModel === NEON
+        ? "high"
+        : input.baseEffort === "high"
+          ? "high"
+          : "medium";
 
   if (targetEffort !== normalizedBase) {
     escalated = true;

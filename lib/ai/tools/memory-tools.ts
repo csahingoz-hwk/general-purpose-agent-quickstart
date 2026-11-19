@@ -5,6 +5,7 @@ import {
   type MemoryTurnDedupeState,
 } from "@/lib/ai/routing/session";
 import {
+  areMemoryFactsSemanticallyEquivalent,
   deriveFactKey,
   toSelfContainedSentence,
 } from "@/lib/memory/bulk-import";
@@ -50,6 +51,8 @@ export function dedupeAssistantMemoryParts<
   });
 }
 
+export { dedupeTurnMemoryCardsAcrossMessages } from "@/lib/memory/bulk-import";
+
 export function createMemoryTools({
   userId,
   store,
@@ -93,11 +96,11 @@ export function createMemoryTools({
           "project",
           "general",
         ])
-        .default("about_me"),
+        .optional(),
       key: z.string().trim().min(2).max(120),
       value: z.string().trim().min(1).max(1500),
       pinned: z.boolean().optional(),
-      sharedAcrossBots: z.boolean().default(true),
+      sharedAcrossBots: z.boolean().optional(),
     }),
     execute: async ({ category, key, value, pinned, sharedAcrossBots }) => {
       try {
@@ -117,7 +120,11 @@ export function createMemoryTools({
           const sameFact =
             existingLower.includes(incomingLower) ||
             incomingLower.includes(existingLower) ||
-            state.savedFact.key === key.trim();
+            state.savedFact.key === key.trim() ||
+            areMemoryFactsSemanticallyEquivalent(
+              state.savedFact.value,
+              sentence
+            );
           if (dedupePerTurn || sameFact) {
             return {
               saved: true as const,
@@ -138,12 +145,12 @@ export function createMemoryTools({
 
         const writePromise = store.upsertProfileFact({
           userId,
-          category,
+          category: category ?? "about_me",
           key: key.trim().length >= 2 ? key : deriveFactKey(sentence),
           value: sentence,
           source: defaultSource,
           pinned,
-          sharedAcrossBots,
+          sharedAcrossBots: sharedAcrossBots ?? true,
         });
         state.inFlightSavePromise = writePromise;
         try {
@@ -194,16 +201,26 @@ export function createMemoryTools({
     inputSchema: z.object({
       title: z.string().trim().min(2).max(200),
       body: z.string().trim().min(2).max(4000),
-      tags: z.array(z.string().trim().min(1).max(40)).max(8).default([]),
+      tags: z.array(z.string().trim().min(1).max(40)).max(8).optional(),
     }),
     execute: async ({ title, body, tags }) => {
       try {
+        if (dedupePerTurn && state.inFlightSavePromise) {
+          await state.inFlightSavePromise;
+          return {
+            logged: false as const,
+            deduplicated: true as const,
+            skippedSensitive: false as const,
+            warning: "Profile memory was already saved on this turn.",
+          };
+        }
         if (state.savedJournal) {
           const sameEntry =
             state.savedJournal.title.trim().toLowerCase() ===
               title.trim().toLowerCase() ||
             state.savedJournal.body.trim().toLowerCase() ===
-              body.trim().toLowerCase();
+              body.trim().toLowerCase() ||
+            areMemoryFactsSemanticallyEquivalent(state.savedJournal.body, body);
           if (dedupePerTurn || sameEntry) {
             return {
               logged: true as const,
@@ -224,7 +241,7 @@ export function createMemoryTools({
           userId,
           title,
           body,
-          tags,
+          tags: tags ?? [],
           source: "chat",
         });
         state.savedJournal = entry;

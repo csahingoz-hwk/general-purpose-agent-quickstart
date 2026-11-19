@@ -20,7 +20,7 @@ import {
   REGISTERED_APP_MODEL_IDS,
 } from "../../lib/ai/models";
 import { systemPrompt } from "../../lib/ai/prompts";
-import { ARGON, HYDROGEN } from "../../lib/ai/routing/catalog";
+import { HYDROGEN, NEON } from "../../lib/ai/routing/catalog";
 import { summarizeCallsByModel } from "../../lib/ai/routing/ledger";
 import { createVertexGeminiAdapter } from "../../lib/ai/vertex-model";
 import {
@@ -69,7 +69,7 @@ test("Capability manifest lists all 14 wired capabilities, injects into chat & v
     "memory",
     "routines",
     "model_hydrogen",
-    "model_argon",
+    "model_neon",
     "model_copilot_fallback",
   ]);
 
@@ -99,7 +99,7 @@ test("Capability manifest lists all 14 wired capabilities, injects into chat & v
     );
     assert.match(
       prompt,
-      /\[Model: Gemini 4 Argon.*\] state=connected_and_healthy/
+      /\[Model: Gemini 4 Neon.*\] state=connected_and_healthy/
     );
     assert.match(
       prompt,
@@ -173,10 +173,10 @@ test("Connected -> used: connected tools are offered by default (regexes only ra
     );
   }
 
-  // Everyday turn with passive connected operator tools must NOT escalate to Argon
+  // Everyday turn with passive connected operator tools must NOT escalate to Neon
   const turnRouting = resolveTurnModelAndEffort({
     selectedModelId: HYDROGEN,
-    availableModelIds: [HYDROGEN, ARGON],
+    availableModelIds: [HYDROGEN, NEON],
     userText: "Bugün gözden kaçırdığım acil bir konu var mı?",
     requestedTools: unhinted.intentMatchedTools,
   });
@@ -478,15 +478,15 @@ test("Erroring -> records exact technical cause + retry/reconnect action + Setup
   }
 });
 
-test("Model registry contains only Vertex (Hydrogen/Argon) and Copilot Haiku", () => {
+test("Model registry contains only Vertex (Hydrogen/Neon) and Copilot Haiku", () => {
   assert.deepEqual(
     chatModels.map((m) => m.id),
-    ["gemini-4-hydrogen", "gemini-4-argon"]
+    ["gemini-4-hydrogen", "gemini-4-neon"]
   );
   assert.equal(FALLBACK_CHAT_MODEL, "claude-haiku-5.5");
   assert.deepEqual(REGISTERED_APP_MODEL_IDS, [
     "gemini-4-hydrogen",
-    "gemini-4-argon",
+    "gemini-4-neon",
     "claude-haiku-5.5",
   ]);
 });
@@ -599,7 +599,7 @@ test("Google Cloud Vertex billing reports MTD cost vs remaining credit (1h cache
 
   const perModel = summarizeCallsByModel([
     { model: "gemini-4-hydrogen", inputTokens: 100_000, outputTokens: 20_000 },
-    { model: "gemini-4-argon", inputTokens: 40_000, outputTokens: 10_000 },
+    { model: "gemini-4-neon", inputTokens: 40_000, outputTokens: 10_000 },
     { model: "claude-haiku-5.5", inputTokens: 15_000, outputTokens: 5000 },
   ]);
   assert.equal(perModel.length, 3);

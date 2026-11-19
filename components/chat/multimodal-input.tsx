@@ -361,12 +361,12 @@ function PureMultimodalInput({
           ...successfullyUploadedAttachments,
         ]);
       } catch (_error) {
-        toast.error("Failed to upload files");
+        toast.error(copy.uploadFilesFailedToast);
       } finally {
         setUploadQueue([]);
       }
     },
-    [setAttachments, uploadFile]
+    [copy.uploadFilesFailedToast, setAttachments, uploadFile]
   );
 
   const handlePaste = useCallback(
@@ -445,11 +445,13 @@ function PureMultimodalInput({
 
       <input
         accept=".pdf,.csv,application/pdf,text/csv,image/jpeg,image/png"
+        aria-label={copy.chooseFile}
         className="pointer-events-none fixed -top-4 -left-4 size-0.5 opacity-0"
         multiple
         onChange={handleFileChange}
         ref={fileInputRef}
         tabIndex={-1}
+        title={copy.chooseFile}
         type="file"
       />
 
@@ -470,8 +472,8 @@ function PureMultimodalInput({
           data-testid="model-readiness-status"
         >
           {checkingModels
-            ? "Checking chat availability…"
-            : "Chat setup is not complete yet. Your message will stay here until chat is ready."}
+            ? copy.checkingChatAvailability
+            : copy.chatSetupIncomplete}
         </output>
       )}
       <PromptInput
@@ -491,7 +493,7 @@ function PureMultimodalInput({
           if (status === "ready" || status === "error") {
             submitForm();
           } else {
-            toast.error("Please wait for the model to finish its response!");
+            toast.error(copy.waitForResponseToast);
           }
         }}
       >
@@ -729,7 +731,9 @@ function PureModelSelectorCompact({
   const selected = models.find((model) => model.id === selectedModelId);
   if (!selected) {
     return (
-      <span className="px-2 text-sm text-muted-foreground">Chat not ready</span>
+      <span className="px-2 text-sm text-muted-foreground">
+        {copy.chatNotReady}
+      </span>
     );
   }
   return (

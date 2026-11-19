@@ -16,9 +16,9 @@ import {
   createMultiSearchRecoveryStream,
 } from "../../lib/ai/multi-search-fallback";
 import {
-  ARGON,
   HYDROGEN,
   LUNA,
+  NEON,
   TERRA,
   WEB_SEARCH_COST_USD,
   WEB_SEARCH_TOOL_ID,
@@ -365,9 +365,9 @@ test("Multi-search recovery stream synthesizes answer with sources and closes da
   );
 });
 
-test("Vertex AI Ultra zero pay-per-use routing: ONLY Hydrogen & Argon in chatModels, zero silent fallback to Terra/Luna, plain-English error + retry on failure, live voice on Vertex gemini-3.8-live, and Korn Ferry firewall", async () => {
+test("Vertex AI Ultra zero pay-per-use routing: ONLY Hydrogen & Neon in chatModels, zero silent fallback to Terra/Luna, plain-English error + retry on failure, live voice on Vertex gemini-3.8-live, and Korn Ferry firewall", async () => {
   assert.equal(DEFAULT_CHAT_MODEL, HYDROGEN);
-  assert.equal(ESCALATED_RESEARCH_MODEL, ARGON);
+  assert.equal(ESCALATED_RESEARCH_MODEL, NEON);
   assert.equal(DEFAULT_LIVE_MODEL, "gemini-3.8-live");
 
   const ids: string[] = chatModels.map((m) => m.id);
@@ -379,7 +379,7 @@ test("Vertex AI Ultra zero pay-per-use routing: ONLY Hydrogen & Argon in chatMod
   );
   assert.deepEqual(
     ids,
-    [HYDROGEN, ARGON],
+    [HYDROGEN, NEON],
     "Only Google AI Ultra Vertex models may appear in chatModels (zero pay-per-use models)"
   );
   for (const model of chatModels) {
@@ -390,12 +390,12 @@ test("Vertex AI Ultra zero pay-per-use routing: ONLY Hydrogen & Argon in chatMod
     chatModels.find((m) => m.id === HYDROGEN)?.name,
     "Gemini 4 Hydrogen"
   );
-  assert.equal(chatModels.find((m) => m.id === ARGON)?.name, "Gemini 4 Argon");
+  assert.equal(chatModels.find((m) => m.id === NEON)?.name, "Gemini 4 Neon");
 
   // Everyday trivial turn stays on Gemini 4 Hydrogen with fast `low` effort (~1s TTFT)
   const trivial = resolveTurnModelAndEffort({
     selectedModelId: HYDROGEN,
-    availableModelIds: [HYDROGEN, ARGON, TERRA],
+    availableModelIds: [HYDROGEN, NEON, TERRA],
     userText: "Merhaba, nasılsın?",
     requestedTools: [],
     baseEffort: "low",
@@ -404,26 +404,26 @@ test("Vertex AI Ultra zero pay-per-use routing: ONLY Hydrogen & Argon in chatMod
   assert.equal(trivial.reasoningEffort, "low");
   assert.equal(trivial.escalated, false);
 
-  // Research / multi-search / hard questions auto-escalate Hydrogen -> Argon with medium+ effort
+  // Research / multi-search / hard questions auto-escalate Hydrogen -> Neon with medium+ effort
   const escalatedSearch = resolveTurnModelAndEffort({
     selectedModelId: HYDROGEN,
-    availableModelIds: [HYDROGEN, ARGON, TERRA],
+    availableModelIds: [HYDROGEN, NEON, TERRA],
     userText: "En çok kazanan CEO'lar ve yıllık kazançları nelerdir?",
     requestedTools: ["webSearch"],
     baseEffort: "low",
   });
-  assert.equal(escalatedSearch.modelId, ARGON);
+  assert.equal(escalatedSearch.modelId, NEON);
   assert.equal(escalatedSearch.reasoningEffort, "medium");
   assert.equal(escalatedSearch.escalated, true);
 
   const deepProof = resolveTurnModelAndEffort({
     selectedModelId: HYDROGEN,
-    availableModelIds: [HYDROGEN, ARGON, TERRA],
+    availableModelIds: [HYDROGEN, NEON, TERRA],
     userText: "Prove this theorem and find the root cause of the deadlock",
     requestedTools: [],
     baseEffort: "low",
   });
-  assert.equal(deepProof.modelId, ARGON);
+  assert.equal(deepProof.modelId, NEON);
   assert.equal(deepProof.reasoningEffort, "high");
 
   // Zero-key Vertex WIF token exchange uses STS + x-vercel-oidc-token, NEVER GEMINI_API_KEY
@@ -501,7 +501,7 @@ test("Vertex AI Ultra zero pay-per-use routing: ONLY Hydrogen & Argon in chatMod
     // Korn Ferry firewall blocks BEFORE any network call AND never falls back
     let kfNetworkCalls = 0;
     const kfSession: InferenceSession = {
-      available: [HYDROGEN, ARGON, TERRA],
+      available: [HYDROGEN, NEON, TERRA],
       exposed: false,
       toolBoundary: false,
       fallbackUsed: false,
@@ -514,7 +514,7 @@ test("Vertex AI Ultra zero pay-per-use routing: ONLY Hydrogen & Argon in chatMod
       HYDROGEN,
       kfSession,
       (id) =>
-        id === HYDROGEN || id === ARGON
+        id === HYDROGEN || id === NEON
           ? createVertexGeminiAdapter(id, {
               fetcher: () => {
                 kfNetworkCalls++;
@@ -568,12 +568,12 @@ test("Vertex AI Ultra zero pay-per-use routing: ONLY Hydrogen & Argon in chatMod
     clearVertexTokenCacheForTests();
   }
 
-  // Zero automatic fallback on Vertex AI models: neither Argon nor Hydrogen
+  // Zero automatic fallback on Vertex AI models: neither Neon nor Hydrogen
   // silently switches to Terra, Luna, or any paid Gateway model on failure.
-  for (const primary of [ARGON, HYDROGEN] as const) {
+  for (const primary of [NEON, HYDROGEN] as const) {
     const hopOrder: string[] = [];
     const noFallbackSession: InferenceSession = {
-      available: [HYDROGEN, ARGON, TERRA, LUNA],
+      available: [HYDROGEN, NEON, TERRA, LUNA],
       exposed: false,
       toolBoundary: false,
       fallbackUsed: false,
@@ -670,7 +670,7 @@ test("Zero-wait Vertex ledger, immediate search progress, and all 6 generative U
     "",
   ].join("\n");
 
-  const searchStreamAdapter = createVertexGeminiAdapter(ARGON, {
+  const searchStreamAdapter = createVertexGeminiAdapter(NEON, {
     projectId: "project-cd0bc64c-0025-446c-b41",
     getAccessToken: () => Promise.resolve("tok"),
     fetcher: () =>
@@ -765,7 +765,7 @@ test("Zero-wait Vertex ledger, immediate search progress, and all 6 generative U
 
   const compPayload = buildOpenUiPayload(
     [{ type: "text", text: comparisonAnswer }],
-    ARGON
+    NEON
   );
   assert.ok(compPayload);
   assert.equal(validateOpenUiSpec(compPayload.spec, compPayload.data).ok, true);
@@ -825,7 +825,7 @@ test("Zero-wait Vertex ledger, immediate search progress, and all 6 generative U
   ].join("\n");
   const chartPayload = buildOpenUiPayload(
     [{ type: "text", text: chartAnswer }],
-    ARGON
+    NEON
   );
   assert.ok(chartPayload);
   assert.equal(

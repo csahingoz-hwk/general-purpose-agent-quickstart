@@ -87,7 +87,7 @@ export type MergeProgressEvent = {
 };
 
 export type MergeModelUsed =
-  | "gemini-4-argon"
+  | "gemini-4-neon"
   | "gemini-4-hydrogen"
   | "claude-haiku-5.5"
   | "local-deterministic";
@@ -818,7 +818,7 @@ export function deterministicFallbackMerge(
 export type VertexMergeRunner = (input: {
   candidates: readonly ExtractedCandidateStatement[];
   existingFacts: readonly ProfileFact[];
-  preferredModel: "gemini-4-argon" | "gemini-4-hydrogen";
+  preferredModel: "gemini-4-neon" | "gemini-4-hydrogen";
 }) => Promise<{
   payload: VertexMergeStructuredPayload;
   modelUsed: MergeModelUsed;
@@ -889,14 +889,14 @@ export type MergeTextGenerator = {
  * Per-chunk resilient model chain:
  * 1) `gemini-4-hydrogen` (`low` effort, `maxOutputTokens: 16384`, `timeoutMs: 45s`)
  * 2) Retry once on `gemini-4-hydrogen`
- * 3) Escalate to `gemini-4-argon` (`medium` effort, `maxOutputTokens: 16384`, `timeoutMs: 55s`)
+ * 3) Escalate to `gemini-4-neon` (`medium` effort, `maxOutputTokens: 16384`, `timeoutMs: 55s`)
  * 4) Fallback to `claude-haiku-5.5` via GitHub Copilot SDK on Cloud VM bridge
  */
 export function createResilientChunkMergeRunner(deps?: {
   hasVertex?: boolean;
   hasCopilot?: boolean;
   createVertexModel?: (
-    modelId: "gemini-4-hydrogen" | "gemini-4-argon",
+    modelId: "gemini-4-hydrogen" | "gemini-4-neon",
     opts: { timeoutMs: number }
   ) => MergeTextGenerator;
   createCopilotModel?: (opts: { timeoutMs: number }) => MergeTextGenerator;
@@ -933,13 +933,13 @@ export function createResilientChunkMergeRunner(deps?: {
         deps?.createVertexModel ??
         (await import("@/lib/ai/vertex-model")).createVertexGeminiAdapter;
       const vertexPlan: ReadonlyArray<{
-        modelId: "gemini-4-hydrogen" | "gemini-4-argon";
+        modelId: "gemini-4-hydrogen" | "gemini-4-neon";
         effort: "low" | "medium";
         timeoutMs: number;
       }> = [
         { modelId: "gemini-4-hydrogen", effort: "low", timeoutMs: 45_000 },
         { modelId: "gemini-4-hydrogen", effort: "low", timeoutMs: 45_000 },
-        { modelId: "gemini-4-argon", effort: "medium", timeoutMs: 55_000 },
+        { modelId: "gemini-4-neon", effort: "medium", timeoutMs: 55_000 },
       ];
 
       for (const step of vertexPlan) {
@@ -1139,7 +1139,7 @@ const STATUS_DISPLAY_ORDER: Record<MergedMemoryPreviewStatus, number> = {
 
 const MODEL_PRIORITY_RANK: Record<MergeModelUsed, number> = {
   "claude-haiku-5.5": 3,
-  "gemini-4-argon": 2,
+  "gemini-4-neon": 2,
   "gemini-4-hydrogen": 1,
   "local-deterministic": 0,
 };
@@ -1253,10 +1253,10 @@ export async function mergeMemoryExports(input: {
 
     const distinctSourceCount = new Set(safeCandidates.map((c) => c.source))
       .size;
-    const preferredModel: "gemini-4-argon" | "gemini-4-hydrogen" =
+    const preferredModel: "gemini-4-neon" | "gemini-4-hydrogen" =
       chunks.length === 1 &&
       (distinctSourceCount >= 3 || safeCandidates.length > 20)
-        ? "gemini-4-argon"
+        ? "gemini-4-neon"
         : "gemini-4-hydrogen";
 
     const runMerge = input.runner ?? defaultVertexMergeRunner;

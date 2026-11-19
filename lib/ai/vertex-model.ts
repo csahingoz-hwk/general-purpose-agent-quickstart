@@ -245,6 +245,90 @@ function extractInlineBase64(
 
 const SPLIT_WEB_SEARCH_FN_NAME = "__vertexGroundedWebSearch";
 
+const VISUAL_SINGLETON_TOOLS = new Set<string>([
+  "buildHtmlPageOrDashboard",
+  "createExcalidrawDiagram",
+  "generateInfographic",
+]);
+
+function extractPartThoughtSignature(part: {
+  providerOptions?: Record<string, unknown>;
+  providerMetadata?: Record<string, unknown>;
+}): string | undefined {
+  const fromOptions = (
+    part.providerOptions?.vertex as { thoughtSignature?: unknown } | undefined
+  )?.thoughtSignature;
+  if (typeof fromOptions === "string" && fromOptions.length > 0) {
+    return fromOptions;
+  }
+  const fromMeta = (
+    part.providerMetadata?.vertex as { thoughtSignature?: unknown } | undefined
+  )?.thoughtSignature;
+  if (typeof fromMeta === "string" && fromMeta.length > 0) {
+    return fromMeta;
+  }
+  return undefined;
+}
+
+/**
+ * Coerces structured objects/arrays returned by Gemini in `*Json` string fields
+ * (such as `elementsJson` or `charts[].optionJson`) into valid JSON strings so
+ * AI SDK's `z.string()` schema check never rejects valid structured values.
+ */
+export function normalizeVertexFunctionArgs(
+  rawArgs: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  if (!rawArgs || typeof rawArgs !== "object" || Array.isArray(rawArgs)) {
+    return {};
+  }
+  const coerceValue = (key: string, val: unknown): unknown => {
+    if (
+      key.endsWith("Json") &&
+      val !== null &&
+      val !== undefined &&
+      typeof val === "object"
+    ) {
+      return JSON.stringify(val);
+    }
+    if (Array.isArray(val)) {
+      return val.map((item) => {
+        if (item && typeof item === "object" && !Array.isArray(item)) {
+          const outItem: Record<string, unknown> = {};
+          for (const [ik, iv] of Object.entries(
+            item as Record<string, unknown>
+          )) {
+            outItem[ik] = coerceValue(ik, iv);
+          }
+          return outItem;
+        }
+        return item;
+      });
+    }
+    return val;
+  };
+  const normalized: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(rawArgs)) {
+    normalized[k] = coerceValue(k, v);
+  }
+  return normalized;
+}
+
+function appendVertexContent(
+  contents: VertexContent[],
+  role: "user" | "model",
+  parts: VertexPart[]
+): void {
+  if (parts.length === 0) {
+    return;
+  }
+  const prev = contents.at(-1);
+  if (prev && prev.role === role) {
+    prev.parts.push(...parts);
+    return;
+  }
+  contents.push({ role, parts });
+}
+
 export function buildVertexRequestBody(
   modelId: VertexModelId,
   params: LanguageModelV4CallOptions
@@ -272,20 +356,19 @@ export function buildVertexRequestBody(
           }
         }
       }
-      if (parts.length > 0) {
-        contents.push({ role: "user", parts });
-      }
+      appendVertexContent(contents, "user", parts);
       continue;
     }
 
     if (msg.role === "assistant") {
       const parts: VertexPart[] = [];
       for (const part of msg.content) {
-        const thoughtSignature = (
-          part.providerOptions?.vertex as
-            | { thoughtSignature?: string }
-            | undefined
-        )?.thoughtSignature;
+        const thoughtSignature = extractPartThoughtSignature(
+          part as {
+            providerOptions?: Record<string, unknown>;
+            providerMetadata?: Record<string, unknown>;
+          }
+        );
         if (part.type === "text" && part.text) {
           parts.push({
             text: part.text,
@@ -302,9 +385,10 @@ export function buildVertexRequestBody(
           } else if (part.input && typeof part.input === "object") {
             parsedArgs = part.input as Record<string, unknown>;
           }
+          // Vertex AI `/v1/` FunctionCall accepts `{ name, args }` ONLY — sending `id`
+          // causes HTTP 400 INVALID_ARGUMENT (`Unknown name "id"`).
           parts.push({
             functionCall: {
-              id: part.toolCallId,
               name: part.toolName,
               args: parsedArgs,
             },
@@ -312,15 +396,38 @@ export function buildVertexRequestBody(
           });
         }
       }
-      if (parts.length > 0) {
-        contents.push({ role: "model", parts });
-      }
+      appendVertexContent(contents, "model", parts);
       continue;
     }
 
     if (msg.role === "tool") {
       const parts: VertexPart[] = [];
       for (const part of msg.content) {
+        const rawPart = part as unknown as {
+          type: string;
+          toolName?: string;
+          output?: {
+            type?: string;
+            value?: unknown;
+            reason?: string;
+          };
+          error?: unknown;
+        };
+        if (rawPart.type === "tool-error" && rawPart.toolName) {
+          const errMessage =
+            rawPart.error instanceof Error
+              ? rawPart.error.message
+              : typeof rawPart.error === "string"
+                ? rawPart.error
+                : JSON.stringify(rawPart.error ?? "Tool execution failed.");
+          parts.push({
+            functionResponse: {
+              name: rawPart.toolName,
+              response: { status: "error", error: errMessage },
+            },
+          });
+          continue;
+        }
         if (part.type !== "tool-result") {
           continue;
         }
@@ -330,22 +437,35 @@ export function buildVertexRequestBody(
           responseObj = Array.isArray(out.value)
             ? { items: out.value }
             : (out.value as Record<string, unknown>);
-        } else if (out.type === "text" || out.type === "error-text") {
+        } else if (out.type === "error-json") {
+          responseObj =
+            out.value &&
+            typeof out.value === "object" &&
+            !Array.isArray(out.value)
+              ? { status: "error", ...(out.value as Record<string, unknown>) }
+              : { status: "error", error: out.value ?? "Tool input error" };
+        } else if (out.type === "error-text") {
+          responseObj = { status: "error", error: out.value };
+        } else if (out.type === "execution-denied") {
+          responseObj = {
+            status: "denied",
+            reason: out.reason ?? "Action declined by user.",
+          };
+        } else if (out.type === "text") {
           responseObj = { result: out.value };
         } else {
           responseObj = { result: JSON.stringify(out) };
         }
+        // Vertex AI `/v1/` FunctionResponse accepts `{ name, response }` ONLY —
+        // sending `id` causes HTTP 400 INVALID_ARGUMENT (`Unknown name "id"`).
         parts.push({
           functionResponse: {
-            id: part.toolCallId,
             name: part.toolName,
             response: responseObj,
           },
         });
       }
-      if (parts.length > 0) {
-        contents.push({ role: "user", parts });
-      }
+      appendVertexContent(contents, "user", parts);
     }
   }
 
@@ -403,30 +523,48 @@ export function buildVertexRequestBody(
 
   const requestedEffort = (
     params.providerOptions?.openai as { reasoningEffort?: string } | undefined
-  )?.reasoningEffort;
-  const thinkingLevel =
+  )?.reasoningEffort?.toLowerCase();
+  // Gemini 4 Neon: default thinking_level is HIGH; thinking_budget and MINIMAL return HTTP 400.
+  // Use LOW, MEDIUM, or HIGH only (MEDIUM for latency-sensitive turns).
+  const thinkingLevel: "LOW" | "MEDIUM" | "HIGH" =
     requestedEffort === "high"
       ? "HIGH"
-      : requestedEffort === "low" && modelId === "gemini-4-hydrogen"
-        ? "LOW"
-        : "MEDIUM";
+      : requestedEffort === "medium"
+        ? "MEDIUM"
+        : requestedEffort === "low" ||
+            requestedEffort === "minimal" ||
+            requestedEffort === "none"
+          ? "LOW"
+          : modelId === "gemini-4-neon"
+            ? "HIGH"
+            : "MEDIUM";
 
   // Vertex Gemini 4 counts `thoughtsTokenCount` toward `generationConfig.maxOutputTokens`.
   // Add thinking headroom on top of the caller's visible-text `maxOutputTokens` budget
   // so deep reasoning never starves or truncates the visible answer.
   const thinkingHeadroom =
-    modelId === "gemini-4-argon" || thinkingLevel === "HIGH"
+    modelId === "gemini-4-neon" || thinkingLevel === "HIGH"
       ? 8192
       : thinkingLevel === "MEDIUM"
         ? 4096
         : 1024;
   const visibleBudget = params.maxOutputTokens ?? 8192;
+  // Historical tool calls reloaded from Postgres do not store `thoughtSignature`.
+  // When any prior `functionCall` in `contents` lacks a signature, omit `thinkingConfig`
+  // so Vertex `/v1/` never rejects multi-turn history with 400 `missing thought_signature`.
+  const hasUnsignedFunctionCall = contents.some((item) =>
+    item.parts.some((p) => Boolean(p.functionCall) && !p.thoughtSignature)
+  );
 
   const generationConfig: Record<string, unknown> = {
     maxOutputTokens: Math.min(32_768, visibleBudget + thinkingHeadroom),
-    thinkingConfig: {
-      thinkingLevel,
-    },
+    ...(hasUnsignedFunctionCall
+      ? {}
+      : {
+          thinkingConfig: {
+            thinkingLevel,
+          },
+        }),
   };
 
   if (params.temperature !== undefined) {
@@ -487,19 +625,37 @@ function buildGroundingSearchResults(
   return { queries, results };
 }
 
+export const ALLOWED_VERTEX_LOCATIONS = ["global", "us", "eu"] as const;
+export type AllowedVertexLocation = (typeof ALLOWED_VERTEX_LOCATIONS)[number];
+
+/**
+ * Gemini 4 Neon requires `global` (or multi-region `us`/`eu`); regional endpoints
+ * like `europe-west2` are never used.
+ */
+export function resolveVertexLocation(
+  raw = process.env.GOOGLE_VERTEX_LOCATION
+): AllowedVertexLocation {
+  const clean = (raw ?? "").trim().toLowerCase();
+  if (clean === "global" || clean === "us" || clean === "eu") {
+    return clean;
+  }
+  return "global";
+}
+
 export function createVertexGeminiAdapter(
   modelId: VertexModelId,
   deps?: {
     fetcher?: typeof fetch;
     getAccessToken?: () => Promise<string>;
     projectId?: string;
+    location?: string;
     timeoutMs?: number;
   }
 ): LanguageModelV4 {
   const fetcher = deps?.fetcher ?? fetch;
   const resolveToken =
     deps?.getAccessToken ?? (() => getVertexWifAccessToken(fetcher));
-  const defaultTimeoutMs = modelId === "gemini-4-argon" ? 55_000 : 35_000;
+  const defaultTimeoutMs = modelId === "gemini-4-neon" ? 55_000 : 35_000;
   const upstreamTimeoutMs = Math.max(
     250,
     deps?.timeoutMs ??
@@ -538,10 +694,15 @@ export function createVertexGeminiAdapter(
   function endpointFor(projectId: string, streaming: boolean): string {
     const encodedProject = encodeURIComponent(projectId);
     const encodedModel = encodeURIComponent(modelId);
+    const loc = resolveVertexLocation(deps?.location);
+    const host =
+      loc === "global"
+        ? "aiplatform.googleapis.com"
+        : `${loc}-aiplatform.googleapis.com`;
     const action = streaming
       ? "streamGenerateContent?alt=sse"
       : "generateContent";
-    return `https://aiplatform.googleapis.com/v1/projects/${encodedProject}/locations/global/publishers/google/models/${encodedModel}:${action}`;
+    return `https://${host}/v1/projects/${encodedProject}/locations/${loc}/publishers/google/models/${encodedModel}:${action}`;
   }
 
   return {
@@ -621,14 +782,29 @@ export function createVertexGeminiAdapter(
       }
 
       let hasToolCalls = false;
-      for (const part of candidate?.content?.parts ?? []) {
+      const candidateParts = candidate?.content?.parts ?? [];
+      let fallbackSignature: string | undefined;
+      for (const p of candidateParts) {
+        if (p.thoughtSignature) {
+          fallbackSignature = p.thoughtSignature;
+        }
+      }
+      const seenSingletonVisualInGen = new Set<string>();
+      for (const part of candidateParts) {
         if (part.thought) {
           continue;
         }
-        const providerMetadata = part.thoughtSignature
-          ? { vertex: { thoughtSignature: part.thoughtSignature } }
+        const sig = part.thoughtSignature ?? fallbackSignature;
+        const providerMetadata = sig
+          ? { vertex: { thoughtSignature: sig } }
           : undefined;
         if (part.functionCall) {
+          if (VISUAL_SINGLETON_TOOLS.has(part.functionCall.name)) {
+            if (seenSingletonVisualInGen.has(part.functionCall.name)) {
+              continue;
+            }
+            seenSingletonVisualInGen.add(part.functionCall.name);
+          }
           hasToolCalls = true;
           content.push({
             type: "tool-call",
@@ -636,7 +812,9 @@ export function createVertexGeminiAdapter(
               part.functionCall.id ||
               `vcall-${Math.random().toString(36).slice(2, 10)}`,
             toolName: part.functionCall.name,
-            input: JSON.stringify(part.functionCall.args ?? {}),
+            input: JSON.stringify(
+              normalizeVertexFunctionArgs(part.functionCall.args)
+            ),
             ...(providerMetadata ? { providerMetadata } : {}),
           });
         } else if (typeof part.text === "string" && part.text.length > 0) {
@@ -746,6 +924,34 @@ export function createVertexGeminiAdapter(
       let immediateSearchStarted = false;
       let immediateSearchResolved = false;
       const deferredGroundedQueries: string[] = [];
+      const seenSingletonVisualInStream = new Set<string>();
+      const pendingToolCalls: Array<{
+        toolCallId: string;
+        toolName: string;
+        input: string;
+        partSignature?: string;
+      }> = [];
+
+      function flushPendingToolCalls(
+        controller: ReadableStreamDefaultController<LanguageModelV4StreamPart>
+      ) {
+        while (pendingToolCalls.length > 0) {
+          const tc = pendingToolCalls.shift();
+          if (!tc) {
+            continue;
+          }
+          const sig = tc.partSignature ?? latestThoughtSignature;
+          controller.enqueue({
+            type: "tool-call",
+            toolCallId: tc.toolCallId,
+            toolName: tc.toolName,
+            input: tc.input,
+            ...(sig
+              ? { providerMetadata: { vertex: { thoughtSignature: sig } } }
+              : {}),
+          });
+        }
+      }
 
       function processPayload(
         payload: VertexResponsePayload,
@@ -803,6 +1009,12 @@ export function createVertexGeminiAdapter(
               }
               continue;
             }
+            if (VISUAL_SINGLETON_TOOLS.has(part.functionCall.name)) {
+              if (seenSingletonVisualInStream.has(part.functionCall.name)) {
+                continue;
+              }
+              seenSingletonVisualInStream.add(part.functionCall.name);
+            }
             if (textOpen) {
               controller.enqueue({
                 type: "text-end",
@@ -821,16 +1033,16 @@ export function createVertexGeminiAdapter(
             const callId =
               part.functionCall.id ||
               `vcall-${Math.random().toString(36).slice(2, 10)}`;
-            const serializedArgs = JSON.stringify(part.functionCall.args ?? {});
-            const sig = part.thoughtSignature ?? latestThoughtSignature;
-            controller.enqueue({
-              type: "tool-call",
+            const serializedArgs = JSON.stringify(
+              normalizeVertexFunctionArgs(part.functionCall.args)
+            );
+            // Buffer tool-call emission until SSE stream ends so trailing
+            // `thoughtSignature` chunks attach cleanly for Step-2 Vertex calls.
+            pendingToolCalls.push({
               toolCallId: callId,
               toolName: part.functionCall.name,
               input: serializedArgs,
-              ...(sig
-                ? { providerMetadata: { vertex: { thoughtSignature: sig } } }
-                : {}),
+              partSignature: part.thoughtSignature,
             });
             continue;
           }
@@ -900,6 +1112,7 @@ export function createVertexGeminiAdapter(
                 });
                 textOpen = false;
               }
+              flushPendingToolCalls(controller);
 
               // If a mixed-tool turn invoked the split search function, execute a
               // dedicated `{ googleSearch: {} }`-only Vertex sub-call (zero functionDeclarations).
@@ -1003,6 +1216,7 @@ export function createVertexGeminiAdapter(
                       controller.enqueue({ type: "text-end", id: textId });
                       textOpen = false;
                     }
+                    flushPendingToolCalls(controller);
                     followReader.releaseLock();
                   }
                   return true;

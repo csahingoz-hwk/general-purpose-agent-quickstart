@@ -154,8 +154,8 @@ test("Step 1 Playwright Mobile E2E (390x844): 3-step agent turn updates TaskCard
               description: "Default · Vertex AI on Ultra credit",
             },
             {
-              id: "gemini-4-argon",
-              name: "Gemini 4 Argon",
+              id: "gemini-4-neon",
+              name: "Gemini 4 Neon",
               provider: "google",
               description: "Research & agent loop · Vertex AI on Ultra credit",
             },

@@ -20,11 +20,14 @@ const labelShorthandSchema = z.union([
 ]);
 
 const bindingSchema = z
-  .object({
-    elementId: z.string().trim().min(1).max(120),
-    focus: z.number().min(-2).max(2).optional(),
-    gap: z.number().min(0).max(64).optional(),
-  })
+  .union([
+    z.string().trim().min(1).max(120),
+    z.object({
+      elementId: z.string().trim().min(1).max(120),
+      focus: z.number().min(-4).max(4).optional(),
+      gap: z.number().min(0).max(120).optional(),
+    }),
+  ])
   .nullable()
   .optional();
 
@@ -33,26 +36,26 @@ export const excalidrawElementInputSchema = z.object({
   type: z.enum(EXCALIDRAW_ELEMENT_TYPES),
   x: z.number().finite().min(-20_000).max(20_000),
   y: z.number().finite().min(-20_000).max(20_000),
-  width: z.number().finite().min(0).max(10_000).optional(),
-  height: z.number().finite().min(0).max(10_000).optional(),
+  width: z.number().finite().min(-10_000).max(10_000).optional(),
+  height: z.number().finite().min(-10_000).max(10_000).optional(),
   strokeColor: z.string().trim().max(32).optional(),
   backgroundColor: z.string().trim().max(32).optional(),
   fillStyle: z.enum(["solid", "hachure", "cross-hatch"]).optional(),
-  strokeWidth: z.number().min(1).max(8).optional(),
+  strokeWidth: z.number().min(0.5).max(16).optional(),
   strokeStyle: z.enum(["solid", "dashed", "dotted"]).optional(),
-  roughness: z.number().min(0).max(2).optional(),
-  opacity: z.number().min(10).max(100).optional(),
-  text: z.string().max(600).optional(),
-  fontSize: z.number().min(10).max(64).optional(),
+  roughness: z.number().min(0).max(4).optional(),
+  opacity: z.number().min(0).max(100).optional(),
+  text: z.string().max(1200).optional(),
+  fontSize: z.number().min(8).max(96).optional(),
   label: labelShorthandSchema.optional(),
   points: z
     .array(z.tuple([z.number().finite(), z.number().finite()]))
-    .max(64)
+    .max(128)
     .optional(),
   startBinding: bindingSchema,
   endBinding: bindingSchema,
   endArrowhead: z
-    .enum(["arrow", "bar", "dot", "triangle"])
+    .enum(["arrow", "bar", "dot", "triangle", "none"])
     .nullable()
     .optional(),
   containerId: z.string().trim().max(120).nullable().optional(),
@@ -210,25 +213,32 @@ export function validateAndNormalizeExcalidrawScene(
               [0, 0],
               [width || 120, height || 0],
             ];
+      const normalizeBinding = (
+        b: typeof el.startBinding
+      ): Record<string, unknown> | null => {
+        if (!b) {
+          return null;
+        }
+        if (typeof b === "string") {
+          return { elementId: b, focus: 0, gap: 6 };
+        }
+        return {
+          elementId: b.elementId,
+          focus: b.focus ?? 0,
+          gap: b.gap ?? 6,
+        };
+      };
       baseElement.points = pts;
       baseElement.lastCommittedPoint = null;
-      baseElement.startBinding = el.startBinding
-        ? {
-            elementId: el.startBinding.elementId,
-            focus: el.startBinding.focus ?? 0,
-            gap: el.startBinding.gap ?? 6,
-          }
-        : null;
-      baseElement.endBinding = el.endBinding
-        ? {
-            elementId: el.endBinding.elementId,
-            focus: el.endBinding.focus ?? 0,
-            gap: el.endBinding.gap ?? 6,
-          }
-        : null;
+      baseElement.startBinding = normalizeBinding(el.startBinding);
+      baseElement.endBinding = normalizeBinding(el.endBinding);
       baseElement.startArrowhead = null;
       baseElement.endArrowhead =
-        el.type === "arrow" ? (el.endArrowhead ?? "arrow") : null;
+        el.type === "arrow"
+          ? el.endArrowhead === "none"
+            ? null
+            : (el.endArrowhead ?? "arrow")
+          : null;
     }
 
     if (el.type === "text") {

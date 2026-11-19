@@ -482,51 +482,51 @@ export function createVisualStudioTools(opts: {
       filename: z
         .string()
         .trim()
-        .min(3)
-        .max(100)
-        .default("dashboard.html")
+        .min(1)
+        .max(120)
+        .optional()
         .describe("Output HTML filename, e.g. 'sales_dashboard.html'."),
-      title: z.string().trim().min(2).max(140),
-      subtitle: z.string().trim().max(240).optional(),
+      title: z.string().trim().min(1).max(300),
+      subtitle: z.string().trim().max(600).optional(),
       kpis: z
         .array(
           z.object({
-            label: z.string().trim().min(1).max(80),
-            value: z.string().trim().min(1).max(60),
-            delta: z.string().trim().max(60).optional(),
+            label: z.string().trim().min(1).max(180),
+            value: z.string().trim().min(1).max(120),
+            delta: z.string().trim().max(120).optional(),
             tone: z.enum(["positive", "negative", "neutral"]).optional(),
           })
         )
-        .max(8)
+        .max(16)
         .optional(),
       charts: z
         .array(
           z.object({
-            title: z.string().trim().min(1).max(120),
-            subtitle: z.string().trim().max(160).optional(),
-            heightPx: z.number().int().min(220).max(640).optional(),
+            title: z.string().trim().min(1).max(240),
+            subtitle: z.string().trim().max(320).optional(),
+            heightPx: z.number().int().min(160).max(900).optional(),
             optionJson: z
               .string()
               .trim()
               .min(2)
-              .max(24_000)
+              .max(64_000)
               .describe(
                 'JSON-serialized Apache ECharts option object, e.g. \'{"xAxis":{"type":"category","data":["Q1","Q2"]},"yAxis":{"type":"value"},"series":[{"type":"bar","data":[12,19]}]}\'.'
               ),
           })
         )
-        .max(6)
+        .max(10)
         .optional(),
       bodyHtml: z
         .string()
-        .max(60_000)
+        .max(80_000)
         .optional()
         .describe(
           "Optional semantic HTML body content (tables, cards, dated news links)."
         ),
       fullHtml: z
         .string()
-        .max(96_000)
+        .max(120_000)
         .optional()
         .describe("Optional complete single-file HTML document override."),
     }),
@@ -543,8 +543,13 @@ export function createVisualStudioTools(opts: {
       const parsedCharts: DashboardChartInput[] = [];
       for (const chart of input.charts ?? []) {
         let parsedOption: unknown;
+        const cleanedJson = chart.optionJson
+          .trim()
+          .replace(/^```(?:json)?\s*/i, "")
+          .replace(/\s*```$/, "")
+          .trim();
         try {
-          parsedOption = JSON.parse(chart.optionJson);
+          parsedOption = JSON.parse(cleanedJson);
         } catch {
           return {
             status: "error" as const,
@@ -571,9 +576,10 @@ export function createVisualStudioTools(opts: {
         });
       }
 
-      const rawBase = input.filename.toLowerCase().endsWith(".html")
-        ? input.filename
-        : `${input.filename}.html`;
+      const requestedFilename = input.filename?.trim() || "dashboard.html";
+      const rawBase = requestedFilename.toLowerCase().endsWith(".html")
+        ? requestedFilename
+        : `${requestedFilename}.html`;
       const safeName = sanitizeAttachmentFilename(rawBase);
       const html = composeSingleFileHtmlDashboard({
         title: input.title,
@@ -676,42 +682,54 @@ export function createVisualStudioTools(opts: {
         textPreview: html.slice(0, 48_000),
       };
     },
+    toModelOutput: ({ output }) => ({
+      type: "json" as const,
+      value:
+        output.status === "ok"
+          ? {
+              status: "ok",
+              kind: output.kind,
+              title: output.title,
+              filename: output.filename,
+              path: output.path,
+              sizeBytes: output.sizeBytes,
+              note: "Interactive HTML dashboard preview card with Full Screen and Download buttons is already rendered in chat. Reply with a brief 1-2 sentence summary in the user's language without repeating the raw HTML.",
+            }
+          : output,
+    }),
   });
 
   const generateInfographic = tool({
     description:
       "Generate a high-resolution Infographic from an HTML/SVG template rendered to PNG via headless Chromium on the Cloud Computer, shown in chat as an image card with Download. Optional AI hero illustrations use ONLY Vertex AI on the Google AI Ultra credit (zero pay-per-use APIs).",
     inputSchema: z.object({
-      title: z.string().trim().min(2).max(120),
-      subtitle: z.string().trim().max(180).optional(),
-      palette: z
-        .enum(["indigo", "emerald", "amber", "slate"])
-        .default("indigo")
-        .optional(),
+      title: z.string().trim().min(1).max(300),
+      subtitle: z.string().trim().max(400).optional(),
+      palette: z.enum(["indigo", "emerald", "amber", "slate"]).optional(),
       stats: z
         .array(
           z.object({
-            label: z.string().trim().min(1).max(60),
-            value: z.string().trim().min(1).max(36),
-            caption: z.string().trim().max(80).optional(),
+            label: z.string().trim().min(1).max(160),
+            value: z.string().trim().min(1).max(100),
+            caption: z.string().trim().max(200).optional(),
           })
         )
-        .max(8)
-        .default([]),
+        .max(16)
+        .optional(),
       sections: z
         .array(
           z.object({
-            heading: z.string().trim().min(1).max(80),
-            bullets: z.array(z.string().trim().min(1).max(120)).min(1).max(4),
+            heading: z.string().trim().min(1).max(200),
+            bullets: z.array(z.string().trim().min(1).max(500)).min(1).max(12),
           })
         )
-        .max(6)
-        .default([]),
-      footerNote: z.string().trim().max(160).optional(),
+        .max(12)
+        .optional(),
+      footerNote: z.string().trim().max(320).optional(),
       heroIllustrationPrompt: z
         .string()
         .trim()
-        .max(400)
+        .max(800)
         .optional()
         .describe(
           "Optional Vertex Imagen illustration prompt (runs ONLY on Vertex Ultra credit, never pay-per-use)."
@@ -749,7 +767,7 @@ export function createVisualStudioTools(opts: {
         stats: input.stats ?? [],
         sections: input.sections ?? [],
         footerNote: input.footerNote,
-        palette: input.palette,
+        palette: input.palette ?? "indigo",
         heroImageBase64Png: heroBase64Png,
       });
 
@@ -868,6 +886,23 @@ export function createVisualStudioTools(opts: {
         usedVertexHeroImage: Boolean(heroBase64Png),
       };
     },
+    toModelOutput: ({ output }) => ({
+      type: "json" as const,
+      value:
+        output.status === "ok"
+          ? {
+              status: "ok",
+              kind: output.kind,
+              title: output.title,
+              filename: output.filename,
+              mediaType: output.mediaType,
+              width: output.width,
+              height: output.height,
+              renderedVia: output.renderedVia,
+              note: "Infographic image card with Download button is already rendered in chat. Reply with a brief 1-2 sentence summary in the user's language.",
+            }
+          : output,
+    }),
   });
 
   return {

@@ -568,9 +568,16 @@ export function LiveVoiceButton({
 
   const handleToolDone = useCallback(
     (ev: LiveToolDoneEvent) => {
+      const placedCards = Array.isArray(
+        (ev.voiceResult as { cardsPlaced?: unknown } | undefined)?.cardsPlaced
+      )
+        ? ((ev.voiceResult as { cardsPlaced: unknown[] }).cardsPlaced ?? [])
+        : [];
       if (
         ev.name === "saveProfileFact" ||
         ev.name === "addJournalEntry" ||
+        placedCards.includes("saveProfileFact") ||
+        placedCards.includes("addJournalEntry") ||
         ev.parts?.some(
           (p) =>
             p.type === "tool-saveProfileFact" ||
@@ -674,14 +681,14 @@ export function LiveVoiceButton({
   return (
     <>
       <Button
-        aria-label="Live voice chat"
+        aria-label={copy.liveVoiceChat}
         className="size-11! rounded-full border-transparent bg-send p-0 text-send-foreground shadow-none transition-colors duration-150 hover:bg-send/90 motion-reduce:transition-none"
         data-testid="live-voice-button"
         disabled={disabled}
         onClick={launch}
         onFocus={() => LiveVoiceEngine.prefetch(basePath, sessionBody())}
         onPointerDown={() => LiveVoiceEngine.prefetch(basePath, sessionBody())}
-        title="Start live voice chat"
+        title={copy.startLiveVoiceChat}
         type="button"
         variant="secondary"
       >
@@ -692,7 +699,7 @@ export function LiveVoiceButton({
         typeof document !== "undefined" &&
         createPortal(
           <div
-            aria-label="Live voice conversation"
+            aria-label={copy.liveVoiceConversation}
             aria-modal="true"
             className="fixed inset-0 z-50 flex flex-col items-center justify-between bg-background px-6 pt-[max(1.25rem,calc(env(safe-area-inset-top)+0.75rem))] pb-[max(2.25rem,calc(env(safe-area-inset-bottom)+1.25rem))]"
             data-phase={phase}

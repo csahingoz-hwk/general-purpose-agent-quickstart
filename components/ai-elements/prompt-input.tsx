@@ -24,6 +24,7 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
+import { useUiLocale } from "@/hooks/use-ui-locale";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -780,17 +781,19 @@ export const PromptInput = ({
     [usingProvider, controller, files, onSubmit, clear]
   );
 
+  const { copy } = useUiLocale();
+
   // Render with or without local provider
   const inner = (
     <>
       <input
         accept={accept}
-        aria-label="Upload files"
+        aria-label={copy.chooseFile}
         className="hidden"
         multiple={multiple}
         onChange={handleChange}
         ref={inputRef}
-        title="Upload files"
+        title={copy.chooseFile}
         type="file"
       />
       <form
