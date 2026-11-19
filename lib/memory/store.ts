@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { ensureParitySchema } from "@/lib/db/ensure-parity-schema";
-import { getSharedPostgresClient } from "@/lib/db/shared-pool";
+import {
+  getSharedPostgresClient,
+  resolveSharedPostgresUrl,
+} from "@/lib/db/shared-pool";
 import {
   type AtomicMemorySource,
   defaultPinnedForCategory,
@@ -447,10 +450,11 @@ export function createInMemoryMemoryStore(): MemoryStore {
 }
 
 function getSql() {
-  if (!process.env.POSTGRES_URL) {
+  const url = resolveSharedPostgresUrl();
+  if (!url) {
     throw new MemoryStoreUnavailableError("POSTGRES_URL is not configured");
   }
-  return getSharedPostgresClient(process.env.POSTGRES_URL);
+  return getSharedPostgresClient(url);
 }
 
 function isMissingTable(error: unknown): boolean {
@@ -462,35 +466,40 @@ function isMissingTable(error: unknown): boolean {
   );
 }
 
-async function readySql() {
-  const sql = getSql();
-  await ensureParitySchema(sql);
-  return sql;
-}
-
 function mapProfileRow(row: Record<string, unknown>): ProfileFact {
+  const rawUpdated = row.updatedAt ?? row.updatedat ?? new Date();
   const updatedAtIso = new Date(
-    row.updatedAt as string | number | Date
+    rawUpdated as string | number | Date
   ).toISOString();
-  const learnedAtIso = row.learnedAt
-    ? new Date(row.learnedAt as string | number | Date).toISOString()
+  const rawLearned = row.learnedAt ?? row.learnedat;
+  const learnedAtIso = rawLearned
+    ? new Date(rawLearned as string | number | Date).toISOString()
     : updatedAtIso;
+  const rawShared = row.sharedAcrossBots ?? row.sharedacrossbots;
+  const rawBotSlug = row.botSlug ?? row.botslug;
   return {
     id: String(row.id),
-    userId: String(row.userId),
+    userId: String(row.userId ?? row.userid),
     category: normalizeMemoryCategory(String(row.category ?? "about_me")),
     key: String(row.key),
     value: String(row.value),
     source: normalizeSource(row.source ? String(row.source) : "chat"),
     pinned: Boolean(row.pinned),
     learnedAt: learnedAtIso,
-    sharedAcrossBots: Boolean(row.sharedAcrossBots),
-    botSlug: row.botSlug ? String(row.botSlug) : null,
+    sharedAcrossBots: rawShared === undefined ? true : Boolean(rawShared),
+    botSlug: rawBotSlug ? String(rawBotSlug) : null,
     updatedAt: updatedAtIso,
   };
 }
 
-export function createPostgresMemoryStore(): MemoryStore {
+export function createPostgresMemoryStore(
+  sqlOverride?: ReturnType<typeof getSharedPostgresClient>
+): MemoryStore {
+  async function readySql() {
+    const sql = sqlOverride ?? getSql();
+    await ensureParitySchema(sql);
+    return sql;
+  }
   return {
     async upsertProfileFact({
       userId,
@@ -680,13 +689,13 @@ export function createPostgresMemoryStore(): MemoryStore {
         const sql = await readySql();
         const rows = sharedOnly
           ? await sql`
-              SELECT "id", "userId", "category", "key", "value", "source", "pinned", "learnedAt", "sharedAcrossBots", "botSlug", "updatedAt"
+              SELECT *
               FROM "MemoryProfileFact"
               WHERE "userId" = ${userId} AND "sharedAcrossBots" = true
               ORDER BY "updatedAt" DESC
             `
           : await sql`
-              SELECT "id", "userId", "category", "key", "value", "source", "pinned", "learnedAt", "sharedAcrossBots", "botSlug", "updatedAt"
+              SELECT *
               FROM "MemoryProfileFact"
               WHERE "userId" = ${userId}
               ORDER BY "updatedAt" DESC

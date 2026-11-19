@@ -62,7 +62,11 @@ import {
   webSearchLane,
 } from "@/lib/ai/routing/catalog";
 import { createUsageLedger } from "@/lib/ai/routing/ledger";
-import { failureKind } from "@/lib/ai/routing/policy";
+import {
+  failureKind,
+  ModelFailure,
+  safeErrorDiagnostic,
+} from "@/lib/ai/routing/policy";
 import {
   type InferenceSession,
   inferenceSession,
@@ -87,6 +91,7 @@ import { listMySchedules } from "@/lib/ai/tools/list-my-schedules";
 import { createMacBridgeTools } from "@/lib/ai/tools/mac-bridge";
 import {
   createMemoryTools,
+  createMemoryTurnState,
   dedupeAssistantMemoryParts,
 } from "@/lib/ai/tools/memory-tools";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
@@ -748,6 +753,7 @@ export async function POST(request: Request) {
       toolBoundary: false,
       fallbackUsed: false,
       activeModelId: isPremiumModel(chatModel) ? chatModel : undefined,
+      memoryTurnState: createMemoryTurnState(explicitSavedFact),
     };
 
     const stream = createUIMessageStream<ChatMessage>({
@@ -947,6 +953,7 @@ export async function POST(request: Request) {
                           store: memoryStore ?? createPostgresMemoryStore(),
                           alreadySavedFact: explicitSavedFact,
                           dedupePerTurn: true,
+                          turnState: execution.memoryTurnState,
                         })
                       : {}),
                     ...(isGoogleConnectorsEnabled()
@@ -1098,10 +1105,14 @@ export async function POST(request: Request) {
             ),
             maxOutputTokens: replyTokens,
             maxRetries: 0,
-            // Log failureKind(error) only — never upstream request/response bodies, URLs, or secrets.
+            // Log safe structured diagnostics only — never upstream request/response bodies, URLs, or secrets.
             onError: ({ error }) => {
               console.error("[chat] stream error", {
+                ...safeErrorDiagnostic(error),
                 kind: failureKind(error),
+                ...(error instanceof ModelFailure && error.primaryDiagnostic
+                  ? { primary: error.primaryDiagnostic }
+                  : {}),
               });
             },
             abortSignal: AbortSignal.any([
@@ -1175,7 +1186,11 @@ export async function POST(request: Request) {
               sendReasoning: false,
               onError: (error) => {
                 console.error("[chat] ui stream error", {
+                  ...safeErrorDiagnostic(error),
                   kind: failureKind(error),
+                  ...(error instanceof ModelFailure && error.primaryDiagnostic
+                    ? { primary: error.primaryDiagnostic }
+                    : {}),
                 });
                 return safeModelError(error, finalUserText);
               },
@@ -1206,6 +1221,7 @@ export async function POST(request: Request) {
                         },
                         onError: ({ error }) => {
                           console.error("[chat] synthesis stream error", {
+                            ...safeErrorDiagnostic(error),
                             kind: failureKind(error),
                           });
                         },
@@ -1286,7 +1302,11 @@ export async function POST(request: Request) {
       },
       onError: (error) => {
         console.error("[chat] ui stream error", {
+          ...safeErrorDiagnostic(error),
           kind: failureKind(error),
+          ...(error instanceof ModelFailure && error.primaryDiagnostic
+            ? { primary: error.primaryDiagnostic }
+            : {}),
         });
         return safeModelError(error, finalUserText);
       },
@@ -1325,7 +1345,10 @@ export async function POST(request: Request) {
       return error.toResponse();
     }
 
-    console.error("Chat request failed", { vercelId });
+    console.error("Chat request failed", {
+      vercelId,
+      ...safeErrorDiagnostic(error),
+    });
     return new ChatbotError("offline:chat").toResponse();
   } finally {
     if (!streamOwnsLock) {
