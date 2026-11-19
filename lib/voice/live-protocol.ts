@@ -161,11 +161,15 @@ export const LIVE_VOICE_TOOL_DECLARATIONS: readonly LiveToolDeclaration[] = [
     type: "function",
     name: "webSearch",
     description:
-      "Search the live web for current news, prices, exchange rates, scores, or up-to-date public facts.",
+      "Search the live web for current news, league-wide fixtures or standings, prices, exchange rates, scores, or up-to-date public facts. Always keep the user's exact subject (league, team, city, or product name, e.g. 'Süper Lig') verbatim in the query, in the user's language.",
     parameters: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Concise web search query." },
+        query: {
+          type: "string",
+          description:
+            "Concise web search query in the user's language keeping the exact subject verbatim (e.g. 'Süper Lig bu haftaki maç programı', never generic 'this week's football fixtures').",
+        },
       },
       required: ["query"],
     },
@@ -174,7 +178,7 @@ export const LIVE_VOICE_TOOL_DECLARATIONS: readonly LiveToolDeclaration[] = [
     type: "function",
     name: "getFixtures",
     description:
-      "Look up a football club's next match, kickoff time, and latest score.",
+      "Look up a single football club's next match, kickoff time, and latest score (for league-wide fixtures or standings such as 'Süper Lig', use webSearch instead).",
     parameters: {
       type: "object",
       properties: {
@@ -493,6 +497,50 @@ const FILLER_TR: Record<string, string> = {
   macRunAgentCli: "Mac mini'de CLI başlatıyorum…",
 };
 
+export const CLIENT_FILLERS_EN: Record<string, string> = {
+  handOffToTextAgent: "Working with your assistant…",
+  gmailReadMessages: "Checking your inbox…",
+  calendarReadEvents: "Checking your calendar…",
+  driveReadFiles: "Searching Google Drive…",
+  githubReadPullRequests: "Checking GitHub…",
+  getWeather: "Checking the weather…",
+  getCurrentTime: "Checking the clock…",
+  webSearch: "Searching the web…",
+  getFixtures: "Checking fixtures…",
+  recallMemories: "Checking your memory…",
+  saveProfileFact: "Saving to memory…",
+  addJournalEntry: "Saving journal note…",
+  listMySchedules: "Checking routines…",
+  scheduleTask: "Preparing approval card…",
+  gmailCreateDraft: "Preparing Gmail draft card…",
+  calendarCreateDraftEvent: "Preparing Calendar card…",
+  driveCreateDraftDoc: "Preparing Drive draft card…",
+  draftOutboundMessage: "Preparing approval card…",
+  delegateTask: "Creating task card…",
+};
+
+export const CLIENT_FILLERS_TR: Record<string, string> = {
+  handOffToTextAgent: "Asistanla kontrol ediyorum…",
+  gmailReadMessages: "Gelen kutuna bakıyorum…",
+  calendarReadEvents: "Takvimine bakıyorum…",
+  driveReadFiles: "Drive'da arıyorum…",
+  githubReadPullRequests: "GitHub'a bakıyorum…",
+  getWeather: "Hava durumuna bakıyorum…",
+  getCurrentTime: "Saate bakıyorum…",
+  webSearch: "Web'de arıyorum…",
+  getFixtures: "Fikstüre bakıyorum…",
+  recallMemories: "Belleğine bakıyorum…",
+  saveProfileFact: "Belleğe kaydediyorum…",
+  addJournalEntry: "Günlüğe ekliyorum…",
+  listMySchedules: "Rutinlerine bakıyorum…",
+  scheduleTask: "Onay kartı hazırlıyorum…",
+  gmailCreateDraft: "Gmail onay kartı hazırlıyorum…",
+  calendarCreateDraftEvent: "Takvim kartı hazırlıyorum…",
+  driveCreateDraftDoc: "Drive kartı hazırlıyorum…",
+  draftOutboundMessage: "Onay kartı hazırlıyorum…",
+  delegateTask: "Görev kartı oluşturuyorum…",
+};
+
 export function fillerPhraseForTool(
   toolName: string,
   locale: "en" | "tr" = "en"
@@ -502,6 +550,91 @@ export function fillerPhraseForTool(
     map[toolName] ??
     (locale === "tr" ? "Kontrol ediyorum…" : "Checking that now…")
   );
+}
+
+const MAX_FILLER_UTTERANCE_CHARS = 80;
+
+function normalizeFillerKey(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\u0307/g, "")
+    .replace(/[.…!]+$/u, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const KNOWN_FILLER_KEYS = new Set<string>(
+  [
+    ...Object.values(FILLER_EN),
+    ...Object.values(FILLER_TR),
+    ...Object.values(CLIENT_FILLERS_EN),
+    ...Object.values(CLIENT_FILLERS_TR),
+    "Kontrol ediyorum…",
+    "Checking that now…",
+    "Hemen bakıyorum…",
+    "Hemen kontrol ediyorum…",
+    "Bir saniye…",
+    "One moment…",
+    "Just a second…",
+  ].map(normalizeFillerKey)
+);
+
+const FILLER_PHRASE_RE =
+  /(?:(?<!\p{L})(?:kontrol\s+ediyorum|bakıyorum|arıyorum|araştırıyorum|hazırlıyorum|oluşturuyorum|kaydediyorum|ekliyorum|çalıştırıyorum|açıyorum|başlatıyorum)(?!\p{L})|(?<!\p{L})(?:checking|looking(?:\s+(?:into|up|at|for))?|searching|finding|fetching|pulling\s+up|working\s+on|preparing|let\s+me\s+(?:check|look|search|find))(?!\p{L}))/iu;
+
+const NON_FILLER_CONTENT_RE =
+  /(?:(?<!\p{L})looking\s+forward(?!\p{L})|(?<!\p{L})(?:finished|done|found|here(?:'s| is| are)|there(?:'s| is| are)|you have|buldum|yok|değil|başarısız|failed|unable|could not|couldn't)(?!\p{L})|\d{1,2}[:.]\d{2}|\d+\s*(?:°|%|tl|usd|eur|gbp|puan|gol|maç|unread|emails?|messages?)(?!\p{L}))/iu;
+
+const TR_FILLER_END_RE =
+  /(?<!\p{L})(?:kontrol\s+ediyorum|bakıyorum|arıyorum|araştırıyorum|hazırlıyorum|oluşturuyorum|kaydediyorum|ekliyorum|çalıştırıyorum|açıyorum|başlatıyorum)[.!…]*$/iu;
+
+const EN_EXPLICIT_FILLER_RE =
+  /^(?:(?:sure|okay|ok|alright|got\s+it|one\s+moment|just\s+a\s+second|hold\s+on)[,.!]?\s+)*(?:(?:i(?:'m| am)|let\s+me|just)\s+(?:checking|check|looking\s+(?:into|up|at|for)|look\s+(?:into|up|at|for)|searching|search|fetching|pulling\s+up|working\s+on|preparing)(?!\p{L})|(?:checking|looking\s+(?:into|up)|searching|working\s+on|preparing)\s+(?:that|this|it|now|your(?!\p{L})|the\s+(?:web|weather|clock|fixtures|schedule|scores|standings|news|inbox|calendar|drive|results)(?!\p{L})|fixtures(?!\p{L})|online(?!\p{L})|for\s+that(?!\p{L})|for\s+you(?!\p{L})))/iu;
+
+/**
+ * Returns true when a pending pre-tool assistant voice caption is only a short
+ * spoken filler ("Kontrol ediyorum…", "Web'de arıyorum…", "Checking that now…")
+ * that should NOT be persisted as a separate chat bubble because the tool card
+ * replaces it. Spoken audio is unaffected.
+ */
+export function isFillerOnlyUtterance(text: string): boolean {
+  const trimmed = text.trim().replace(/\s+/g, " ");
+  if (!trimmed) {
+    return false;
+  }
+  const normalizedKey = normalizeFillerKey(trimmed);
+  if (KNOWN_FILLER_KEYS.has(normalizedKey)) {
+    return true;
+  }
+  if (trimmed.length > MAX_FILLER_UTTERANCE_CHARS) {
+    return false;
+  }
+  if (trimmed.includes("?")) {
+    return false;
+  }
+  const lower = trimmed.toLowerCase().replace(/\u0307/g, "");
+  if (NON_FILLER_CONTENT_RE.test(lower)) {
+    return false;
+  }
+  const sentences = lower
+    .split(/(?:[.!]+|…)\s+/u)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (sentences.length > 2) {
+    return false;
+  }
+  const endsWithEllipsis = /(?:…|\.{2,})$/u.test(trimmed);
+  if (endsWithEllipsis) {
+    return FILLER_PHRASE_RE.test(lower);
+  }
+  if (TR_FILLER_END_RE.test(lower)) {
+    return true;
+  }
+  if (EN_EXPLICIT_FILLER_RE.test(lower)) {
+    return true;
+  }
+  return false;
 }
 
 function toGoogleFunctionDeclarations(

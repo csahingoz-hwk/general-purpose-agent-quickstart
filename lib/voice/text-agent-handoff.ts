@@ -142,6 +142,7 @@ export async function executeVoiceTextAgentHandoff(opts: {
   taskStore?: BackgroundTaskStore;
   fetchImpl?: typeof fetch;
   modelOverride?: LanguageModel;
+  getLanguageModelImpl?: (modelId: string) => LanguageModel;
 }): Promise<VoiceTextAgentHandoffResult> {
   const cleanRequest = opts.request.trim();
   const detectedLocale = opts.locale ?? textLocale(cleanRequest);
@@ -286,12 +287,14 @@ export async function executeVoiceTextAgentHandoff(opts: {
     memoryTurnState: createMemoryTurnState(),
   };
 
-  const model =
-    opts.modelOverride ??
-    (await import("@/lib/ai/providers")).getLanguageModel(HYDROGEN);
+  const agentRun = await inferenceSession.run(execution, async () => {
+    const model =
+      opts.modelOverride ??
+      (opts.getLanguageModelImpl
+        ? opts.getLanguageModelImpl(HYDROGEN)
+        : (await import("@/lib/ai/providers")).getLanguageModel(HYDROGEN));
 
-  const agentRun = await inferenceSession.run(execution, () =>
-    generateText({
+    return generateText({
       model,
       system: instructions,
       prompt: cleanRequest,
@@ -301,8 +304,8 @@ export async function executeVoiceTextAgentHandoff(opts: {
       maxOutputTokens: 512,
       maxRetries: 0,
       abortSignal: AbortSignal.timeout(45_000),
-    })
-  );
+    });
+  });
 
   const rawToolParts: (Record<string, unknown> & { type: string })[] = [];
   for (const step of agentRun.steps ?? []) {
