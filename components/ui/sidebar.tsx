@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation"
 import { Slot } from "radix-ui"
 
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useUiLocale } from "@/hooks/use-ui-locale"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -254,9 +255,11 @@ function SidebarTrigger({
   ...props
 }: React.ComponentProps<typeof Button>) {
   const { toggleSidebar } = useSidebar()
+  const { copy } = useUiLocale()
 
   return (
     <Button
+      aria-label={copy.toggleSidebarSr}
       data-sidebar="trigger"
       data-slot="sidebar-trigger"
       variant="ghost"
@@ -269,13 +272,14 @@ function SidebarTrigger({
       {...props}
     >
       <PanelLeftIcon />
-      <span className="sr-only">Toggle Sidebar</span>
+      <span className="sr-only">{copy.toggleSidebarSr}</span>
     </Button>
   )
 }
 
 function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
   const { toggleSidebar, state } = useSidebar()
+  const { copy } = useUiLocale()
   const isCollapsed = state === "collapsed"
 
   return (
@@ -288,14 +292,14 @@ function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
     >
       <button
         data-sidebar="rail"
-        aria-label="Toggle Sidebar"
+        aria-label={copy.toggleSidebarSr}
         tabIndex={-1}
         onClick={toggleSidebar}
         className="absolute inset-y-0 left-0 w-4 cursor-w-resize [[data-side=left][data-state=collapsed]_&]:cursor-e-resize"
         {...props}
       />
       <button
-        aria-label="Toggle Sidebar"
+        aria-label={copy.toggleSidebarSr}
         tabIndex={-1}
         onClick={toggleSidebar}
         className={cn(
@@ -304,7 +308,7 @@ function SidebarRail({ className, ...props }: React.ComponentProps<"button">) {
         )}
       />
       <button
-        aria-label="Toggle Sidebar"
+        aria-label={copy.toggleSidebarSr}
         tabIndex={-1}
         onClick={toggleSidebar}
         className={cn(

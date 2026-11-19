@@ -132,6 +132,7 @@ import { prepareMessagesWithAttachments } from "@/lib/files/parse-attachment";
 import { isMacBridgeConfigured } from "@/lib/mac-bridge/client";
 import { isMediaStudioEnabled } from "@/lib/media/media-studio";
 import {
+  areMemoryFactsSemanticallyEquivalent,
   buildGroupedMemoryPromptBlock,
   extractExplicitRememberFact,
   isAllowedShortKornFerryContextFact,
@@ -600,11 +601,19 @@ export async function POST(request: Request) {
           : Promise.resolve({ record: null, promptBlock: "" }),
       ]);
 
-    const mergedFacts = explicitSavedFact
-      ? [
-          explicitSavedFact,
-          ...storedFacts.filter((f) => f.key !== explicitSavedFact.key),
-        ]
+    // Do NOT inject `explicitSavedFact` into `Owner durable memory` as if it were an
+    // older historical memory — doing so made the model reply "Bunu zaten not etmiştim…".
+    // Instead, exclude it from historical recall and provide a clear current-turn note.
+    const priorFactsForPrompt = explicitSavedFact
+      ? storedFacts.filter(
+          (f) =>
+            f.id !== explicitSavedFact.id &&
+            f.key !== explicitSavedFact.key &&
+            !areMemoryFactsSemanticallyEquivalent(
+              f.value,
+              explicitSavedFact.value
+            )
+        )
       : storedFacts;
 
     const effectiveSoul = composeTeammateSoul(soul, activeTeammate);
@@ -631,7 +640,7 @@ export async function POST(request: Request) {
       home: homeLocation,
     });
     const safeBotFacts = filterFactsForBot(
-      mergedFacts,
+      priorFactsForPrompt,
       activeTeammate?.slug ?? "chief-of-staff"
     ).filter(
       (f) =>
@@ -643,6 +652,9 @@ export async function POST(request: Request) {
       finalUserText,
       { maxFacts: 80, maxChars: 6000, journalEntries: storedJournalEntries }
     );
+    const explicitMemoryTurnNote = explicitSavedFact
+      ? `Memory action just completed on THIS turn: Saved "${explicitSavedFact.value}" to durable memory (the "Saved to memory" card is already shown above your reply). Confirm briefly and naturally in 1 short sentence in the user's language that you saved it — NEVER say you already knew it or had already noted it earlier ("zaten not etmiştim"), and do NOT call saveProfileFact or addJournalEntry again.`
+      : "";
     const ownerDisplayName =
       session.user.type !== "guest"
         ? session.user.name?.trim() ||
@@ -656,6 +668,7 @@ export async function POST(request: Request) {
       ownerHeader,
       rawBaseContext,
       memoryContextBlock,
+      explicitMemoryTurnNote,
       threadSummary.promptBlock,
     ]
       .filter(Boolean)
@@ -948,13 +961,19 @@ export async function POST(request: Request) {
                       ? { scheduleTask: scheduleTask({ session }) }
                       : {}),
                     ...(isMemoryToolsEnabled()
-                      ? createMemoryTools({
-                          userId: session.user.id,
-                          store: memoryStore ?? createPostgresMemoryStore(),
-                          alreadySavedFact: explicitSavedFact,
-                          dedupePerTurn: true,
-                          turnState: execution.memoryTurnState,
-                        })
+                      ? (() => {
+                          const mem = createMemoryTools({
+                            userId: session.user.id,
+                            store: memoryStore ?? createPostgresMemoryStore(),
+                            alreadySavedFact: explicitSavedFact,
+                            dedupePerTurn: true,
+                            turnState: execution.memoryTurnState,
+                          });
+                          return explicitSavedFact ||
+                            explicitRemember?.kind === "sensitive_blocked"
+                            ? { recallMemories: mem.recallMemories }
+                            : mem;
+                        })()
                       : {}),
                     ...(isGoogleConnectorsEnabled()
                       ? {

@@ -3,7 +3,7 @@ import { isVertexWifConfigured } from "../vertex-auth";
 
 /**
  * Model pricing & budget catalog.
- * - `gemini-4-hydrogen` and `gemini-4-argon` execute directly on Google Cloud
+ * - `gemini-4-hydrogen` and `gemini-4-neon` execute directly on Google Cloud
  *   Vertex AI (`project-cd0bc64c-0025-446c-b41`, billing `0140A2-72DEB2-62EDCD`
  *   covered by the $40/mo Google AI Ultra credit), so they consume $0 of the
  *   Vercel AI Gateway / OpenAI cash allowance (`input/output = 0` in the
@@ -24,7 +24,7 @@ export const premiumModels = {
     inferenceBudget: 65_536,
     outputLimit: 8192,
   },
-  "gemini-4-argon": {
+  "gemini-4-neon": {
     input: 0,
     cached: 0,
     cacheWrite: 0,
@@ -63,7 +63,7 @@ export const premiumModels = {
 } as const;
 
 export type PremiumModelId = keyof typeof premiumModels;
-export type VertexModelId = "gemini-4-hydrogen" | "gemini-4-argon";
+export type VertexModelId = "gemini-4-hydrogen" | "gemini-4-neon";
 
 /**
  * AI Gateway DeepSeek Search: USD 0.75 per 1,000 billable requests when routed
@@ -75,7 +75,7 @@ export const WEB_SEARCH_MAX_CALLS = 8;
 export const WEB_SEARCH_TOOL_ID = "gateway.deepseek_search";
 
 export const HYDROGEN = "gemini-4-hydrogen" as const;
-export const ARGON = "gemini-4-argon" as const;
+export const NEON = "gemini-4-neon" as const;
 export const COPILOT_HAIKU = "claude-haiku-5.5" as const;
 export const TERRA = "gpt-6.1-terra" as const;
 export const LUNA = "gpt-6-luna" as const;
@@ -84,7 +84,7 @@ export function isPremiumModel(id: string): id is PremiumModelId {
   return Object.hasOwn(premiumModels, id);
 }
 export function isVertexModel(id: string): id is VertexModelId {
-  return id === HYDROGEN || id === ARGON;
+  return id === HYDROGEN || id === NEON;
 }
 export function isCopilotFallbackModel(id: string): id is typeof COPILOT_HAIKU {
   return id === COPILOT_HAIKU;

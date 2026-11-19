@@ -193,7 +193,7 @@ export function mayFallback({
 
 /**
  * Independent-provider fallback from Google Cloud Vertex AI (`gemini-4-hydrogen` /
- * `gemini-4-argon`) to GitHub Copilot SDK (`claude-haiku-5.5`) on the Cloud VM bridge.
+ * `gemini-4-neon`) to GitHub Copilot SDK (`claude-haiku-5.5`) on the Cloud VM bridge.
  *
  * Fires ONLY on Vertex failure or timeout before any text/tool output is exposed,
  * NEVER when cancelled by the user and NEVER across the Korn Ferry `work_boundary`.

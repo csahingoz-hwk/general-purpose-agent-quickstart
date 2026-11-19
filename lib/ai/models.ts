@@ -1,5 +1,5 @@
 export const DEFAULT_CHAT_MODEL = "gemini-4-hydrogen";
-export const ESCALATED_RESEARCH_MODEL = "gemini-4-argon";
+export const ESCALATED_RESEARCH_MODEL = "gemini-4-neon";
 export const FALLBACK_CHAT_MODEL = "claude-haiku-5.5";
 
 export const REGISTERED_APP_MODEL_IDS = [
@@ -19,7 +19,7 @@ export type ChatModel = {
   name: string;
   provider: string;
   description: string;
-  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
+  reasoningEffort?: "low" | "medium" | "high";
 };
 
 // Standing owner rule: NO pay-per-use models (no paid AI Gateway credits,
@@ -36,11 +36,12 @@ export const chatModels: ChatModel[] = [
     reasoningEffort: "low",
   },
   {
-    id: "gemini-4-argon",
-    name: "Gemini 4 Argon",
+    id: "gemini-4-neon",
+    name: "Gemini 4 Neon",
     provider: "google",
-    description: "Deep research & hard questions · Vertex AI on Ultra credit",
-    reasoningEffort: "medium",
+    description:
+      "Deep reasoning, research & visual creation · Vertex AI on Ultra credit",
+    reasoningEffort: "high",
   },
 ];
 
@@ -79,7 +80,7 @@ export const SYNTHETIC_SDK7_FIXTURE_MODELS: ChatModel[] = [
 
 const MODEL_DISPLAY_NAMES: Record<string, string> = {
   "gemini-4-hydrogen": "Gemini 4 Hydrogen",
-  "gemini-4-argon": "Gemini 4 Argon",
+  "gemini-4-neon": "Gemini 4 Neon",
   "claude-haiku-5.5": "Claude Haiku 5.5",
   "claude-haiku-4.5": "Claude Haiku 4.5",
 };

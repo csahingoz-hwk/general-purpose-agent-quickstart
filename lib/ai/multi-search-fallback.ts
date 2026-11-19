@@ -177,10 +177,101 @@ export function createMultiSearchRecoveryStream(options: {
 }) {
   const pendingSearchIds = new Set<string>();
   const allSearchToolIds = new Set<string>();
+  const toolNameByCallId = new Map<string, string>();
   const gatheredHits: GatheredSearchHit[] = [];
+  let completedPostToolFallbackText: string | null = null;
   let emittedTextChars = 0;
   let sawPrimaryError = false;
   let recovered = false;
+
+  function computePostToolFallbackReply(
+    toolName: string,
+    output: unknown
+  ): string | null {
+    if (!output || typeof output !== "object" || Array.isArray(output)) {
+      return null;
+    }
+    const obj = output as Record<string, unknown>;
+    const status = typeof obj.status === "string" ? obj.status : "";
+    const isTr = textLocale(options.userText) === "tr";
+
+    if (
+      status === "setup_required" &&
+      (toolName === "firecrawlSearch" ||
+        toolName === "firecrawlScrape" ||
+        toolName === "firecrawlCrawlMap" ||
+        obj.connectProvider === "firecrawl")
+    ) {
+      const setupHref =
+        typeof obj.setupHref === "string"
+          ? obj.setupHref
+          : "/setup#setup-firecrawl";
+      return isTr
+        ? `Firecrawl bağlı değil çünkü \`FIRECRAWL_API_KEY\` henüz ortam değişkenlerinde tanımlanmamış. Kurulum sayfasındaki Bağla adımından (\`${setupHref}\`) API anahtarı oluşturup bağlayabilirsin.`
+        : `Firecrawl is not connected yet because \`FIRECRAWL_API_KEY\` is not configured. Open the Setup page Connect step (\`${setupHref}\`) to create and add your API key.`;
+    }
+
+    if (status === "ok" && toolName === "buildHtmlPageOrDashboard") {
+      const title =
+        typeof obj.title === "string" && obj.title.trim()
+          ? obj.title.trim()
+          : isTr
+            ? "HTML paneli"
+            : "HTML dashboard";
+      return isTr
+        ? `**${title}** sayfasını hazırladım. Yukarıdaki karttan önizleyebilir, tam ekran açabilir veya indirebilirsin.`
+        : `I built **${title}** — you can preview it above, open it full screen, or download the HTML file.`;
+    }
+
+    if (status === "ok" && toolName === "createExcalidrawDiagram") {
+      const title =
+        typeof obj.title === "string" && obj.title.trim()
+          ? obj.title.trim()
+          : isTr
+            ? "diyagram"
+            : "diagram";
+      return isTr
+        ? `**${title}** diyagramını hazırladım. Yukarıdaki etkileşimli karttan düzenleyebilir veya PNG, SVG ya da \`.excalidraw\` olarak indirebilirsin.`
+        : `I created the **${title}** diagram — you can inspect, edit, or export it as PNG, SVG, or \`.excalidraw\` from the card above.`;
+    }
+
+    if (status === "ok" && toolName === "generateInfographic") {
+      const title =
+        typeof obj.title === "string" && obj.title.trim()
+          ? obj.title.trim()
+          : isTr
+            ? "infografik"
+            : "infographic";
+      return isTr
+        ? `**${title}** infografiğini hazırladım. Yukarıdaki karttan görüntüleyebilir veya indirebilirsin.`
+        : `I generated the **${title}** infographic — you can view or download it from the card above.`;
+    }
+
+    return null;
+  }
+
+  function emitPostToolReply(
+    controller: TransformStreamDefaultController<
+      InferUIMessageChunk<ChatMessage>
+    >,
+    replyText: string
+  ): boolean {
+    if (!replyText.trim()) {
+      return false;
+    }
+    const textId = `post-tool-${generateId()}`;
+    controller.enqueue({ type: "text-start", id: textId });
+    controller.enqueue({
+      type: "text-delta",
+      id: textId,
+      delta: replyText,
+    });
+    controller.enqueue({ type: "text-end", id: textId });
+    emittedTextChars += replyText.length;
+    recovered = true;
+    options.onRecovered?.();
+    return true;
+  }
 
   async function emitFallbackSynthesis(
     controller: TransformStreamDefaultController<
@@ -267,12 +358,14 @@ export function createMultiSearchRecoveryStream(options: {
   >({
     async transform(chunk, controller) {
       if (
-        (chunk.type === "tool-input-start" ||
-          chunk.type === "tool-input-available") &&
-        chunk.toolName === "webSearch"
+        chunk.type === "tool-input-start" ||
+        chunk.type === "tool-input-available"
       ) {
-        pendingSearchIds.add(chunk.toolCallId);
-        allSearchToolIds.add(chunk.toolCallId);
+        toolNameByCallId.set(chunk.toolCallId, chunk.toolName);
+        if (chunk.toolName === "webSearch") {
+          pendingSearchIds.add(chunk.toolCallId);
+          allSearchToolIds.add(chunk.toolCallId);
+        }
         controller.enqueue(chunk);
         return;
       }
@@ -284,6 +377,14 @@ export function createMultiSearchRecoveryStream(options: {
         pendingSearchIds.delete(chunk.toolCallId);
         if (isWebSearch) {
           gatheredHits.push(...extractGatheredSearchHits(chunk.output));
+        }
+        const resolvedName = toolNameByCallId.get(chunk.toolCallId) ?? "";
+        const postToolCandidate = computePostToolFallbackReply(
+          resolvedName,
+          chunk.output
+        );
+        if (postToolCandidate) {
+          completedPostToolFallbackText = postToolCandidate;
         }
         controller.enqueue(chunk);
         return;
@@ -308,6 +409,13 @@ export function createMultiSearchRecoveryStream(options: {
 
       if (chunk.type === "error") {
         sawPrimaryError = true;
+        if (
+          completedPostToolFallbackText &&
+          emittedTextChars < 20 &&
+          emitPostToolReply(controller, completedPostToolFallbackText)
+        ) {
+          return;
+        }
         if (gatheredHits.length > 0 && emittedTextChars < 80) {
           const didRecover = await emitFallbackSynthesis(controller);
           if (didRecover) {
@@ -326,6 +434,14 @@ export function createMultiSearchRecoveryStream(options: {
 
     async flush(controller) {
       try {
+        if (
+          !sawPrimaryError &&
+          completedPostToolFallbackText &&
+          emittedTextChars === 0
+        ) {
+          emitPostToolReply(controller, completedPostToolFallbackText);
+          return;
+        }
         // Also recover when step budget ended cleanly right after searches with 0 prose.
         if (
           !sawPrimaryError &&

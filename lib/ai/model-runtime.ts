@@ -2,13 +2,13 @@ import "server-only";
 import { GROQ_BASE_URL, parseVerification } from "./groq-verification";
 import { chatModels, SYNTHETIC_SDK7_FIXTURE_MODELS } from "./models";
 import {
-  ARGON,
   copilotFallbackEnabled,
   HYDROGEN,
   isPremiumModel,
   isSyntheticSdk7FixtureMode,
   LUNA,
   legacyEnabled,
+  NEON,
   openAIEnabled,
   vertexEnabled,
 } from "./routing/catalog";
@@ -148,7 +148,7 @@ async function syntheticSdk7Availability(): Promise<Readiness> {
  *
  * Chain:
  * - Default: `gemini-4-hydrogen` (Vertex AI on Ultra credit `0140A2-72DEB2-62EDCD`)
- * - Escalation: `gemini-4-argon` (Vertex AI on Ultra credit)
+ * - Escalation: `gemini-4-neon` (Vertex AI on Ultra credit)
  * - Fallback ONLY on Vertex failure/timeout: `claude-haiku-5.5` via GitHub Copilot SDK
  *   on the Cloud VM bridge (`assistant-computer-01`).
  */
@@ -192,7 +192,7 @@ async function vertexAvailability(): Promise<Readiness> {
   }
 
   const vertexModels = chatModels.filter(
-    (m) => m.id === HYDROGEN || m.id === ARGON
+    (m) => m.id === HYDROGEN || m.id === NEON
   );
   const result: Readiness = {
     status: "ready",
@@ -242,7 +242,7 @@ export function getRequestModelAvailability() {
       getVertexWifAccessToken().catch(() => null);
     }
     const vertexModels = chatModels.filter(
-      (m) => m.id === HYDROGEN || m.id === ARGON
+      (m) => m.id === HYDROGEN || m.id === NEON
     );
     return Promise.resolve({
       status: "ready" as const,

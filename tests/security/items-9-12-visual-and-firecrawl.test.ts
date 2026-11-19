@@ -27,7 +27,7 @@ import {
 } from "@/lib/ai/grounded-news";
 import { REGISTERED_APP_MODEL_IDS } from "@/lib/ai/models";
 import { systemPrompt } from "@/lib/ai/prompts";
-import { ARGON, COPILOT_HAIKU, HYDROGEN } from "@/lib/ai/routing/catalog";
+import { COPILOT_HAIKU, HYDROGEN, NEON } from "@/lib/ai/routing/catalog";
 import {
   createUsageLedger,
   type Invocation,
@@ -774,9 +774,9 @@ test("Item 12: generateInfographic renders PNG on Cloud Computer via headless Ch
 });
 
 // ---------------------------------------------------------------------------
-// Visual Routing: Hydrogen -> Argon escalation -> Copilot Haiku fallback (NEVER 3.x)
+// Visual Routing: Hydrogen -> Neon escalation -> Copilot Haiku fallback (NEVER 3.x)
 // ---------------------------------------------------------------------------
-test("Visual Routing: dashboard, diagram, infographic, and HTML page intents (EN + TR) escalate to gemini-4-argon, fall back to claude-haiku-5.5, and never touch Gemini 3.x", async () => {
+test("Visual Routing: dashboard, diagram, infographic, and HTML page intents (EN + TR) escalate to gemini-4-neon, fall back to claude-haiku-5.5, and never touch Gemini 3.x", async () => {
   const cases: Array<{
     prompt: string;
     expectedTool:
@@ -827,14 +827,14 @@ test("Visual Routing: dashboard, diagram, infographic, and HTML page intents (EN
 
     const routing = resolveTurnModelAndEffort({
       selectedModelId: HYDROGEN,
-      availableModelIds: [HYDROGEN, ARGON],
+      availableModelIds: [HYDROGEN, NEON],
       userText: c.prompt,
       requestedTools: selected.intentMatchedTools,
     });
     assert.equal(
       routing.modelId,
-      ARGON,
-      `Expected ${ARGON} for visual prompt "${c.prompt}"`
+      NEON,
+      `Expected ${NEON} for visual prompt "${c.prompt}"`
     );
     assert.equal(routing.escalated, true);
     assert.equal(routing.reasoningEffort, "medium");
@@ -845,22 +845,22 @@ test("Visual Routing: dashboard, diagram, infographic, and HTML page intents (EN
     assert.doesNotMatch(modelId, /3\./);
   }
 
-  // Verify automatic fallback from gemini-4-argon -> claude-haiku-5.5 when Vertex fails before exposure
+  // Verify automatic fallback from gemini-4-neon -> claude-haiku-5.5 when Vertex fails before exposure
   const fallbackEvents: Array<{ fromModel: string; toModel: string }> = [];
   const session: InferenceSession = {
     ledger: createUsageLedger("owner-1", "turn-vis-fallback"),
-    available: [HYDROGEN, ARGON, COPILOT_HAIKU],
+    available: [HYDROGEN, NEON, COPILOT_HAIKU],
     exposed: false,
     toolBoundary: false,
     fallbackUsed: false,
-    activeModelId: ARGON,
+    activeModelId: NEON,
     onFallback: ({ fromModel, toModel }) => {
       fallbackEvents.push({ fromModel, toModel });
     },
   };
 
   const routed = createRoutedModel(
-    ARGON,
+    NEON,
     session,
     (id) =>
       ({
@@ -869,7 +869,7 @@ test("Visual Routing: dashboard, diagram, infographic, and HTML page intents (EN
         modelId: id,
         supportedUrls: {},
         doGenerate: () => {
-          if (id === ARGON) {
+          if (id === NEON) {
             const err = Object.assign(new Error("Vertex 503"), {
               statusCode: 503,
             });
@@ -904,7 +904,7 @@ test("Visual Routing: dashboard, diagram, infographic, and HTML page intents (EN
   assert.equal(session.fallbackUsed, true);
   assert.equal(session.activeModelId, COPILOT_HAIKU);
   assert.deepEqual(fallbackEvents, [
-    { fromModel: ARGON, toModel: COPILOT_HAIKU },
+    { fromModel: NEON, toModel: COPILOT_HAIKU },
   ]);
   assert.equal(
     generated.content[0]?.type === "text" ? generated.content[0].text : "",

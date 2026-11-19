@@ -158,8 +158,8 @@ test("Multi-source merge across ChatGPT (JSON), Claude (MD), Gemini (TR/EN), and
     preferredModel,
   }) => {
     vertexRunnerCalled = true;
-    // With 4 distinct sources, preferredModel must escalate to `gemini-4-argon`
-    assert.equal(preferredModel, "gemini-4-argon");
+    // With 4 distinct sources, preferredModel must escalate to `gemini-4-neon`
+    assert.equal(preferredModel, "gemini-4-neon");
 
     // ZERO Korn Ferry text or passwords/cards/addresses may ever enter the Vertex prompt payload!
     const serialized = JSON.stringify({ candidates, existingForModel });
@@ -187,7 +187,7 @@ test("Multi-source merge across ChatGPT (JSON), Claude (MD), Gemini (TR/EN), and
     const idxGrokEce = findIdx("gcse history");
 
     return Promise.resolve({
-      modelUsed: "gemini-4-argon",
+      modelUsed: "gemini-4-neon",
       payload: {
         items: [
           {
@@ -304,7 +304,7 @@ test("Multi-source merge across ChatGPT (JSON), Claude (MD), Gemini (TR/EN), and
   });
 
   assert.equal(vertexRunnerCalled, true);
-  assert.equal(result.modelUsed, "gemini-4-argon");
+  assert.equal(result.modelUsed, "gemini-4-neon");
 
   // Verify exact 4-stat summary counts:
   // - 2 new (coffee preference + Ece GCSE History)

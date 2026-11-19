@@ -22,9 +22,9 @@ import { createCopilotHaikuVmAdapter } from "../../lib/ai/copilot-vm-model";
 import { resolveTurnModelAndEffort } from "../../lib/ai/escalation";
 import { systemPrompt } from "../../lib/ai/prompts";
 import {
-  ARGON,
   COPILOT_HAIKU,
   HYDROGEN,
+  NEON,
   TERRA,
   WEB_SEARCH_TOOL_ID,
 } from "../../lib/ai/routing/catalog";
@@ -125,7 +125,7 @@ test("Exact owner sentence + 5 TR/EN variants select Gmail read & draft tools, s
 
       const routing = resolveTurnModelAndEffort({
         selectedModelId: HYDROGEN,
-        availableModelIds: [HYDROGEN, ARGON, TERRA],
+        availableModelIds: [HYDROGEN, NEON, TERRA],
         userText: sentence,
         requestedTools: connectedTools,
         baseEffort: "low",
@@ -191,13 +191,13 @@ test("Full 89-scenario audit matrix passes 89/89", () => {
     const tools = selectActiveTools(msgs, !s.guest, true);
     const esc = resolveTurnModelAndEffort({
       selectedModelId: HYDROGEN,
-      availableModelIds: [HYDROGEN, ARGON],
+      availableModelIds: [HYDROGEN, NEON],
       userText: s.prompt.startsWith("(approve")
         ? (s.history?.[0]?.text ?? "")
         : s.prompt,
       requestedTools: tools,
     });
-    const model = esc.modelId.includes("argon") ? "argon" : "hydrogen";
+    const model = esc.modelId.includes("neon") ? "neon" : "hydrogen";
     for (const reqTool of s.include ?? []) {
       if (reqTool === "saveProfileFact" && (s.id === "M01" || s.id === "M02")) {
         assert.ok(tools.includes("saveProfileFact"), `${s.id} saveProfileFact`);
@@ -498,7 +498,7 @@ test("route onError logs failureKind only, Turkish partial break shows 'Yarıda 
   assert.equal(canRetryReply([uMsg, storedWrite]), false);
 });
 
-test("Owner Decision (No Internal Spend Cap): 60 consecutive turns across Hydrogen, Argon, and Vertex-429 -> Copilot Haiku fallback never hit any internal cap, never select pay-per-use models, and show exact Turkish cause on double 429", async () => {
+test("Owner Decision (No Internal Spend Cap): 60 consecutive turns across Hydrogen, Neon, and Vertex-429 -> Copilot Haiku fallback never hit any internal cap, never select pay-per-use models, and show exact Turkish cause on double 429", async () => {
   const prevAllowance = process.env.AI_MONTHLY_ALLOWANCE_USD;
   try {
     // Even if a stale or invalid AI_MONTHLY_ALLOWANCE_USD=0 env var is left set, it has zero effect
@@ -510,12 +510,12 @@ test("Owner Decision (No Internal Spend Cap): 60 consecutive turns across Hydrog
 
     for (let turn = 1; turn <= 60; turn++) {
       const ledger = createUsageLedger("owner-1", `req-turn-${turn}`);
-      const isArgonTurn = turn % 5 === 0;
+      const isNeonTurn = turn % 5 === 0;
       const simulateVertex429 = turn % 8 === 0;
-      const initialModel = isArgonTurn ? ARGON : HYDROGEN;
+      const initialModel = isNeonTurn ? NEON : HYDROGEN;
 
       const session: InferenceSession = {
-        available: [HYDROGEN, ARGON, COPILOT_HAIKU],
+        available: [HYDROGEN, NEON, COPILOT_HAIKU],
         exposed: false,
         toolBoundary: false,
         fallbackUsed: false,
@@ -528,11 +528,11 @@ test("Owner Decision (No Internal Spend Cap): 60 consecutive turns across Hydrog
         (modelId) => {
           assert.ok(
             modelId === HYDROGEN ||
-              modelId === ARGON ||
+              modelId === NEON ||
               modelId === COPILOT_HAIKU,
             `Forbidden pay-per-use model selected on turn ${turn}: ${modelId}`
           );
-          if (modelId === HYDROGEN || modelId === ARGON) {
+          if (modelId === HYDROGEN || modelId === NEON) {
             return createVertexGeminiAdapter(modelId, {
               projectId: "project-cd0bc64c-0025-446c-b41",
               getAccessToken: () => Promise.resolve("ya29.test"),
@@ -640,7 +640,7 @@ test("Browser Audit B & C: English inbox read, Turkish calendar read, and ordina
   assert.equal(
     resolveTurnModelAndEffort({
       selectedModelId: HYDROGEN,
-      availableModelIds: [HYDROGEN, ARGON],
+      availableModelIds: [HYDROGEN, NEON],
       userText: "Bu hafta takvimimde neler var?",
       requestedTools: calTools,
     }).modelId,
@@ -795,14 +795,14 @@ test("Browser Audit D: gmailReadMessages retries once with forceRefresh on stale
   assert.ok(batchMessages[0].fencedContent.length < 1050);
 });
 
-test("Browser Audit E & F: Argon MEDIUM allocates 8192 thinking headroom (16384 total output tokens) to prevent mid-sentence truncation, and safeUIStream deduplicates fatal errors", async () => {
-  const argonBody = buildVertexRequestBody(ARGON, {
+test("Browser Audit E & F: Neon MEDIUM allocates 8192 thinking headroom (16384 total output tokens) to prevent mid-sentence truncation, and safeUIStream deduplicates fatal errors", async () => {
+  const neonBody = buildVertexRequestBody(NEON, {
     maxOutputTokens: 8192,
     prompt: [{ role: "user", content: [{ type: "text", text: "Deep dive" }] }],
     providerOptions: { openai: { reasoningEffort: "medium" } },
   });
   assert.equal(
-    (argonBody.generationConfig as { maxOutputTokens: number }).maxOutputTokens,
+    (neonBody.generationConfig as { maxOutputTokens: number }).maxOutputTokens,
     8192 + 8192
   );
 

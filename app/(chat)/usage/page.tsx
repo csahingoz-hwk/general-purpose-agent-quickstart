@@ -80,7 +80,7 @@ type UsageResponse = {
 
 const MODEL_FRIENDLY_LABELS: Record<string, string> = {
   "gemini-4-hydrogen": "Gemini 4 Hydrogen (Vertex)",
-  "gemini-4-argon": "Gemini 4 Argon (Vertex)",
+  "gemini-4-neon": "Gemini 4 Neon (Vertex)",
   "claude-haiku-5.5": "Claude Haiku 5.5 (Copilot)",
 };
 
@@ -90,15 +90,14 @@ function deriveRowsFromCalls(calls: UsageCall[]): PerModelUsageRow[] {
     { calls: number; inputTokens: number; outputTokens: number }
   >([
     ["gemini-4-hydrogen", { calls: 0, inputTokens: 0, outputTokens: 0 }],
-    ["gemini-4-argon", { calls: 0, inputTokens: 0, outputTokens: 0 }],
+    ["gemini-4-neon", { calls: 0, inputTokens: 0, outputTokens: 0 }],
     ["claude-haiku-5.5", { calls: 0, inputTokens: 0, outputTokens: 0 }],
   ]);
   for (const c of calls) {
-    const cur = map.get(c.model) ?? {
-      calls: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-    };
+    const cur = map.get(c.model);
+    if (!cur) {
+      continue;
+    }
     cur.calls += 1;
     cur.inputTokens += Number(c.inputTokens ?? 0);
     cur.outputTokens += Number(c.outputTokens ?? 0);
@@ -106,7 +105,7 @@ function deriveRowsFromCalls(calls: UsageCall[]): PerModelUsageRow[] {
   }
   return [...map.entries()].map(([model, agg]) => {
     const refRate =
-      model === "gemini-4-argon"
+      model === "gemini-4-neon"
         ? (agg.inputTokens / 1_000_000) * 1.25 +
           (agg.outputTokens / 1_000_000) * 5
         : model === "gemini-4-hydrogen"

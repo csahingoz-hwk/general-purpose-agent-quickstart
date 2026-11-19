@@ -8,12 +8,12 @@ import type {
 import { createGateway } from "ai";
 import { z } from "zod";
 import {
-  ARGON,
   COPILOT_HAIKU,
   HYDROGEN,
   isCopilotFallbackModel,
   isVertexModel,
   LUNA,
+  NEON,
   type PremiumModelId,
   premiumModels,
   TERRA,
@@ -110,9 +110,9 @@ export function createRoutedModel(
     return isVertexModel(model) || isCopilotFallbackModel(model);
   }
   function fallbackTargetFor(model: PremiumModelId): PremiumModelId | null {
-    // Owner chain: Gemini 4 Hydrogen -> Argon (escalation) -> Copilot Claude Haiku 5.5
+    // Owner chain: Gemini 4 Hydrogen -> Neon (escalation) -> Copilot Claude Haiku 5.5
     // (fallback ONLY on Vertex failure/timeout via Cloud VM bridge).
-    if (model === HYDROGEN || model === ARGON) {
+    if (model === HYDROGEN || model === NEON) {
       return session.available.includes(COPILOT_HAIKU) ? COPILOT_HAIKU : null;
     }
     if (model === COPILOT_HAIKU || model === TERRA) {
@@ -137,11 +137,15 @@ export function createRoutedModel(
         ? "high"
         : requestedEffort === "medium"
           ? "medium"
-          : requestedEffort === "low" && (model === HYDROGEN || model === LUNA)
+          : requestedEffort === "low" ||
+              requestedEffort === "minimal" ||
+              requestedEffort === "none"
             ? "low"
             : model === HYDROGEN || model === LUNA
               ? "low"
-              : "medium";
+              : model === NEON
+                ? "high"
+                : "medium";
     if (isSubscriptionBackedZeroCashModel(model)) {
       return {
         ...params,

@@ -63,6 +63,30 @@ const THEME_COLOR_SCRIPT = `\
   } catch (error) {
     html.setAttribute("data-bot-theme", "blue");
   }
+  try {
+    var storedLocale = localStorage.getItem("assistant-ui-locale");
+    var isTr = false;
+    if (storedLocale === "tr") {
+      isTr = true;
+    } else if (storedLocale !== "en") {
+      var navLang = (navigator.language || "").toLowerCase();
+      var navLangs = Array.isArray(navigator.languages) ? navigator.languages : [];
+      var hasTrLang = navLang === "tr" || navLang.indexOf("tr-") === 0 || navLang.indexOf("tr_") === 0;
+      for (var li = 0; !hasTrLang && li < navLangs.length; li += 1) {
+        var tag = String(navLangs[li] || "").toLowerCase();
+        if (tag === "tr" || tag.indexOf("tr-") === 0 || tag.indexOf("tr_") === 0) {
+          hasTrLang = true;
+        }
+      }
+      var tz = "";
+      try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (_) {}
+      isTr = hasTrLang || tz === "Europe/Istanbul";
+    }
+    html.lang = isTr ? "tr" : "en";
+    if (isTr && (!document.title || document.title === "Assistant")) {
+      document.title = "Asistan";
+    }
+  } catch (_) {}
   function updateThemeColor() {
     var isDark = html.classList.contains("dark");
     var color = getComputedStyle(html).getPropertyValue("--background").trim() || (isDark ? "#141311" : "#f6f5f3");

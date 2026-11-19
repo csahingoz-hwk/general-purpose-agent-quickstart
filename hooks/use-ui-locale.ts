@@ -159,10 +159,37 @@ export function useUiLocale(fallbackLocale?: UiLocale): {
         : (fallbackLocale ?? browserLocale)
       : preference;
 
+  const copy = getCopy(locale);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+    document.documentElement.lang = locale;
+    const syncTitle = () => {
+      const currentTitle = document.title.trim();
+      if (
+        !currentTitle ||
+        (locale === "tr" && currentTitle === "Assistant") ||
+        (locale === "en" && currentTitle === "Asistan")
+      ) {
+        document.title = copy.pageTitle;
+      }
+    };
+    syncTitle();
+    const observer = new MutationObserver(syncTitle);
+    observer.observe(document.head, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    return () => observer.disconnect();
+  }, [locale, copy.pageTitle]);
+
   return {
     preference,
     locale,
-    copy: getCopy(locale),
+    copy,
     setLocalePreference,
   };
 }

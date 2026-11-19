@@ -69,10 +69,10 @@ export function SidebarUserNav({
             <button
               aria-label={
                 isGuest
-                  ? "Account menu (Guest)"
+                  ? `${copy.accountMenu} (${copy.guestLabel})`
                   : email
-                    ? `Account menu (${email})`
-                    : "Account menu"
+                    ? `${copy.accountMenu} (${email})`
+                    : copy.accountMenu
               }
               className="relative z-30 flex min-h-[56px] w-full cursor-pointer items-center gap-2.5 rounded-[20px] bg-card px-4 text-left text-[17px] text-foreground outline-hidden transition-colors hover:bg-card/90 focus-visible:ring-2 focus-visible:ring-sidebar-ring data-[state=open]:bg-card group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-10! group-data-[collapsible=icon]:min-h-10! group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:rounded-full group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:px-0! group-data-[collapsible=icon]:hover:bg-sidebar-accent"
               data-testid="user-nav-button"
@@ -88,7 +88,7 @@ export function SidebarUserNav({
                 className="truncate text-[15px] group-data-[collapsible=icon]:hidden"
                 data-testid="user-email"
               >
-                {isGuest ? "Guest" : email}
+                {isGuest ? copy.guestLabel : email}
               </span>
               <ChevronUp className="ml-auto size-3.5 shrink-0 text-sidebar-foreground group-data-[collapsible=icon]:hidden" />
             </button>

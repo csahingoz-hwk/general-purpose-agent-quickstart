@@ -13,7 +13,7 @@ export type Scenario = {
   guest?: boolean;
   include?: string[];
   exclude?: string[];
-  model?: "hydrogen" | "argon";
+  model?: "hydrogen" | "neon";
   search?: boolean;
   note?: string;
 };
@@ -65,7 +65,7 @@ export const scenarios: Scenario[] = [
     exclude: ["webSearch"],
     model: "hydrogen",
     search: false,
-    note: "Plain advice must not trigger paid search or Argon",
+    note: "Plain advice must not trigger paid search or Neon",
   },
   {
     id: "C06",
@@ -91,7 +91,7 @@ export const scenarios: Scenario[] = [
     lang: "TR",
     prompt: "fotosentez nasıl çalışır?",
     model: "hydrogen",
-    note: "Static knowledge; search optional, Argon not needed",
+    note: "Static knowledge; search optional, Neon not needed",
   },
   // --- Gmail
   {
@@ -506,7 +506,7 @@ export const scenarios: Scenario[] = [
     prompt: "dolar kaç bugün?",
     include: ["webSearch"],
     search: true,
-    note: "Search escalates to Argon by design",
+    note: "Search escalates to Neon by design",
   },
   {
     id: "W02",
@@ -546,7 +546,7 @@ export const scenarios: Scenario[] = [
     lang: "TR",
     prompt: "iPhone 18 ile Pixel 11'i detaylı karşılaştırır mısın?",
     include: ["webSearch"],
-    model: "argon",
+    model: "neon",
     search: true,
   },
   {
@@ -555,7 +555,7 @@ export const scenarios: Scenario[] = [
     lang: "TR",
     prompt: "internetten Gemini 4 hakkında araştırma yapar mısın?",
     include: ["webSearch"],
-    model: "argon",
+    model: "neon",
     search: true,
   },
   // --- Weather / time
@@ -789,7 +789,7 @@ export const scenarios: Scenario[] = [
     prompt: "Have Claude Code fix the lint errors in my local repo on my Mac",
     include: ["macRunAgentCli"],
     search: false,
-    model: "argon",
+    model: "neon",
   },
   {
     id: "X03",
@@ -866,7 +866,7 @@ export const scenarios: Scenario[] = [
     lang: "TR",
     prompt:
       "Bu hatanın nedenini bul: Next.js build'de 'Module not found: fs' hatası alıyorum",
-    model: "argon",
+    model: "neon",
     note: "Root-cause should escalate (high effort)",
   },
   {
@@ -880,7 +880,7 @@ export const scenarios: Scenario[] = [
       ) +
       "kısa bir öneri verir misin?",
     exclude: ["webSearch"],
-    note: "Long but simple: does length alone push to Argon?",
+    note: "Long but simple: does length alone push to Neon?",
   },
   {
     id: "L03",

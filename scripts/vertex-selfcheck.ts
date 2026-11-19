@@ -1,5 +1,5 @@
 import type { LanguageModelV4 } from "@ai-sdk/provider";
-import { ARGON, HYDROGEN } from "../lib/ai/routing/catalog";
+import { HYDROGEN, NEON } from "../lib/ai/routing/catalog";
 import {
   clearVertexTokenCacheForTests,
   getVertexProjectId,
@@ -103,7 +103,7 @@ async function main() {
       fetcher: recordingFetch,
       getAccessToken: () => Promise.resolve(accessToken),
     });
-    const argonAdapter = createVertexGeminiAdapter(ARGON, {
+    const neonAdapter = createVertexGeminiAdapter(NEON, {
       fetcher: recordingFetch,
       getAccessToken: () => Promise.resolve(accessToken),
     });
@@ -157,16 +157,16 @@ async function main() {
           "low"
         )
       );
-      const argonPerf = await withRetry429(() =>
+      const neonPerf = await withRetry429(() =>
         measureStreamTtft(
-          argonAdapter,
+          neonAdapter,
           "Compare PostgreSQL vs SQLite in two concise bullet points.",
           "medium"
         )
       );
 
       console.log(
-        `Vertex WIF self-check: PASS project=${projectId} auth=vercel-oidc-wif(${stsMs}ms) geminiApiKeyUsed=false endpoints=${[...hitHosts].length} hydrogenTtft=${hydrogenPerf.ttftMs}ms(total=${hydrogenPerf.totalMs}ms) argonTtft=${argonPerf.ttftMs}ms(total=${argonPerf.totalMs}ms) kfBlock=ok`
+        `Vertex WIF self-check: PASS project=${projectId} auth=vercel-oidc-wif(${stsMs}ms) geminiApiKeyUsed=false endpoints=${[...hitHosts].length} hydrogenTtft=${hydrogenPerf.ttftMs}ms(total=${hydrogenPerf.totalMs}ms) neonTtft=${neonPerf.ttftMs}ms(total=${neonPerf.totalMs}ms) kfBlock=ok`
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : "";

@@ -1238,3 +1238,102 @@ test("owner credentials vault, sticky subpage header, and teammate chat wiring w
     await browser.close();
   }
 });
+
+test("Turkish browser locale defaults document title, status texts, and aria-labels to Turkish", async () => {
+  const browser = await launchBrowser();
+  try {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      locale: "tr-TR",
+      timezoneId: "Europe/Istanbul",
+      reducedMotion: "reduce",
+    });
+    const token = await encode({
+      secret,
+      salt: "authjs.session-token",
+      token: { id: userId, email: owner, type: "regular" },
+    });
+    await context.addCookies([
+      { name: "authjs.session-token", value: token, url: origin },
+      { name: "sidebar_state", value: "true", url: origin },
+    ]);
+    const page = await context.newPage();
+    await page.route("**/a-4-a/c.js*", (route) =>
+      route.fulfill({
+        contentType: "application/javascript",
+        body: "window.V_C.push({b:1,d:0});",
+      })
+    );
+    await page.route("**/api/history*", (route) =>
+      route.fulfill({ json: { chats: [], hasMore: false } })
+    );
+    await page.route("**/api/messages*", (route) =>
+      route.fulfill({
+        json: {
+          messages: [],
+          visibility: "private",
+          userId,
+          isReadonly: false,
+        },
+      })
+    );
+
+    // 1. Unconfigured models -> Turkish readiness & "Sohbet hazır değil"
+    await page.goto(origin);
+    await expect(page).toHaveTitle("Asistan");
+    await expect(page.getByTestId("model-readiness-status")).toContainText(
+      "Sohbet kurulumu henüz tamamlanmadı"
+    );
+    await expect(page.getByText("Sohbet hazır değil")).toBeVisible();
+    await expect(page.getByTestId("home-location-trigger")).toHaveAttribute(
+      "aria-label",
+      "Sohbet seçenekleri"
+    );
+    await expect(page.getByTestId("user-nav-button")).toHaveAttribute(
+      "aria-label",
+      `Hesap menüsü (${owner})`
+    );
+    await expect(
+      page.locator('header button[aria-label="Kenar çubuğunu aç/kapat"]')
+    ).toHaveCount(1);
+    await expect(
+      page.locator('input[type="file"][aria-label="Dosya seç"]').first()
+    ).toHaveCount(1);
+
+    // 2. Ready models + live voice -> "Canlı sesli sohbet" aria-label
+    await page.route("**/api/models", (route) =>
+      route.fulfill({
+        json: {
+          status: "ready",
+          defaultModelId: "openai/gpt-oss-20b",
+          checkedAt: "2026-11-19T06:00:00Z",
+          models: [
+            {
+              id: "openai/gpt-oss-20b",
+              name: "Everyday chat",
+              provider: "groq",
+              description: "GPT OSS 20B",
+            },
+          ],
+          capabilities: {},
+        },
+      })
+    );
+    await page.route("**/api/voice/transcribe", (route) =>
+      route.fulfill({
+        json: { serverSttReady: true, liveReady: true },
+      })
+    );
+    await page.reload();
+    await expect(page).toHaveTitle("Asistan");
+    await expect(page.getByTestId("live-voice-button")).toHaveAttribute(
+      "aria-label",
+      "Canlı sesli sohbet"
+    );
+    console.log(
+      "PASS: Turkish UI title, status texts, and aria-labels verified"
+    );
+  } finally {
+    await browser.close();
+  }
+});

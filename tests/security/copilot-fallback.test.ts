@@ -20,10 +20,10 @@ import {
   getModelDisplayName,
 } from "../../lib/ai/models";
 import {
-  ARGON,
   COPILOT_HAIKU,
   HYDROGEN,
   LUNA,
+  NEON,
   TERRA,
   WEB_SEARCH_TOOL_ID,
 } from "../../lib/ai/routing/catalog";
@@ -39,7 +39,7 @@ import {
 import type { ChatMessage } from "../../lib/types";
 
 function makeSession(
-  available: InferenceSession["available"] = [HYDROGEN, ARGON, COPILOT_HAIKU]
+  available: InferenceSession["available"] = [HYDROGEN, NEON, COPILOT_HAIKU]
 ) {
   const reserves: Invocation[] = [];
   const settlements: {
@@ -125,14 +125,14 @@ function makeCopilotSseFetch(replyText: string) {
   return { fetcher, calls };
 }
 
-test("Model chain catalog: Hydrogen default, Argon escalation, Copilot Claude Haiku 5.5 ONLY fallback (never Luna/Terra/Antigravity)", () => {
+test("Model chain catalog: Hydrogen default, Neon escalation, Copilot Claude Haiku 5.5 ONLY fallback (never Luna/Terra/Antigravity)", () => {
   assert.equal(DEFAULT_CHAT_MODEL, HYDROGEN);
-  assert.equal(ESCALATED_RESEARCH_MODEL, ARGON);
+  assert.equal(ESCALATED_RESEARCH_MODEL, NEON);
   assert.equal(FALLBACK_CHAT_MODEL, COPILOT_HAIKU);
   assert.equal(getModelDisplayName(COPILOT_HAIKU), COPILOT_CLAUDE_HAIKU_NAME);
   assert.deepEqual(
     chatModels.map((m) => m.id),
-    [HYDROGEN, ARGON]
+    [HYDROGEN, NEON]
   );
   assert.ok(!chatModels.some((m) => m.id === LUNA || m.id === TERRA));
 });
@@ -237,27 +237,27 @@ test("Everyday Vertex Hydrogen failure & timeout fall back ONCE to Copilot Claud
   assert.equal(timeoutCtx.fallbacks[0]?.toModel, COPILOT_HAIKU);
 });
 
-test("Escalated research turn (Hydrogen -> Argon) falls back to Copilot Claude Haiku 5.5 even with webSearch active and $0 Gateway charge", async () => {
+test("Escalated research turn (Hydrogen -> Neon) falls back to Copilot Claude Haiku 5.5 even with webSearch active and $0 Gateway charge", async () => {
   const esc = resolveTurnModelAndEffort({
     selectedModelId: HYDROGEN,
-    availableModelIds: [HYDROGEN, ARGON],
+    availableModelIds: [HYDROGEN, NEON],
     userText: "Compare top 5 European cloud regions vs latency in detail",
     requestedTools: ["webSearch"],
     baseEffort: "low",
   });
-  assert.equal(esc.modelId, ARGON);
+  assert.equal(esc.modelId, NEON);
   assert.equal(esc.escalated, true);
 
   const { session, fallbacks, reserves, settlements } = makeSession();
   const attempted: string[] = [];
 
   const routed = createRoutedModel(
-    esc.modelId as typeof ARGON,
+    esc.modelId as typeof NEON,
     session,
     (id) => {
       attempted.push(id);
-      if (id === ARGON) {
-        return createVertexGeminiAdapter(ARGON, {
+      if (id === NEON) {
+        return createVertexGeminiAdapter(NEON, {
           projectId: "project-cd0bc64c-0025-446c-b41",
           getAccessToken: () => Promise.resolve("ya29.test"),
           fetcher: () =>
@@ -269,7 +269,7 @@ test("Escalated research turn (Hydrogen -> Argon) falls back to Copilot Claude H
         hmacSecret: "0123456789abcdef0123456789abcdef",
         copilotToken: "synthetic-unit-test-copilot-token",
         fetcher: makeCopilotSseFetch(
-          "Argon fallback answered by Claude Haiku 5.5."
+          "Neon fallback answered by Claude Haiku 5.5."
         ).fetcher,
       });
     },
@@ -287,9 +287,9 @@ test("Escalated research turn (Hydrogen -> Argon) falls back to Copilot Claude H
     ],
   });
 
-  assert.deepEqual(attempted, [ARGON, COPILOT_HAIKU]);
-  assert.equal(out.text, "Argon fallback answered by Claude Haiku 5.5.");
-  assert.equal(fallbacks[0]?.fromModel, ARGON);
+  assert.deepEqual(attempted, [NEON, COPILOT_HAIKU]);
+  assert.equal(out.text, "Neon fallback answered by Claude Haiku 5.5.");
+  assert.equal(fallbacks[0]?.fromModel, NEON);
   assert.equal(fallbacks[0]?.toModel, COPILOT_HAIKU);
   assert.ok(reserves.every((r) => r.reserveUsd === 0));
   assert.ok(settlements.every((s) => (s.extraUsd ?? 0) === 0));

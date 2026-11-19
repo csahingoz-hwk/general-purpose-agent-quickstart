@@ -9,7 +9,7 @@ import type {
 import { asSchema } from "ai";
 import type { CapabilityManifest } from "../../lib/ai/capability-manifest";
 import { selectToolsWithRanking } from "../../lib/ai/context/select-tools";
-import { ARGON, COPILOT_HAIKU, HYDROGEN } from "../../lib/ai/routing/catalog";
+import { COPILOT_HAIKU, HYDROGEN, NEON } from "../../lib/ai/routing/catalog";
 import { createUsageLedger } from "../../lib/ai/routing/ledger";
 import { createRoutedModel } from "../../lib/ai/routing/model";
 import { safeErrorDiagnostic } from "../../lib/ai/routing/policy";
@@ -287,7 +287,7 @@ test("Fix 3: createRoutedModel logs safe { kind, statusCode, code, name } for pr
   try {
     const session: InferenceSession = {
       ledger: createUsageLedger("owner-1", "req-diag-test"),
-      available: [HYDROGEN, ARGON, COPILOT_HAIKU],
+      available: [HYDROGEN, NEON, COPILOT_HAIKU],
       exposed: false,
       toolBoundary: false,
       fallbackUsed: false,

@@ -23,6 +23,7 @@ export type FirecrawlNotConnectedResult = {
   setupHref: string;
   externalKeyUrl: string;
   message: string;
+  messageTr: string;
 };
 
 export function buildFirecrawlNotConnectedResult(): FirecrawlNotConnectedResult {
@@ -32,7 +33,8 @@ export function buildFirecrawlNotConnectedResult(): FirecrawlNotConnectedResult 
     connectProvider: "firecrawl",
     setupHref: FIRECRAWL_SETUP_HREF,
     externalKeyUrl: FIRECRAWL_KEY_CREATE_URL,
-    message: `Firecrawl is not connected yet because FIRECRAWL_API_KEY is not configured in Vercel environment variables. Open Setup checklist (${FIRECRAWL_SETUP_HREF}) and create an API key at ${FIRECRAWL_KEY_CREATE_URL}.`,
+    message: `Firecrawl is not connected because FIRECRAWL_API_KEY is not set in environment variables. Open the Setup page Connect step (${FIRECRAWL_SETUP_HREF}) and create an API key at ${FIRECRAWL_KEY_CREATE_URL}.`,
+    messageTr: `Firecrawl bağlı değil çünkü FIRECRAWL_API_KEY henüz ortam değişkenlerinde tanımlanmamış. Kurulum sayfasındaki Bağla adımından (${FIRECRAWL_SETUP_HREF}) anahtar oluşturup bağlayabilirsin (${FIRECRAWL_KEY_CREATE_URL}).`,
   };
 }
 

@@ -8,7 +8,10 @@ import {
   saveChat,
   saveMessages,
 } from "@/lib/db/queries";
-import { extractExplicitRememberFact } from "@/lib/memory/bulk-import";
+import {
+  areMemoryFactsSemanticallyEquivalent,
+  extractExplicitRememberFact,
+} from "@/lib/memory/bulk-import";
 import {
   createPostgresMemoryStore,
   isMemoryToolsEnabled,
@@ -96,9 +99,32 @@ export async function POST(request: Request) {
       !recentVoiceMemoryAlreadySaved && isMemoryToolsEnabled() && userText
         ? extractExplicitRememberFact(userText)
         : null;
+    const voiceMemStore =
+      explicitRemember?.kind === "ok" ? createPostgresMemoryStore() : null;
+    if (explicitRemember?.kind === "ok" && voiceMemStore) {
+      const recentFacts = await voiceMemStore
+        .listProfileFacts({ userId: session.user.id })
+        .catch(() => []);
+      const cutoffFactMs = Date.now() - 45_000;
+      const alreadySavedSemantically = recentFacts.slice(0, 15).some((f) => {
+        const updatedMs = new Date(f.updatedAt).getTime();
+        if (Number.isFinite(updatedMs) && updatedMs < cutoffFactMs) {
+          return false;
+        }
+        return areMemoryFactsSemanticallyEquivalent(
+          f.value,
+          explicitRemember.value
+        );
+      });
+      if (alreadySavedSemantically) {
+        recentVoiceMemoryAlreadySaved = true;
+      }
+    }
     const savedFact =
-      explicitRemember?.kind === "ok"
-        ? await createPostgresMemoryStore()
+      !recentVoiceMemoryAlreadySaved &&
+      explicitRemember?.kind === "ok" &&
+      voiceMemStore
+        ? await voiceMemStore
             .upsertProfileFact({
               userId: session.user.id,
               category: explicitRemember.category,

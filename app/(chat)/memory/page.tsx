@@ -249,8 +249,8 @@ function formatLearnedDate(iso: string, lang: "en" | "tr"): string {
 function formatModelUsedBadge(
   modelUsed: MultiSourceMergeResult["modelUsed"] | null
 ): string | null {
-  if (modelUsed === "gemini-4-argon") {
-    return "Gemini 4 Argon · Vertex";
+  if (modelUsed === "gemini-4-neon") {
+    return "Gemini 4 Neon · Vertex";
   }
   if (modelUsed === "gemini-4-hydrogen") {
     return "Gemini 4 Hydrogen · Vertex";
@@ -949,11 +949,13 @@ export default function MemoryPage() {
                 <div>
                   <input
                     accept=".txt,.md,.markdown,.json,.csv,text/plain,application/json,text/csv"
+                    aria-label={uiCopyDict.chooseFile}
                     className="sr-only"
                     data-testid="memory-upload-files-input"
                     multiple
                     onChange={handleFilesSelected}
                     ref={fileInputRef}
+                    title={uiCopyDict.chooseFile}
                     type="file"
                   />
                   <button

@@ -2,11 +2,11 @@ import type { LanguageModelV4Usage } from "@ai-sdk/provider";
 import { estimateReferenceModelUsd } from "@/lib/billing/vertex-cloud-usage";
 import { getSharedPostgresClient } from "@/lib/db/shared-pool";
 import {
-  ARGON,
   COPILOT_HAIKU,
   HYDROGEN,
   isCopilotFallbackModel,
   isVertexModel,
+  NEON,
   type PremiumModelId,
 } from "./catalog";
 import { usageCost } from "./cost";
@@ -44,7 +44,7 @@ export function settledEstimate(tokenUsd: number | undefined, extraUsd = 0) {
 
 /**
  * Informational-only call & token recorder.
- * All active models (`gemini-4-hydrogen`, `gemini-4-argon` on Google AI Ultra credit,
+ * All active models (`gemini-4-hydrogen`, `gemini-4-neon` on Google AI Ultra credit,
  * and `claude-haiku-5.5` on GitHub Copilot subscription) are subscription/credit-covered
  * with zero pay-per-use models, so `reserve` NEVER blocks or enforces an internal cap.
  */
@@ -111,15 +111,14 @@ export function summarizeCallsByModel(
     string,
     { calls: number; inputTokens: number; outputTokens: number }
   >();
-  for (const baseModel of [HYDROGEN, ARGON, COPILOT_HAIKU]) {
+  for (const baseModel of [HYDROGEN, NEON, COPILOT_HAIKU]) {
     bucket.set(baseModel, { calls: 0, inputTokens: 0, outputTokens: 0 });
   }
   for (const row of rows) {
-    const cur = bucket.get(row.model) ?? {
-      calls: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-    };
+    const cur = bucket.get(row.model);
+    if (!cur) {
+      continue;
+    }
     cur.calls += 1;
     cur.inputTokens += Number(row.inputTokens ?? 0);
     cur.outputTokens += Number(row.outputTokens ?? 0);

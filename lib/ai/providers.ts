@@ -50,7 +50,7 @@ export function getLanguageModel(modelId: string) {
 
   // Standing owner rule: NO pay-per-use models (no paid Vercel AI Gateway
   // credits, no OpenAI/Anthropic API keys).
-  // Chain: Gemini 4 Hydrogen -> Argon (escalation) -> Copilot Claude Haiku 5.5
+  // Chain: Gemini 4 Hydrogen -> Neon (escalation) -> Copilot Claude Haiku 5.5
   // (fallback ONLY on Vertex failure/timeout via Cloud VM bridge).
   if (
     !isVertexModel(modelId) ||

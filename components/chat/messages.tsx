@@ -15,6 +15,7 @@ import {
 } from "@/lib/ai/conversation-state";
 import type { Vote } from "@/lib/db/schema";
 import type { MascotState } from "@/lib/mascot";
+import { dedupeTurnMemoryCardsAcrossMessages } from "@/lib/memory/bulk-import";
 import type { ChatMessage } from "@/lib/types";
 import { getCopy } from "@/lib/ui-copy";
 import { cn } from "@/lib/utils";
@@ -144,7 +145,11 @@ function PureMessages({
     return () => observer.disconnect();
   }, [messagesContainerRef]);
 
-  const latestMessage = messages.at(-1);
+  const displayMessages = useMemo(
+    () => dedupeTurnMemoryCardsAcrossMessages(messages),
+    [messages]
+  );
+  const latestMessage = displayMessages.at(-1);
   const animatedMessageId =
     latestMessage?.role === "assistant" ? latestMessage.id : null;
 
@@ -203,13 +208,13 @@ function PureMessages({
               </pre>
             </details>
           )}
-          {messages.map((message, index) => (
+          {displayMessages.map((message, index) => (
             <PreviewMessage
               addToolApprovalResponse={addToolApprovalResponse}
               animateMascot={message.id === animatedMessageId}
               chatId={chatId}
               isLoading={
-                status === "streaming" && messages.length - 1 === index
+                status === "streaming" && displayMessages.length - 1 === index
               }
               isReadonly={isReadonly}
               key={message.id}
@@ -217,7 +222,7 @@ function PureMessages({
                 preference: uiLocalePref,
                 detectedUiLocale,
                 userText:
-                  messages
+                  displayMessages
                     .slice(0, index + 1)
                     .reverse()
                     .find((item) => item.role === "user")
@@ -236,7 +241,7 @@ function PureMessages({
               }}
               regenerate={regenerate}
               requiresScrollPadding={
-                hasSentMessage && index === messages.length - 1
+                hasSentMessage && index === displayMessages.length - 1
               }
               setMessages={setMessages}
               vote={

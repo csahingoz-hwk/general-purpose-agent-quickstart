@@ -134,6 +134,228 @@ export function normalizeMemoryComparisonText(raw: string): string {
     .trim();
 }
 
+const SEMANTIC_MEMORY_STOPWORDS = new Set<string>([
+  "i",
+  "my",
+  "me",
+  "mine",
+  "am",
+  "is",
+  "are",
+  "was",
+  "be",
+  "the",
+  "a",
+  "an",
+  "s",
+  "that",
+  "user",
+  "users",
+  "owner",
+  "owners",
+  "caglar",
+  "çağlar",
+  "ben",
+  "benim",
+  "bana",
+  "bende",
+  "kullanici",
+  "kullanıcı",
+  "kullanicinin",
+  "kullanıcının",
+  "sahip",
+  "sahibin",
+  "ın",
+  "in",
+  "un",
+  "ün",
+  "nın",
+  "nin",
+  "nun",
+  "nün",
+  "olarak",
+  "diye",
+  "oldugunu",
+  "olduğunu",
+  "oldugu",
+  "olduğu",
+  "dir",
+  "dır",
+  "dur",
+  "dür",
+  "tir",
+  "tır",
+  "tur",
+  "tür",
+]);
+
+function canonicalizeSemanticToken(token: string): string {
+  let w = token.trim();
+  if (!w) {
+    return "";
+  }
+  if (w === "colour" || w === "colours") {
+    return w === "colours" ? "colors" : "color";
+  }
+  if (
+    w === "favourite" ||
+    w === "favorite" ||
+    w === "favori" ||
+    w === "favorim" ||
+    w === "favorisi"
+  ) {
+    return "favorite";
+  }
+  // Turkish 1st-person present continuous -> 3rd-person stem ("seviyorum" -> "seviyor")
+  w = w.replace(/([iıuü]yor)um$/u, "$1");
+  // Turkish 1st/3rd-person participle ("sevdiğim" / "sevdiği" / "sevdiğini" -> "sevdik")
+  const partMatch = w.match(/^(.{2,}[dt][iıuü])ğ[iıuü](?:m|n|ni|nı|nu|nü)?$/u);
+  if (partMatch?.[1]) {
+    return `${partMatch[1]}k`;
+  }
+  // Turkish genitive on 3rd-person possessed nouns ("kızının" -> "kızı", "renginin" -> "rengi")
+  if (w.length >= 6) {
+    w = w.replace(/([iıuü])n[iıuü]n$/u, "$1");
+  }
+  // Common Turkish 1st/3rd-person possessed nouns ("rengim"/"rengi" -> "renk", "adım"/"adı" -> "ad")
+  if (w === "rengim" || w === "rengi") {
+    return "renk";
+  }
+  if (w === "adım" || w === "adı" || w === "adim" || w === "adi") {
+    return "ad";
+  }
+  if (w === "kızım" || w === "kızı") {
+    return "kız";
+  }
+  if (w === "oğlum" || w === "oğlu") {
+    return "oğul";
+  }
+  if (w === "eşim" || w === "eşi") {
+    return "eş";
+  }
+  // Strip 1st-person possessive `-im/-ım/-um/-üm` on longer Turkish stems ("tercihim" -> "tercih")
+  if (w.length >= 6 && /[bcçdfgğhjklmnprsştvyz][iıuü]m$/u.test(w)) {
+    w = w.slice(0, -2);
+  } else if (w.length >= 6 && /[aeıioöuü]m$/u.test(w)) {
+    w = w.slice(0, -1);
+  }
+  if (w.length >= 5 && /[bcçdfgğhjklmnprsştvyz]s[iıuü]$/u.test(w)) {
+    // e.g. leave consonant+si intact; strip `-si/-sı/-su/-sü` after vowel below
+  } else if (w.length >= 6 && /[aeıioöuü]s[iıuü]$/u.test(w)) {
+    w = w.slice(0, -2);
+  }
+  return w;
+}
+
+/**
+ * Normalizes a durable memory fact into canonical subject-independent semantic
+ * tokens so 1st-person (`"En sevdiğim renk orman yeşili."`) and 3rd-person
+ * (`"Çağlar'ın en sevdiği renk orman yeşili."`) phrasings match cleanly.
+ */
+export function normalizeSemanticMemoryTokens(
+  raw: string,
+  ownerName?: string | null
+): string[] {
+  const extraStop = new Set<string>();
+  if (ownerName?.trim()) {
+    for (const part of normalizeMemoryComparisonText(ownerName).split(" ")) {
+      if (part.length >= 2) {
+        extraStop.add(part);
+      }
+    }
+  }
+  const rawTokens = normalizeMemoryComparisonText(raw)
+    .split(" ")
+    .filter(Boolean);
+  const mapped: string[] = [];
+  for (const tok of rawTokens) {
+    if (SEMANTIC_MEMORY_STOPWORDS.has(tok) || extraStop.has(tok)) {
+      continue;
+    }
+    const canon = canonicalizeSemanticToken(tok);
+    if (!canon || SEMANTIC_MEMORY_STOPWORDS.has(canon)) {
+      continue;
+    }
+    mapped.push(canon);
+  }
+  // Collapse Turkish superlative `"en sevdik"` -> `"favorite"`
+  const collapsed: string[] = [];
+  for (let i = 0; i < mapped.length; i++) {
+    if (mapped[i] === "en" && mapped[i + 1] === "sevdik") {
+      collapsed.push("favorite");
+      i += 1;
+      continue;
+    }
+    const cur = mapped[i];
+    if (cur) {
+      collapsed.push(cur);
+    }
+  }
+  return collapsed;
+}
+
+/**
+ * Returns true when two memory sentences express the same underlying fact
+ * (including 1st-person vs 3rd-person owner framing in Turkish or English),
+ * without collapsing facts that have different values or numbers.
+ */
+export function areMemoryFactsSemanticallyEquivalent(
+  a: string,
+  b: string,
+  ownerName?: string | null
+): boolean {
+  const normA = normalizeMemoryComparisonText(a);
+  const normB = normalizeMemoryComparisonText(b);
+  if (!normA || !normB) {
+    return false;
+  }
+  if (normA === normB) {
+    return true;
+  }
+
+  const numsA = (normA.match(/\d+/g) ?? []).join(",");
+  const numsB = (normB.match(/\d+/g) ?? []).join(",");
+  if (numsA !== numsB) {
+    return false;
+  }
+
+  const tokensA = normalizeSemanticMemoryTokens(a, ownerName);
+  const tokensB = normalizeSemanticMemoryTokens(b, ownerName);
+  if (tokensA.length === 0 || tokensB.length === 0) {
+    return false;
+  }
+  if (tokensA.join(" ") === tokensB.join(" ")) {
+    return true;
+  }
+  if (tokensA.length < 2 || tokensB.length < 2) {
+    return false;
+  }
+
+  const setA = new Set(tokensA);
+  const setB = new Set(tokensB);
+  let intersection = 0;
+  for (const tok of setA) {
+    if (setB.has(tok)) {
+      intersection += 1;
+    }
+  }
+  if (intersection === setA.size && setA.size === setB.size) {
+    return true;
+  }
+  const union = setA.size + setB.size - intersection;
+  if (union > 0 && setA.size >= 3 && setB.size >= 3) {
+    if (intersection / union >= 0.8) {
+      return true;
+    }
+    const minSize = Math.min(setA.size, setB.size);
+    const maxSize = Math.max(setA.size, setB.size);
+    if (intersection === minSize && maxSize - minSize <= 1) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function fnv1aHex(input: string): string {
   let hash = 0x81_1c_9d_c5;
   for (let i = 0; i < input.length; i++) {
@@ -619,17 +841,26 @@ export function prepareMemoryImportPreview(
       .filter(Boolean)
   );
 
-  const seenInPaste = new Set<string>();
+  const seenInPaste: string[] = [];
   const { candidates, skippedSensitive } = parsePastedMemoryInput(raw);
 
   const items = candidates.map((item) => {
     const norm = normalizeMemoryComparisonText(item.value);
     const inExisting =
       existingKeys.has(item.key.toLowerCase()) ||
-      (norm.length > 0 && existingNormalized.has(norm));
-    const inPaste = norm.length > 0 && seenInPaste.has(norm);
-    if (norm.length > 0) {
-      seenInPaste.add(norm);
+      (norm.length > 0 && existingNormalized.has(norm)) ||
+      existingFacts.some((f) =>
+        areMemoryFactsSemanticallyEquivalent(f.value, item.value)
+      );
+    const inPaste =
+      norm.length > 0 &&
+      seenInPaste.some(
+        (prev) =>
+          normalizeMemoryComparisonText(prev) === norm ||
+          areMemoryFactsSemanticallyEquivalent(prev, item.value)
+      );
+    if (norm.length > 0 && !inPaste) {
+      seenInPaste.push(item.value);
     }
     const isDuplicate = inExisting || inPaste;
     return {
@@ -653,7 +884,7 @@ const EXPLICIT_REMEMBER_PATTERNS: readonly RegExp[] = [
   /^\s*(?:please\s+)?remember\s+(?!when\b|how\b|if\b|whether\b)(?:that\s+)?(.{4,})$/isu,
   /^\s*(?:please\s+)?save\s+(?:this\s+)?to\s+(?:my\s+)?memory\s*[:\-–—]?\s*(.+)$/isu,
   /^\s*(?:please\s+)?keep\s+in\s+mind\s*[:\-–—]\s*(.+)$/isu,
-  /^\s*(?:lütfen\s+)?bunu\s+hatırla\s*[:\-–—]?\s*(.+)$/isu,
+  /^\s*(?:lütfen\s+)?(?:bunu|şunu)\s+(?:hatırla|unutma|not\s+(?:et|al))\s*[:\-–—]?\s*(.+)$/isu,
   /^\s*(?:lütfen\s+)?hatırla\s*[:\-–—]\s*(.+)$/isu,
   /^\s*(?:lütfen\s+)?unutma\s*[:\-–—]\s*(.+)$/isu,
   /^\s*(?:lütfen\s+)?aklında\s+tut\s*[:\-–—]\s*(.+)$/isu,
@@ -1291,4 +1522,57 @@ export function buildMemoriesExportMarkdown(
   }
 
   return `${lines.join("\n").trim()}\n`;
+}
+
+/**
+ * Pure client-safe helper that ensures at most ONE memory card
+ * (`tool-saveProfileFact` / `tool-addJournalEntry`) renders per user turn even
+ * when consecutive assistant messages exist (e.g. Live Voice tool event + transcript commit).
+ */
+export function dedupeTurnMemoryCardsAcrossMessages<
+  M extends {
+    role: string;
+    parts: ReadonlyArray<{ type: string; output?: unknown }>;
+  },
+>(messages: readonly M[]): M[] {
+  let sawMemoryCardSinceLastUser = false;
+  const result: M[] = [];
+  for (const msg of messages) {
+    if (msg.role === "user") {
+      sawMemoryCardSinceLastUser = false;
+      result.push(msg);
+      continue;
+    }
+    if (msg.role !== "assistant") {
+      result.push(msg);
+      continue;
+    }
+    const hadParts = msg.parts.length > 0;
+    const filteredParts = msg.parts.filter((part) => {
+      const isMem =
+        part.type === "tool-saveProfileFact" ||
+        part.type === "tool-addJournalEntry";
+      if (!isMem) {
+        return true;
+      }
+      const isMarkedDup =
+        Boolean(part.output) &&
+        typeof part.output === "object" &&
+        (part.output as { deduplicated?: boolean }).deduplicated === true;
+      if (isMarkedDup || sawMemoryCardSinceLastUser) {
+        return false;
+      }
+      sawMemoryCardSinceLastUser = true;
+      return true;
+    });
+    if (hadParts && filteredParts.length === 0) {
+      continue;
+    }
+    result.push(
+      filteredParts.length === msg.parts.length
+        ? msg
+        : ({ ...msg, parts: filteredParts } as M)
+    );
+  }
+  return result;
 }

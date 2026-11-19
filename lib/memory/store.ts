@@ -6,10 +6,12 @@ import {
 } from "@/lib/db/shared-pool";
 import {
   type AtomicMemorySource,
+  areMemoryFactsSemanticallyEquivalent,
   defaultPinnedForCategory,
   deriveFactKey,
   detectDisallowedProfileFactReason,
   detectSensitiveMemoryContent,
+  joinMemorySources,
   normalizeMemoryCategory,
   normalizeMemoryComparisonText,
   normalizeMemorySource,
@@ -193,17 +195,39 @@ export function createInMemoryMemoryStore(): MemoryStore {
       const canonicalCategory = normalizeMemoryCategory(category);
       const normalizedKey = normalizeFactKey(key);
       const scopeSuffix = sharedAcrossBots ? "shared" : (botSlug ?? "private");
-      const mapKey = `${userId}:${scopeSuffix}:${normalizedKey}`;
-      const existing = facts.get(mapKey);
+      let semanticExisting: ProfileFact | undefined = facts.get(
+        `${userId}:${scopeSuffix}:${normalizedKey}`
+      );
+      if (!semanticExisting) {
+        for (const candidate of facts.values()) {
+          const candScope = candidate.sharedAcrossBots
+            ? "shared"
+            : (candidate.botSlug ?? "private");
+          if (
+            candidate.userId === userId &&
+            candScope === scopeSuffix &&
+            areMemoryFactsSemanticallyEquivalent(candidate.value, trimmed)
+          ) {
+            semanticExisting = candidate;
+            break;
+          }
+        }
+      }
+      const effectiveKey = semanticExisting?.key ?? normalizedKey;
+      const mapKey = `${userId}:${scopeSuffix}:${effectiveKey}`;
+      const existing = semanticExisting ?? facts.get(mapKey);
       const now = new Date(Date.now() + sequence++).toISOString();
       const validLearned = validIsoOrNull(learnedAt);
+      const effectiveSource = existing
+        ? joinMemorySources([existing.source, source], normalizeSource(source))
+        : normalizeSource(source);
       const saved: ProfileFact = {
         id: existing?.id ?? randomUUID(),
         userId,
         category: canonicalCategory,
-        key: normalizedKey,
+        key: effectiveKey,
         value: trimmed,
-        source: normalizeSource(source),
+        source: effectiveSource,
         pinned:
           pinned ??
           existing?.pinned ??
@@ -223,11 +247,12 @@ export function createInMemoryMemoryStore(): MemoryStore {
           .map((i) => i.replaceFactId?.trim())
           .filter((id): id is string => Boolean(id))
       );
+      const seenValues = existing
+        .filter((f) => !replacingIds.has(f.id))
+        .map((f) => f.value)
+        .filter(Boolean);
       const seenNorm = new Set(
-        existing
-          .filter((f) => !replacingIds.has(f.id))
-          .map((f) => normalizeMemoryComparisonText(f.value))
-          .filter(Boolean)
+        seenValues.map((v) => normalizeMemoryComparisonText(v)).filter(Boolean)
       );
       const saved: ProfileFact[] = [];
       let skippedDuplicates = 0;
@@ -245,11 +270,17 @@ export function createInMemoryMemoryStore(): MemoryStore {
         if (!norm) {
           continue;
         }
-        if (seenNorm.has(norm)) {
+        if (
+          seenNorm.has(norm) ||
+          seenValues.some((prev) =>
+            areMemoryFactsSemanticallyEquivalent(prev, trimmed)
+          )
+        ) {
           skippedDuplicates += 1;
           continue;
         }
         seenNorm.add(norm);
+        seenValues.push(trimmed);
         const canonicalCategory = normalizeMemoryCategory(item.category);
         if (item.replaceFactId) {
           const updatedExisting = await this.updateProfileFact({
@@ -525,13 +556,42 @@ export function createPostgresMemoryStore(
       const id = randomUUID();
       try {
         const sql = await readySql();
+        const existingRows = await sql`
+          SELECT *
+          FROM "MemoryProfileFact"
+          WHERE "userId" = ${userId}
+          ORDER BY "updatedAt" DESC
+          LIMIT 120
+        `.catch(() => [] as Record<string, unknown>[]);
+        const mappedExisting = existingRows.map((r) =>
+          mapProfileRow(r as Record<string, unknown>)
+        );
+        const semanticMatch =
+          mappedExisting.find((f) => f.key === normalizedKey) ??
+          mappedExisting.find((f) => {
+            const sameScope = sharedAcrossBots
+              ? f.sharedAcrossBots
+              : !f.sharedAcrossBots && f.botSlug === botSlug;
+            return (
+              sameScope &&
+              areMemoryFactsSemanticallyEquivalent(f.value, trimmed)
+            );
+          });
+        const effectiveKey = semanticMatch?.key ?? normalizedKey;
+        const effectiveSource = semanticMatch
+          ? joinMemorySources(
+              [semanticMatch.source, source],
+              normalizeSource(source)
+            )
+          : normalizeSource(source);
+
         const [row] = await sql`
           INSERT INTO "MemoryProfileFact" (
             "id", "userId", "category", "key", "value", "source", "pinned", "learnedAt", "sharedAcrossBots", "botSlug"
           )
           VALUES (
-            ${id}, ${userId}, ${canonicalCategory}, ${normalizedKey}, ${trimmed},
-            ${normalizeSource(source)}, ${effectivePinned}, COALESCE(${validLearned}::timestamptz, now()), ${sharedAcrossBots}, ${botSlug}
+            ${id}, ${userId}, ${canonicalCategory}, ${effectiveKey}, ${trimmed},
+            ${effectiveSource}, ${effectivePinned}, COALESCE(${validLearned}::timestamptz, now()), ${sharedAcrossBots}, ${botSlug}
           )
           ON CONFLICT ("userId", "key")
           DO UPDATE SET
@@ -561,10 +621,13 @@ export function createPostgresMemoryStore(
             .map((i) => i.replaceFactId?.trim())
             .filter((id): id is string => Boolean(id))
         );
+        const seenValues = existing
+          .filter((f) => !replacingIds.has(f.id))
+          .map((f) => f.value)
+          .filter(Boolean);
         const seenNorm = new Set(
-          existing
-            .filter((f) => !replacingIds.has(f.id))
-            .map((f) => normalizeMemoryComparisonText(f.value))
+          seenValues
+            .map((v) => normalizeMemoryComparisonText(v))
             .filter(Boolean)
         );
         const saved: ProfileFact[] = [];
@@ -583,11 +646,17 @@ export function createPostgresMemoryStore(
           if (!norm) {
             continue;
           }
-          if (seenNorm.has(norm)) {
+          if (
+            seenNorm.has(norm) ||
+            seenValues.some((prev) =>
+              areMemoryFactsSemanticallyEquivalent(prev, trimmed)
+            )
+          ) {
             skippedDuplicates += 1;
             continue;
           }
           seenNorm.add(norm);
+          seenValues.push(trimmed);
           const canonicalCategory = normalizeMemoryCategory(item.category);
           if (item.replaceFactId) {
             const updatedExisting = await this.updateProfileFact({

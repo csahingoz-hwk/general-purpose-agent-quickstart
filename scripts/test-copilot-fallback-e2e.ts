@@ -10,7 +10,7 @@ import {
   COPILOT_CLAUDE_HAIKU_NAME,
   createCopilotHaikuVmAdapter,
 } from "../lib/ai/copilot-vm-model";
-import { ARGON, COPILOT_HAIKU, HYDROGEN } from "../lib/ai/routing/catalog";
+import { COPILOT_HAIKU, HYDROGEN, NEON } from "../lib/ai/routing/catalog";
 import { createRoutedModel } from "../lib/ai/routing/model";
 import type { InferenceSession } from "../lib/ai/routing/session";
 import { createVertexGeminiAdapter } from "../lib/ai/vertex-model";
@@ -63,7 +63,7 @@ test("Copilot Claude Haiku 5.5 Fallback E2E (Live Cloud VM + 390x844 iPhone UI: 
     const fallbacks: { fromModel: string; toModel: string; reason: string }[] =
       [];
     const session: InferenceSession = {
-      available: [HYDROGEN, ARGON, COPILOT_HAIKU],
+      available: [HYDROGEN, NEON, COPILOT_HAIKU],
       exposed: false,
       toolBoundary: false,
       fallbackUsed: false,
@@ -196,8 +196,8 @@ test("Copilot Claude Haiku 5.5 Fallback E2E (Live Cloud VM + 390x844 iPhone UI: 
               description: "Default · fast ~1s responses via Vertex AI",
             },
             {
-              id: ARGON,
-              name: "Gemini 4 Argon",
+              id: NEON,
+              name: "Gemini 4 Neon",
               provider: "google",
               description: "Deep research & hard questions · Vertex AI",
             },

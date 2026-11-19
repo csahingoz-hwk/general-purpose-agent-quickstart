@@ -31,7 +31,7 @@ function build30kMixedClaudeExport(): string {
     "Exported: 2026-11-17",
     "",
     "## Rules & Guardrails",
-    "Never use pay-per-use API models without asking first. Always route everyday chat through Gemini 4 Hydrogen on Google AI Ultra credit and escalate deep research to Gemini 4 Argon. Keep GitHub Copilot SDK Claude Haiku 5.5 as the sole fallback on the Cloud VM bridge.",
+    "Never use pay-per-use API models without asking first. Always route everyday chat through Gemini 4 Hydrogen on Google AI Ultra credit and escalate deep research to Gemini 4 Neon. Keep GitHub Copilot SDK Claude Haiku 5.5 as the sole fallback on the Cloud VM bridge.",
     "- Onayım olmadan asla kullandıkça öde API modeli kullanma ve her zaman gerçek model adını arayüzde göster.",
     // Intentional exact duplicate to verify local pre-dedupe before model calls:
     "- Never use pay-per-use API models without asking first.",
@@ -180,7 +180,7 @@ test("Bug 1 partial-chunk recovery: if 1 chunk fails after retries, successful c
   );
 });
 
-test("Bug 1 per-chunk escalation & fallback chain: Hydrogen -> retry Hydrogen -> escalate Argon -> fallback Copilot Claude Haiku 5.5", async () => {
+test("Bug 1 per-chunk escalation & fallback chain: Hydrogen -> retry Hydrogen -> escalate Neon -> fallback Copilot Claude Haiku 5.5", async () => {
   const attempts: string[] = [];
   const runner = createResilientChunkMergeRunner({
     hasVertex: true,
@@ -230,7 +230,7 @@ test("Bug 1 per-chunk escalation & fallback chain: Hydrogen -> retry Hydrogen ->
   assert.deepEqual(attempts, [
     "gemini-4-hydrogen:45000:16384",
     "gemini-4-hydrogen:45000:16384",
-    "gemini-4-argon:55000:16384",
+    "gemini-4-neon:55000:16384",
     "claude-haiku-5.5:45000",
   ]);
   assert.equal(result.modelUsed, "claude-haiku-5.5");

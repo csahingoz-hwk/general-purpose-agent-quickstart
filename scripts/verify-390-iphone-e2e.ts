@@ -110,8 +110,8 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
                 "Default · fast ~1s responses via Vertex AI on Ultra credit",
             },
             {
-              id: "gemini-4-argon",
-              name: "Gemini 4 Argon",
+              id: "gemini-4-neon",
+              name: "Gemini 4 Neon",
               provider: "google",
               description:
                 "Deep research & hard questions · Vertex AI on Ultra credit",
@@ -203,7 +203,7 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
     ].join("\n");
     const ceoVisual = buildOpenUiPayload(
       [{ type: "text", text: ceoChartAnswer }],
-      "gemini-4-argon",
+      "gemini-4-neon",
       "2026-11-17T18:05:00.000Z"
     );
     assert.ok(ceoVisual);
@@ -240,7 +240,7 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
     ].join("\n");
     const comparisonVisual = buildOpenUiPayload(
       [{ type: "text", text: comparisonAnswer }],
-      "gemini-4-argon",
+      "gemini-4-neon",
       "2026-11-17T18:06:00.000Z"
     );
     assert.ok(comparisonVisual);
@@ -473,7 +473,7 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
     await expect(pickerChip).toBeVisible();
     await expect(pickerChip).toContainText("Gemini 4 Hydrogen");
     await pickerChip.click();
-    await expect(page.getByText("Gemini 4 Argon")).toBeVisible();
+    await expect(page.getByText("Gemini 4 Neon")).toBeVisible();
     const fullMenuText = (await page.locator("body").textContent()) ?? "";
     assert.ok(
       !fullMenuText.includes("GPT-6.1 Terra") &&
@@ -924,7 +924,7 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
         sources,
         existingFacts: memoryState as unknown as ProfileFact[],
         runner: ({ candidates, existingFacts, preferredModel }) => {
-          // For multi-source 4-export test, exercise realistic Vertex Argon cross-lingual merge + conflict resolution
+          // For multi-source 4-export test, exercise realistic Vertex Neon cross-lingual merge + conflict resolution
           const proIdx = candidates.findIndex((c) =>
             /google ai pro/i.test(c.text)
           );
@@ -1176,7 +1176,7 @@ test("390x844 iPhone Weather Card and Turkish multi-search verification", async 
       timeout: 10_000,
     });
     await expect(page.getByTestId("memory-merge-model")).toContainText(
-      "Gemini 4 Argon · Vertex"
+      "Gemini 4 Neon · Vertex"
     );
     await expect(page.getByTestId("memory-stat-new")).toContainText("2");
     await expect(page.getByTestId("memory-stat-merged")).toContainText("2");

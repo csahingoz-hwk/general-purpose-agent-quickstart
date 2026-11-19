@@ -827,13 +827,16 @@ export function selectToolsWithRanking(
     }
   }
 
+  const explicitFirecrawlNamed = /\bfirecrawl\b/iu.test(phrase);
   if (canPersonalize && FIRECRAWL_INTENT_PATTERN.test(phrase)) {
     const orderedFirecrawl: ChatToolName[] =
       /\b(crawl|site\s*map|map\s+(?:the\s+)?(?:site|pages|urls|domain))\b|site\s+haritas[ıi]|alt\s+sayfalar[ıi]/iu.test(
         phrase
       )
         ? ["firecrawlCrawlMap", "firecrawlScrape", "firecrawlSearch"]
-        : /\b(scrape|to\s+markdown)\b|kaz[ıi]|markdown/iu.test(phrase)
+        : /\b(scrape|to\s+markdown)\b|kaz[ıi]|markdown|https?:\/\/\S+/iu.test(
+              phrase
+            )
           ? ["firecrawlScrape", "firecrawlSearch", "firecrawlCrawlMap"]
           : ["firecrawlSearch", "firecrawlScrape", "firecrawlCrawlMap"];
     enabled.push(...orderedFirecrawl);
@@ -859,10 +862,18 @@ export function selectToolsWithRanking(
     enabled.push("requestScreenHandoff");
     intentOnly.push("requestScreenHandoff");
   }
-  if (canPersonalize && CLOUD_BROWSE_PATTERN.test(phrase)) {
+  if (
+    canPersonalize &&
+    !explicitFirecrawlNamed &&
+    CLOUD_BROWSE_PATTERN.test(phrase)
+  ) {
     enabled.push("cloudBrowseUrl");
     intentOnly.push("cloudBrowseUrl");
-  } else if (canPersonalize && CLOUD_COMPUTER_PATTERN.test(phrase)) {
+  } else if (
+    canPersonalize &&
+    !explicitFirecrawlNamed &&
+    CLOUD_COMPUTER_PATTERN.test(phrase)
+  ) {
     enabled.push(
       "cloudExec",
       "cloudWriteFile",
