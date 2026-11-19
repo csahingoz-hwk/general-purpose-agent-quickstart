@@ -6,9 +6,12 @@ import {
   buildLiveCancelMessage,
   buildLiveStreamEndMessage,
   buildLiveToolOutputItemMessage,
+  CLIENT_FILLERS_EN,
+  CLIENT_FILLERS_TR,
   type CommittedLiveTurn,
   EchoGate,
   int16ToBase64,
+  isFillerOnlyUtterance,
   LIVE_FRAME_MS,
   LIVE_FRAME_SAMPLES,
   LIVE_OUTPUT_SAMPLE_RATE,
@@ -56,50 +59,6 @@ export type LiveEngineCallbacks = {
   onToolActivity?: (filler: string | null) => void;
   onToolStart?: (ev: LiveToolStartEvent) => void;
   onToolDone?: (ev: LiveToolDoneEvent) => void;
-};
-
-const CLIENT_FILLERS_EN: Record<string, string> = {
-  handOffToTextAgent: "Working with your assistant…",
-  gmailReadMessages: "Checking your inbox…",
-  calendarReadEvents: "Checking your calendar…",
-  driveReadFiles: "Searching Google Drive…",
-  githubReadPullRequests: "Checking GitHub…",
-  getWeather: "Checking the weather…",
-  getCurrentTime: "Checking the clock…",
-  webSearch: "Searching the web…",
-  getFixtures: "Checking fixtures…",
-  recallMemories: "Checking your memory…",
-  saveProfileFact: "Saving to memory…",
-  addJournalEntry: "Saving journal note…",
-  listMySchedules: "Checking routines…",
-  scheduleTask: "Preparing approval card…",
-  gmailCreateDraft: "Preparing Gmail draft card…",
-  calendarCreateDraftEvent: "Preparing Calendar card…",
-  driveCreateDraftDoc: "Preparing Drive draft card…",
-  draftOutboundMessage: "Preparing approval card…",
-  delegateTask: "Creating task card…",
-};
-
-const CLIENT_FILLERS_TR: Record<string, string> = {
-  handOffToTextAgent: "Asistanla kontrol ediyorum…",
-  gmailReadMessages: "Gelen kutuna bakıyorum…",
-  calendarReadEvents: "Takvimine bakıyorum…",
-  driveReadFiles: "Drive'da arıyorum…",
-  githubReadPullRequests: "GitHub'a bakıyorum…",
-  getWeather: "Hava durumuna bakıyorum…",
-  getCurrentTime: "Saate bakıyorum…",
-  webSearch: "Web'de arıyorum…",
-  getFixtures: "Fikstüre bakıyorum…",
-  recallMemories: "Belleğine bakıyorum…",
-  saveProfileFact: "Belleğe kaydediyorum…",
-  addJournalEntry: "Günlüğe ekliyorum…",
-  listMySchedules: "Rutinlere bakıyorum…",
-  scheduleTask: "Onay kartı hazırlıyorum…",
-  gmailCreateDraft: "Gmail onay kartı hazırlıyorum…",
-  calendarCreateDraftEvent: "Takvim kartı hazırlıyorum…",
-  driveCreateDraftDoc: "Drive kartı hazırlıyorum…",
-  draftOutboundMessage: "Onay kartı hazırlıyorum…",
-  delegateTask: "Görev kartı oluşturuyorum…",
 };
 
 function detectTurkishText(text: string): boolean {
@@ -793,7 +752,9 @@ export class LiveVoiceEngine {
     if (this.turns.hasPendingUser || this.turns.assistantCaption) {
       // Commit the pre-tool utterance cleanly so follow-up remarks spoken while
       // the tool runs don't merge into the pre-tool bubble or absorb bot speech.
-      this.commitTurn(false);
+      // Drop short filler-only assistant captions because the tool card replaces
+      // them in chat (spoken audio still plays as is).
+      this.commitTurn(false, { dropFillerAssistant: true });
     }
     const filler =
       (locale === "tr" ? CLIENT_FILLERS_TR[name] : CLIENT_FILLERS_EN[name]) ??
@@ -856,6 +817,18 @@ export class LiveVoiceEngine {
       if (data.blocked) {
         this.stop();
         return;
+      }
+
+      // If a spoken filler caption finished arriving while the tool was in
+      // flight, clear it before the tool response triggers the real answer so
+      // it never gets persisted or prepended to the post-tool reply.
+      if (
+        this.inFlightToolCalls.size === 0 &&
+        !this.turns.hasPendingUser &&
+        this.turns.assistantCaption &&
+        isFillerOnlyUtterance(this.turns.assistantCaption)
+      ) {
+        this.commitTurn(false, { dropFillerAssistant: true });
       }
 
       if (this.ws?.readyState === WebSocket.OPEN && this.ready) {
@@ -1035,7 +1008,10 @@ export class LiveVoiceEngine {
     }
   }
 
-  private commitTurn(interrupted: boolean) {
+  private commitTurn(
+    interrupted: boolean,
+    opts?: { dropFillerAssistant?: boolean }
+  ) {
     const turn = this.turns.commit(interrupted);
     this.emitCaptions();
     if (!turn) {
@@ -1059,6 +1035,13 @@ export class LiveVoiceEngine {
     }
     if (!leaked && turn.assistant) {
       this.recordAssistantUtterance(turn.assistant);
+    }
+    if (
+      opts?.dropFillerAssistant &&
+      turn.assistant &&
+      isFillerOnlyUtterance(turn.assistant)
+    ) {
+      turn.assistant = "";
     }
     if (turn.user || turn.assistant) {
       this.cb.onTurn(turn);

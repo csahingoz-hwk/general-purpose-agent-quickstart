@@ -105,6 +105,7 @@ export async function runFirecrawlSearch(opts: {
   tbs?: string;
   apiKey?: string | null;
   fetchImpl?: typeof fetch;
+  timeoutMs?: number;
 }): Promise<FirecrawlSearchResult> {
   const cleanQuery = opts.query.trim();
   if (!cleanQuery) {
@@ -125,6 +126,7 @@ export async function runFirecrawlSearch(opts: {
 
   const fetchFn = opts.fetchImpl ?? fetch;
   const limit = Math.min(10, Math.max(1, opts.limit ?? 5));
+  const timeoutMs = Math.max(500, opts.timeoutMs ?? 15_000);
   const fetchedAtIso = new Date().toISOString().slice(0, 10);
 
   try {
@@ -143,7 +145,7 @@ export async function runFirecrawlSearch(opts: {
           onlyMainContent: true,
         },
       }),
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     if (!res.ok) {
@@ -153,20 +155,45 @@ export async function runFirecrawlSearch(opts: {
       };
     }
 
-    const payload = (await res.json()) as {
-      success?: boolean;
-      data?: Array<{
-        url?: string;
-        title?: string;
-        description?: string;
-        markdown?: string;
-        metadata?: Record<string, unknown>;
-      }>;
+    type RawFirecrawlSearchItem = {
+      url?: string;
+      title?: string;
+      description?: string;
+      snippet?: string;
+      markdown?: string;
+      metadata?: Record<string, unknown>;
     };
 
-    const rawItems = Array.isArray(payload.data) ? payload.data : [];
+    const payload = (await res.json()) as {
+      success?: boolean;
+      data?:
+        | RawFirecrawlSearchItem[]
+        | {
+            web?: RawFirecrawlSearchItem[];
+            news?: RawFirecrawlSearchItem[];
+          };
+    };
+
+    let rawItems: RawFirecrawlSearchItem[] = [];
+    if (Array.isArray(payload.data)) {
+      rawItems = payload.data;
+    } else if (payload.data && typeof payload.data === "object") {
+      const webItems = Array.isArray(payload.data.web) ? payload.data.web : [];
+      const newsItems = Array.isArray(payload.data.news)
+        ? payload.data.news
+        : [];
+      rawItems = [...webItems, ...newsItems];
+    }
+
+    const seenUrls = new Set<string>();
     const results: FirecrawlSearchItem[] = [];
-    for (const item of rawItems.slice(0, limit)) {
+    for (const item of rawItems) {
+      if (results.length >= limit) {
+        break;
+      }
+      if (!item || typeof item !== "object") {
+        continue;
+      }
       const rawUrl = typeof item.url === "string" ? item.url.trim() : "";
       if (!rawUrl) {
         continue;
@@ -177,9 +204,15 @@ export async function runFirecrawlSearch(opts: {
       } catch {
         continue;
       }
+      if (seenUrls.has(safeUrl)) {
+        continue;
+      }
+      seenUrls.add(safeUrl);
       const md = typeof item.markdown === "string" ? item.markdown.trim() : "";
       const desc =
-        typeof item.description === "string" ? item.description.trim() : "";
+        (typeof item.description === "string" && item.description.trim()) ||
+        (typeof item.snippet === "string" && item.snippet.trim()) ||
+        "";
       const title =
         (typeof item.title === "string" && item.title.trim()) ||
         (typeof item.metadata?.title === "string" &&
