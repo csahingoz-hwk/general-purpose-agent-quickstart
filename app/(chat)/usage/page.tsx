@@ -21,6 +21,11 @@ import { MascotPicker } from "@/components/chat/mascot-preference";
 import { SubpageHeader } from "@/components/chat/subpage-header";
 import { toast } from "@/components/chat/toast";
 import { type UiLocalePreference, useUiLocale } from "@/hooks/use-ui-locale";
+import {
+  type CloudBillingMissingCode,
+  formatCloudBillingUnavailableReason,
+  formatMemorySummaryStatus,
+} from "@/lib/ui-copy";
 import { cn, fetcher } from "@/lib/utils";
 
 type UsageCall = {
@@ -55,6 +60,8 @@ type GcpBillingPayload = {
   mtdCreditsUsedUsd: number | null;
   creditsRemainingUsd: number | null;
   missingReason: string | null;
+  missingCode?: CloudBillingMissingCode | null;
+  missingDetail?: string | null;
   setupActionUrl: string;
   setupActionLabel: string;
   checkedAt: string;
@@ -146,7 +153,12 @@ function UsagePageContent() {
   const searchParams = useSearchParams();
   const { mutate: globalMutate } = useSWRConfig();
   const { theme, setTheme } = useTheme();
-  const { preference: localePref, copy, setLocalePreference } = useUiLocale();
+  const {
+    locale,
+    preference: localePref,
+    copy,
+    setLocalePreference,
+  } = useUiLocale();
   const [hasSpeechApi, setHasSpeechApi] = useState(false);
   const [busyProvider, setBusyProvider] = useState<string | null>(null);
   const [savingApprovalSetting, setSavingApprovalSetting] = useState(false);
@@ -270,14 +282,24 @@ function UsagePageContent() {
     fetcher,
     { revalidateOnFocus: false, shouldRetryOnError: false }
   );
-  const { data: memorySummary } = useSWR<{
+  const {
+    data: memorySummary,
+    error: memoryError,
+    isLoading: memoryLoading,
+  } = useSWR<{
+    status?: string;
+    toolsEnabled?: boolean;
     profileFacts?: unknown[];
     journalEntries?: unknown[];
   }>(`${basePath}/api/memory`, fetcher, {
     revalidateOnFocus: false,
     shouldRetryOnError: false,
   });
-  const savedMemoriesCount = memorySummary?.profileFacts?.length ?? 0;
+  const memorySubtitleText = formatMemorySummaryStatus(memorySummary, {
+    loading: memoryLoading && !memorySummary,
+    hasError: Boolean(memoryError),
+    locale,
+  });
 
   async function handleDisconnect(provider: "google" | "github") {
     setBusyProvider(provider);
@@ -552,11 +574,11 @@ function UsagePageContent() {
                 <p className="font-semibold text-[15px] text-foreground">
                   {copy.memoryManageTitle}
                 </p>
-                <p className="text-muted-foreground text-xs tabular-nums">
-                  {savedMemoriesCount}{" "}
-                  {savedMemoriesCount === 1
-                    ? copy.memoryManageSubtitleSingular
-                    : copy.memoryManageSubtitlePlural}
+                <p
+                  className="text-muted-foreground text-xs tabular-nums"
+                  data-testid="settings-memory-status"
+                >
+                  {memorySubtitleText}
                 </p>
               </div>
             </div>
@@ -750,6 +772,13 @@ function UsagePageContent() {
                 ? gcp.creditsRemainingUsd
                 : Math.max(0, monthlyPool - totalRefUsd);
             const fmtUsd = (val: number) => `$${val.toFixed(2)}`;
+            const fallbackStatusText = error
+              ? copy.usageUnavailableShort
+              : copy.statusChecking;
+            const localizedCloudReason =
+              gcp && !gcp.reachable
+                ? formatCloudBillingUnavailableReason(gcp, locale)
+                : null;
 
             return (
               <div className="divide-y divide-[color:var(--hairline)] overflow-hidden rounded-2xl border border-[color:var(--hairline)] bg-card">
@@ -762,12 +791,14 @@ function UsagePageContent() {
                       className="mt-0.5 font-semibold text-base text-foreground tabular-nums"
                       data-testid="usage-summary"
                     >
-                      {rows ? fmtUsd(effectiveUsedUsd) : "—"}
+                      {rows
+                        ? `${gcp?.reachable ? "" : "~"}${fmtUsd(effectiveUsedUsd)}`
+                        : fallbackStatusText}
                     </p>
                     <p className="text-[11px] text-muted-foreground">
                       {gcp?.reachable
                         ? copy.usageSourceGcpLive
-                        : copy.usageSourceTokenEstimate}
+                        : copy.usageCloudUnavailableCardNote}
                     </p>
                   </div>
 
@@ -778,10 +809,13 @@ function UsagePageContent() {
                     <p className="mt-0.5 font-semibold text-base text-emerald-700 tabular-nums dark:text-emerald-300">
                       {rows
                         ? `${gcp?.reachable ? "" : "~"}${fmtUsd(effectiveRemainingUsd)}`
-                        : "—"}
+                        : fallbackStatusText}
                     </p>
                     <p className="text-[11px] text-muted-foreground">
                       /${monthlyPool.toFixed(2)} {copy.usageUltraCreditSuffix}
+                      {gcp && !gcp.reachable
+                        ? ` · ${copy.usageCloudEstimateSuffix}`
+                        : ""}
                     </p>
                   </div>
 
@@ -795,7 +829,7 @@ function UsagePageContent() {
                             (data.totalInputTokens ?? 0) +
                             (data.totalOutputTokens ?? 0)
                           ).toLocaleString()
-                        : "—"}
+                        : fallbackStatusText}
                     </p>
                     <p className="text-[11px] text-muted-foreground">
                       {data
@@ -817,7 +851,7 @@ function UsagePageContent() {
                   </div>
                 </div>
 
-                {gcp && !gcp.reachable && gcp.missingReason && (
+                {localizedCloudReason && (
                   <div
                     className="flex flex-wrap items-center justify-between gap-2 bg-muted/35 px-4 py-3 text-xs"
                     data-testid="gcp-billing-setup-banner"
@@ -826,7 +860,7 @@ function UsagePageContent() {
                       <span className="font-medium text-foreground">
                         {copy.usageGcpPendingLead}{" "}
                       </span>
-                      {gcp.missingReason} {copy.usageGcpPendingTrail}
+                      {localizedCloudReason} {copy.usageGcpPendingTrail}
                     </p>
                     <Link
                       className="inline-flex min-h-9 shrink-0 items-center rounded-full border border-[color:var(--hairline)] bg-background px-3 font-medium text-foreground text-xs hover:bg-muted"

@@ -5,12 +5,14 @@ import { useState } from "react";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { useUiLocale } from "@/hooks/use-ui-locale";
 import type { HomeLocation } from "@/lib/temporal";
 import { fetcher } from "@/lib/utils";
 
 const endpoint = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/location`;
 
 export function HomeLocationPanel() {
+  const { copy } = useUiLocale();
   const { data, mutate } = useSWR<{ home: HomeLocation | null }>(
     endpoint,
     fetcher,
@@ -31,7 +33,7 @@ export function HomeLocationPanel() {
         body: JSON.stringify(body),
       });
       if (!response.ok) {
-        setMessage("Could not find that place. Try a nearby city.");
+        setMessage(copy.locationNotFoundError);
         return;
       }
       setCity("");
@@ -43,7 +45,7 @@ export function HomeLocationPanel() {
 
   function useBrowserLocation() {
     if (!("geolocation" in navigator)) {
-      setMessage("This browser cannot share its location.");
+      setMessage(copy.locationUnsupportedError);
       return;
     }
     // Only runs from this explicit tap; the browser then asks for permission.
@@ -55,17 +57,17 @@ export function HomeLocationPanel() {
           longitude: position.coords.longitude,
           timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         }),
-      () => setMessage("Location permission was not given. Nothing was saved."),
+      () => setMessage(copy.locationPermissionDeniedError),
       { maximumAge: 600_000, timeout: 10_000 }
     );
   }
 
   return (
     <div className="space-y-3">
-      <p className="text-[13px] text-muted-foreground">Home</p>
+      <p className="text-[13px] text-muted-foreground">{copy.homeLabel}</p>
       <p className="flex items-start gap-2 text-[17px] leading-snug text-foreground">
         <MapPinIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-        <span>{home?.label ?? "No city saved"}</span>
+        <span>{home?.label ?? copy.noCitySaved}</span>
       </p>
       <form
         className="flex gap-2"
@@ -77,10 +79,10 @@ export function HomeLocationPanel() {
         }}
       >
         <Input
-          aria-label="Home city"
+          aria-label={copy.homeCityAriaLabel}
           className="h-11"
           onChange={(event) => setCity(event.target.value)}
-          placeholder="e.g. London, İstanbul"
+          placeholder={copy.homeCityPlaceholder}
           value={city}
         />
         <Button
@@ -89,7 +91,7 @@ export function HomeLocationPanel() {
           size="sm"
           type="submit"
         >
-          Save
+          {copy.save}
         </Button>
       </form>
       <Button
@@ -100,7 +102,7 @@ export function HomeLocationPanel() {
         type="button"
         variant="outline"
       >
-        Use my current location
+        {copy.useCurrentLocation}
       </Button>
       {home && (
         <Button
@@ -114,7 +116,7 @@ export function HomeLocationPanel() {
           type="button"
           variant="ghost"
         >
-          Clear saved location
+          {copy.clearSavedLocation}
         </Button>
       )}
       {message && (

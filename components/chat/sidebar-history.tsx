@@ -23,8 +23,8 @@ import {
   SidebarGroupLabel,
   SidebarMenu,
 } from "@/components/ui/sidebar";
+import { useUiLocale } from "@/hooks/use-ui-locale";
 import type { Chat } from "@/lib/db/schema";
-import { getCopy } from "@/lib/ui-copy";
 import { fetcher } from "@/lib/utils";
 import { LoaderIcon } from "./icons";
 import { ChatItem } from "./sidebar-history-item";
@@ -36,8 +36,6 @@ type GroupedChats = {
   lastMonth: Chat[];
   older: Chat[];
 };
-
-const copy = getCopy();
 
 export type ChatHistory = {
   chats: Chat[];
@@ -136,6 +134,7 @@ export function getChatHistoryPaginationKey(
 
 export function SidebarHistory({ user }: { user: User | undefined }) {
   const pathname = usePathname();
+  const { copy } = useUiLocale();
   const id = pathname?.startsWith("/chat/") ? pathname.split("/")[2] : null;
 
   const {
@@ -238,7 +237,7 @@ export function SidebarHistory({ user }: { user: User | undefined }) {
         </SidebarGroupLabel>
         <SidebarGroupContent>
           <div className="flex w-full flex-row items-center justify-center gap-2 px-5 text-[15px] text-muted-foreground">
-            Your conversations will appear here once you start chatting!
+            {copy.emptyHistoryHint}
           </div>
         </SidebarGroupContent>
       </SidebarGroup>
@@ -267,31 +266,31 @@ export function SidebarHistory({ user }: { user: User | undefined }) {
                     <HistorySection
                       activeId={id}
                       chats={groupedChats.today}
-                      label="Today"
+                      label={copy.historyToday}
                       onDelete={onDelete}
                     />
                     <HistorySection
                       activeId={id}
                       chats={groupedChats.yesterday}
-                      label="Yesterday"
+                      label={copy.historyYesterday}
                       onDelete={onDelete}
                     />
                     <HistorySection
                       activeId={id}
                       chats={groupedChats.lastWeek}
-                      label="Last 7 days"
+                      label={copy.historyLastWeek}
                       onDelete={onDelete}
                     />
                     <HistorySection
                       activeId={id}
                       chats={groupedChats.lastMonth}
-                      label="Last 30 days"
+                      label={copy.historyLastMonth}
                       onDelete={onDelete}
                     />
                     <HistorySection
                       activeId={id}
                       chats={groupedChats.older}
-                      label="Older"
+                      label={copy.historyOlder}
                       onDelete={onDelete}
                     />
                   </div>

@@ -23,6 +23,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { SubpageHeader } from "@/components/chat/subpage-header";
 import { toast } from "@/components/chat/toast";
+import { useUiLocale } from "@/hooks/use-ui-locale";
 import {
   buildMemoriesExportMarkdown,
   defaultPinnedForCategory,
@@ -279,7 +280,12 @@ function createSlot(
 export default function MemoryPage() {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const { locale: uiLocale, copy: uiCopyDict } = useUiLocale();
   const [lang, setLang] = useState<"en" | "tr">("en");
+
+  useEffect(() => {
+    setLang(uiLocale);
+  }, [uiLocale]);
   const [tab, setTab] = useState<"profile" | "journal">("profile");
   const [categoryFilter, setCategoryFilter] = useState<
     "all" | CanonicalMemoryCategory
@@ -323,24 +329,15 @@ export default function MemoryPage() {
   const [journalBody, setJournalBody] = useState("");
   const [journalTags, setJournalTags] = useState("");
 
-  useEffect(() => {
-    try {
-      if (navigator.language?.toLowerCase().startsWith("tr")) {
-        setLang("tr");
-      }
-    } catch {
-      /* ignore */
-    }
-  }, []);
-
   const t = LABELS[lang];
   const catLabels = MEMORY_CATEGORY_LABELS[lang];
 
-  const { data, error, mutate } = useSWR<MemoryApiResponse>(
+  const { data, error, mutate, isLoading } = useSWR<MemoryApiResponse>(
     `${basePath}/api/memory`,
     fetcher,
     { dedupingInterval: 2000, revalidateOnMount: true }
   );
+  const isMemorySetupRequired = data?.status === "setup_required";
 
   const allFacts = data?.profileFacts ?? [];
   const allJournal = data?.journalEntries ?? [];
@@ -1569,7 +1566,10 @@ export default function MemoryPage() {
               >
                 <UserCheckIcon className="size-4" />
                 <span>
-                  {t.savedMemoriesTab} ({allFacts.length})
+                  {t.savedMemoriesTab}
+                  {isMemorySetupRequired || (isLoading && !data) || error
+                    ? ""
+                    : ` (${allFacts.length})`}
                 </span>
               </button>
               <button
@@ -1584,7 +1584,10 @@ export default function MemoryPage() {
               >
                 <BookOpenIcon className="size-4" />
                 <span>
-                  {t.journalTab} ({allJournal.length})
+                  {t.journalTab}
+                  {isMemorySetupRequired || (isLoading && !data) || error
+                    ? ""
+                    : ` (${allJournal.length})`}
                 </span>
               </button>
             </div>
@@ -1657,8 +1660,22 @@ export default function MemoryPage() {
         </div>
 
         {error ? (
-          <p className="text-destructive text-sm">
-            Could not load memory entries right now.
+          <p
+            className="rounded-2xl border border-destructive/30 bg-destructive/5 p-6 text-center text-destructive text-sm"
+            data-testid="memory-status-unavailable"
+          >
+            {uiCopyDict.memoryStatusUnavailable}
+          </p>
+        ) : isMemorySetupRequired ? (
+          <p
+            className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-6 text-center text-foreground text-sm"
+            data-testid="memory-status-setup-required"
+          >
+            {uiCopyDict.memoryStatusSetupRequired}
+          </p>
+        ) : isLoading && !data ? (
+          <p className="rounded-2xl border border-[color:var(--hairline)] bg-card p-6 text-center text-muted-foreground text-sm">
+            {uiCopyDict.statusChecking}
           </p>
         ) : tab === "profile" ? (
           sortedFilteredFacts.length === 0 ? (

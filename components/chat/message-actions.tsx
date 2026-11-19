@@ -3,16 +3,14 @@ import { memo } from "react";
 import { toast } from "sonner";
 import { useSWRConfig } from "swr";
 import { useCopyToClipboard } from "usehooks-ts";
+import { useUiLocale } from "@/hooks/use-ui-locale";
 import type { Vote } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
-import { getCopy } from "@/lib/ui-copy";
 import {
   MessageAction as Action,
   MessageActions as Actions,
 } from "../ai-elements/message";
 import { CopyIcon, PencilEditIcon, ThumbDownIcon, ThumbUpIcon } from "./icons";
-
-const copy = getCopy();
 
 // Calm by default on pointer devices (revealed on hover or keyboard focus);
 // always visible where there is no hover (touch) and on narrow screens.
@@ -35,6 +33,7 @@ export function PureMessageActions({
   onEdit?: () => void;
 }) {
   const { mutate } = useSWRConfig();
+  const { copy } = useUiLocale();
   const [_, copyToClipboard] = useCopyToClipboard();
 
   if (isLoading) {
@@ -137,7 +136,7 @@ export function PureMessageActions({
             error: "Failed to upvote response.",
           });
         }}
-        tooltip="Upvote Response"
+        tooltip={copy.upvoteResponse}
       >
         <ThumbUpIcon />
       </Action>
@@ -190,7 +189,7 @@ export function PureMessageActions({
             error: "Failed to downvote response.",
           });
         }}
-        tooltip="Downvote Response"
+        tooltip={copy.downvoteResponse}
       >
         <ThumbDownIcon />
       </Action>

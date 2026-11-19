@@ -1,11 +1,12 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { suggestions } from "@/lib/constants";
+import { useUiLocale } from "@/hooks/use-ui-locale";
 import { SparklesIcon } from "./icons";
 
 export function Preview() {
   const router = useRouter();
+  const { copy } = useUiLocale();
 
   const handleAction = (query?: string) => {
     const url = query ? `/?query=${encodeURIComponent(query)}` : "/";
@@ -32,7 +33,7 @@ export function Preview() {
         </div>
 
         <div className="flex w-full max-w-md flex-wrap justify-center gap-2">
-          {suggestions.map((suggestion) => (
+          {copy.suggestions.map((suggestion) => (
             <button
               className="min-h-11 rounded-full border border-[color:var(--hairline)] bg-card px-4 py-2 text-[15px] text-foreground shadow-[var(--shadow-float)]"
               key={suggestion}
@@ -51,7 +52,7 @@ export function Preview() {
           onClick={() => handleAction()}
           type="button"
         >
-          Ask …
+          {copy.composerPlaceholder}
         </button>
       </div>
     </div>

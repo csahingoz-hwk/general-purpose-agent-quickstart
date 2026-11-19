@@ -29,9 +29,9 @@ import {
   ModelSelectorName,
   ModelSelectorTrigger,
 } from "@/components/ai-elements/model-selector";
+import { useUiLocale } from "@/hooks/use-ui-locale";
 import type { ChatModel } from "@/lib/ai/models";
 import type { Attachment, ChatMessage } from "@/lib/types";
-import { getCopy } from "@/lib/ui-copy";
 import { cn } from "@/lib/utils";
 import {
   PromptInput,
@@ -54,8 +54,6 @@ import {
   useVoiceReadiness,
   VoiceMemoControls,
 } from "./voice-memo-button";
-
-const copy = getCopy();
 
 // Roughly six lines of 16px/1.625 text; beyond this the textarea scrolls.
 const COMPOSER_MAX_HEIGHT_PX = 176;
@@ -104,6 +102,7 @@ function PureMultimodalInput({
   isLoading?: boolean;
 }) {
   const router = useRouter();
+  const { copy } = useUiLocale();
   const { data: modelAvailability, isLoading: checkingModels } = useSWR(
     `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/models`,
     (url: string) =>
@@ -679,6 +678,7 @@ function PureAttachmentsButton({
   status: UseChatHelpers<ChatMessage>["status"];
   selectedModelId: string;
 }) {
+  const { copy } = useUiLocale();
   const isReady = status === "ready";
 
   return (
@@ -711,6 +711,7 @@ function PureModelSelectorCompact({
   selectedModelId: string;
   onModelChange?: (modelId: string) => void;
 }) {
+  const { copy } = useUiLocale();
   const [open, setOpen] = useState(false);
   const { data } = useSWR(
     `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/models`,
@@ -788,6 +789,7 @@ function PureStopButton({
   stop: () => void;
   setMessages: UseChatHelpers<ChatMessage>["setMessages"];
 }) {
+  const { copy } = useUiLocale();
   return (
     <Button
       aria-label={copy.stop}

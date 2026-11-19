@@ -32,7 +32,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { getCopy } from "@/lib/ui-copy";
+import { useUiLocale } from "@/hooks/use-ui-locale";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,10 +44,9 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 
-const copy = getCopy();
-
 export function AppSidebar({ user }: { user: User | undefined }) {
   const router = useRouter();
+  const { copy } = useUiLocale();
   const { setOpenMobile, toggleSidebar } = useSidebar();
   const { mutate } = useSWRConfig();
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
