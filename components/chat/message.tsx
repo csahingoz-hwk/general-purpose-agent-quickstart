@@ -1,5 +1,6 @@
 "use client";
 import type { UseChatHelpers } from "@ai-sdk/react";
+import { isRedundantVisualCloudErrorPart } from "@/lib/ai/conversation-state";
 import { isScreenHandoffPayload } from "@/lib/cloud-computer/screen-handoff";
 import type { Vote } from "@/lib/db/schema";
 import { readFixturePayload } from "@/lib/fixtures";
@@ -744,6 +745,10 @@ const PurePreviewMessage = ({
             payload={output}
           />
         );
+      }
+
+      if (isRedundantVisualCloudErrorPart(message.parts, part)) {
+        return null;
       }
 
       if (

@@ -414,3 +414,115 @@ export function replyForStorage(
     ],
   };
 }
+
+const VISUAL_STUDIO_TOOL_TYPES = new Set<string>([
+  "tool-buildHtmlPageOrDashboard",
+  "tool-createExcalidrawDiagram",
+  "tool-generateInfographic",
+]);
+
+const CLOUD_FILE_FETCH_TOOL_TYPES = new Set<string>([
+  "tool-cloudExportFileToChat",
+  "tool-cloudReadFile",
+]);
+
+function extractToolPartName(part: Record<string, unknown>): string {
+  if (typeof part.toolName === "string" && part.toolName.trim()) {
+    return `tool-${part.toolName.trim()}`;
+  }
+  return typeof part.type === "string" ? part.type : "";
+}
+
+function extractBasenameLower(rawPath: unknown): string {
+  if (typeof rawPath !== "string" || !rawPath.trim()) {
+    return "";
+  }
+  return rawPath.trim().split(/[\\/]/).pop()?.trim().toLowerCase() ?? "";
+}
+
+/**
+ * Defense-in-depth UI filter: when an in-app Visual Studio tool
+ * (`buildHtmlPageOrDashboard`, `createExcalidrawDiagram`, `generateInfographic`)
+ * already succeeded on the same assistant turn, suppress any redundant
+ * `cloudExportFileToChat` / `cloudReadFile` ENOENT error sub-card caused by the
+ * model trying to stat/export a `/workspace/*.html` path that lives in-app.
+ * Standalone Cloud Computer errors on non-visual turns are never suppressed.
+ */
+export function isRedundantVisualCloudErrorPart(
+  parts: readonly unknown[],
+  candidatePart: unknown
+): boolean {
+  if (!candidatePart || typeof candidatePart !== "object") {
+    return false;
+  }
+  const cand = candidatePart as Record<string, unknown>;
+  const candToolType = extractToolPartName(cand);
+  if (!CLOUD_FILE_FETCH_TOOL_TYPES.has(candToolType)) {
+    return false;
+  }
+
+  const candState = typeof cand.state === "string" ? cand.state : "";
+  const candOutput =
+    cand.output && typeof cand.output === "object"
+      ? (cand.output as Record<string, unknown>)
+      : null;
+  const candErrorText =
+    typeof cand.errorText === "string" ? cand.errorText : "";
+  const candMessage =
+    candOutput && typeof candOutput.message === "string"
+      ? candOutput.message
+      : candOutput && typeof candOutput.error === "string"
+        ? candOutput.error
+        : "";
+  const combinedError = `${candErrorText} ${candMessage}`.trim();
+
+  const isErrorPart =
+    candState === "output-error" ||
+    candErrorText.length > 0 ||
+    candOutput?.status === "error" ||
+    Boolean(candOutput && "error" in candOutput);
+  if (!isErrorPart) {
+    return false;
+  }
+
+  const succeededVisualFilenames = new Set<string>();
+  let hasSucceededVisualTool = false;
+  for (const raw of parts) {
+    if (!raw || typeof raw !== "object") {
+      continue;
+    }
+    const p = raw as Record<string, unknown>;
+    if (!VISUAL_STUDIO_TOOL_TYPES.has(extractToolPartName(p))) {
+      continue;
+    }
+    const out =
+      p.output && typeof p.output === "object"
+        ? (p.output as Record<string, unknown>)
+        : null;
+    if (p.state === "output-available" && out?.status === "ok") {
+      hasSucceededVisualTool = true;
+      const fn = extractBasenameLower(out.filename);
+      if (fn) {
+        succeededVisualFilenames.add(fn);
+      }
+    }
+  }
+
+  if (!hasSucceededVisualTool) {
+    return false;
+  }
+
+  if (/ENOENT|no such file or directory/i.test(combinedError)) {
+    return true;
+  }
+
+  const candInput =
+    cand.input && typeof cand.input === "object"
+      ? (cand.input as Record<string, unknown>)
+      : null;
+  const candFile =
+    extractBasenameLower(candOutput?.path) ||
+    extractBasenameLower(candInput?.path);
+
+  return Boolean(candFile && succeededVisualFilenames.has(candFile));
+}

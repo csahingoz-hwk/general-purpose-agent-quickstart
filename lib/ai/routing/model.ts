@@ -132,20 +132,22 @@ export function createRoutedModel(
     const requestedEffort = (
       params.providerOptions?.openai as { reasoningEffort?: string } | undefined
     )?.reasoningEffort;
-    const safeEffort: "low" | "medium" | "high" =
-      requestedEffort === "high"
-        ? "high"
-        : requestedEffort === "medium"
-          ? "medium"
-          : requestedEffort === "low" ||
-              requestedEffort === "minimal" ||
-              requestedEffort === "none"
-            ? "low"
-            : model === HYDROGEN || model === LUNA
+    const safeEffort: "low" | "medium" | "high" | "xhigh" =
+      requestedEffort === "xhigh"
+        ? "xhigh"
+        : requestedEffort === "high"
+          ? "high"
+          : requestedEffort === "medium"
+            ? "medium"
+            : requestedEffort === "low" ||
+                requestedEffort === "minimal" ||
+                requestedEffort === "none"
               ? "low"
-              : model === NEON
-                ? "high"
-                : "medium";
+              : model === HYDROGEN || model === LUNA
+                ? "low"
+                : model === NEON
+                  ? "high"
+                  : "medium";
     if (isSubscriptionBackedZeroCashModel(model)) {
       return {
         ...params,

@@ -4,6 +4,7 @@ import {
   BookOpenIcon,
   CheckCircle2Icon,
   ChevronRightIcon,
+  ExternalLinkIcon,
   GlobeIcon,
   MonitorIcon,
   MoonIcon,
@@ -46,7 +47,6 @@ type PerModelUsageRow = {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
-  referenceCostUsd: number;
 };
 
 type GcpBillingPayload = {
@@ -55,13 +55,14 @@ type GcpBillingPayload = {
   projectId: string | null;
   billingAccountId: string;
   currency: string;
-  monthlyCreditLimitUsd: number;
+  monthlyCreditLimitUsd: number | null;
   mtdGrossCostUsd: number | null;
   mtdCreditsUsedUsd: number | null;
   creditsRemainingUsd: number | null;
   missingReason: string | null;
   missingCode?: CloudBillingMissingCode | null;
   missingDetail?: string | null;
+  billingConsoleUrl?: string;
   setupActionUrl: string;
   setupActionLabel: string;
   checkedAt: string;
@@ -103,24 +104,13 @@ function deriveRowsFromCalls(calls: UsageCall[]): PerModelUsageRow[] {
     cur.outputTokens += Number(c.outputTokens ?? 0);
     map.set(c.model, cur);
   }
-  return [...map.entries()].map(([model, agg]) => {
-    const refRate =
-      model === "gemini-4-neon"
-        ? (agg.inputTokens / 1_000_000) * 1.25 +
-          (agg.outputTokens / 1_000_000) * 5
-        : model === "gemini-4-hydrogen"
-          ? (agg.inputTokens / 1_000_000) * 0.15 +
-            (agg.outputTokens / 1_000_000) * 0.6
-          : 0;
-    return {
-      model,
-      calls: agg.calls,
-      inputTokens: agg.inputTokens,
-      outputTokens: agg.outputTokens,
-      totalTokens: agg.inputTokens + agg.outputTokens,
-      referenceCostUsd: Math.round(refRate * 10_000) / 10_000,
-    };
-  });
+  return [...map.entries()].map(([model, agg]) => ({
+    model,
+    calls: agg.calls,
+    inputTokens: agg.inputTokens,
+    outputTokens: agg.outputTokens,
+    totalTokens: agg.inputTokens + agg.outputTokens,
+  }));
 }
 
 type ConnectorStatusResponse = {
@@ -757,19 +747,17 @@ function UsagePageContent() {
               ? (data.byModel ?? deriveRowsFromCalls(data.calls))
               : null;
             const gcp = data?.gcpBilling;
-            const monthlyPool = gcp?.monthlyCreditLimitUsd ?? 40;
-            const totalRefUsd = (rows ?? []).reduce(
-              (sum, r) => sum + r.referenceCostUsd,
-              0
-            );
-            const effectiveUsedUsd =
-              gcp?.reachable && gcp.mtdCreditsUsedUsd !== null
-                ? gcp.mtdCreditsUsedUsd
-                : totalRefUsd;
-            const effectiveRemainingUsd =
-              gcp?.reachable && gcp.creditsRemainingUsd !== null
-                ? gcp.creditsRemainingUsd
-                : Math.max(0, monthlyPool - totalRefUsd);
+            const isBillingConnected = gcp?.reachable === true;
+            const billingConsoleUrl =
+              gcp?.billingConsoleUrl ||
+              "https://console.cloud.google.com/billing";
+            const totalInputTokens =
+              data?.totalInputTokens ??
+              (rows ?? []).reduce((sum, r) => sum + r.inputTokens, 0);
+            const totalOutputTokens =
+              data?.totalOutputTokens ??
+              (rows ?? []).reduce((sum, r) => sum + r.outputTokens, 0);
+            const totalTokens = totalInputTokens + totalOutputTokens;
             const fmtUsd = (val: number) => `$${val.toFixed(2)}`;
             const fallbackStatusText = error
               ? copy.usageUnavailableShort
@@ -778,95 +766,159 @@ function UsagePageContent() {
               gcp && !gcp.reachable
                 ? formatCloudBillingUnavailableReason(gcp, locale)
                 : null;
+            const liveMtdSpend =
+              isBillingConnected &&
+              (gcp.mtdCreditsUsedUsd !== null || gcp.mtdGrossCostUsd !== null)
+                ? (gcp.mtdCreditsUsedUsd ?? gcp.mtdGrossCostUsd ?? 0)
+                : null;
+            const hasLiveRemainingBudget =
+              isBillingConnected &&
+              gcp.creditsRemainingUsd !== null &&
+              gcp.monthlyCreditLimitUsd !== null;
 
             return (
               <div className="divide-y divide-[color:var(--hairline)] overflow-hidden rounded-2xl border border-[color:var(--hairline)] bg-card">
-                <div className="grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
-                  <div className="min-w-0">
-                    <p className="text-muted-foreground text-xs">
-                      {copy.usageMtdCreditUsed}
-                    </p>
-                    <p
-                      className="mt-0.5 font-semibold text-base text-foreground tabular-nums"
-                      data-testid="usage-summary"
-                    >
-                      {rows
-                        ? `${gcp?.reachable ? "" : "~"}${fmtUsd(effectiveUsedUsd)}`
-                        : fallbackStatusText}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {gcp?.reachable
-                        ? copy.usageSourceGcpLive
-                        : copy.usageCloudUnavailableCardNote}
-                    </p>
-                  </div>
-
-                  <div className="min-w-0">
-                    <p className="text-muted-foreground text-xs">
-                      {copy.usageRemainingCredit}
-                    </p>
-                    <p className="mt-0.5 font-semibold text-base text-emerald-700 tabular-nums dark:text-emerald-300">
-                      {rows
-                        ? `${gcp?.reachable ? "" : "~"}${fmtUsd(effectiveRemainingUsd)}`
-                        : fallbackStatusText}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      /${monthlyPool.toFixed(2)} {copy.usageUltraCreditSuffix}
-                      {gcp && !gcp.reachable
-                        ? ` · ${copy.usageCloudEstimateSuffix}`
-                        : ""}
-                    </p>
-                  </div>
-
-                  <div className="min-w-0">
-                    <p className="text-muted-foreground text-xs">
-                      {copy.usageTotalTokensMonth}
-                    </p>
-                    <p className="mt-0.5 font-semibold text-base text-foreground tabular-nums">
-                      {data
-                        ? (
-                            (data.totalInputTokens ?? 0) +
-                            (data.totalOutputTokens ?? 0)
-                          ).toLocaleString()
-                        : fallbackStatusText}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {data
-                        ? `${data.invocations} ${copy.usageModelCallsSuffix}`
-                        : copy.usageThisMonth}
-                    </p>
-                  </div>
-
-                  <div className="min-w-0">
-                    <p className="text-muted-foreground text-xs">
-                      {copy.usageNetCashCost}
-                    </p>
-                    <p className="mt-0.5 font-semibold text-base text-foreground tabular-nums">
-                      $0.00
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {copy.usageZeroCashNote}
-                    </p>
-                  </div>
-                </div>
-
-                {localizedCloudReason && (
+                {isBillingConnected ? (
                   <div
-                    className="flex flex-wrap items-center justify-between gap-2 bg-muted/35 px-4 py-3 text-xs"
+                    className={cn(
+                      "grid grid-cols-1 gap-3 p-4",
+                      hasLiveRemainingBudget
+                        ? "sm:grid-cols-3"
+                        : "sm:grid-cols-2"
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-muted-foreground text-xs">
+                        {copy.usageMtdCloudSpend}
+                      </p>
+                      <p
+                        className="mt-0.5 font-semibold text-base text-foreground tabular-nums"
+                        data-testid="usage-summary"
+                      >
+                        {liveMtdSpend !== null
+                          ? fmtUsd(liveMtdSpend)
+                          : fallbackStatusText}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {copy.usageSourceGcpLive}
+                      </p>
+                    </div>
+
+                    {hasLiveRemainingBudget &&
+                      gcp.creditsRemainingUsd !== null &&
+                      gcp.monthlyCreditLimitUsd !== null && (
+                        <div className="min-w-0">
+                          <p className="text-muted-foreground text-xs">
+                            {copy.usageRemainingBudget}
+                          </p>
+                          <p className="mt-0.5 font-semibold text-base text-emerald-700 tabular-nums dark:text-emerald-300">
+                            {fmtUsd(gcp.creditsRemainingUsd)}
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">
+                            /{gcp.monthlyCreditLimitUsd.toFixed(2)}{" "}
+                            {copy.usageCloudBudgetSuffix}
+                          </p>
+                        </div>
+                      )}
+
+                    <div className="min-w-0">
+                      <p className="text-muted-foreground text-xs">
+                        {copy.usageTotalTokensMonth}
+                      </p>
+                      <p className="mt-0.5 font-semibold text-base text-foreground tabular-nums">
+                        {totalTokens.toLocaleString()}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {data
+                          ? `${data.invocations} ${copy.usageModelCallsSuffix}`
+                          : copy.usageThisMonth}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
+                    <div className="min-w-0">
+                      <p className="text-muted-foreground text-xs">
+                        {copy.usageTotalTokensMonth}
+                      </p>
+                      <p
+                        className="mt-0.5 font-semibold text-base text-foreground tabular-nums"
+                        data-testid="usage-summary"
+                      >
+                        {data
+                          ? totalTokens.toLocaleString()
+                          : fallbackStatusText}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {data
+                          ? `${data.invocations} ${copy.usageModelCallsSuffix}`
+                          : copy.usageThisMonth}
+                      </p>
+                    </div>
+
+                    <div className="min-w-0">
+                      <p className="text-muted-foreground text-xs">
+                        {copy.usageInputTokensMonth}
+                      </p>
+                      <p className="mt-0.5 font-semibold text-base text-foreground tabular-nums">
+                        {data
+                          ? totalInputTokens.toLocaleString()
+                          : fallbackStatusText}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {copy.usageThisMonth}
+                      </p>
+                    </div>
+
+                    <div className="min-w-0">
+                      <p className="text-muted-foreground text-xs">
+                        {copy.usageOutputTokensMonth}
+                      </p>
+                      <p className="mt-0.5 font-semibold text-base text-foreground tabular-nums">
+                        {data
+                          ? totalOutputTokens.toLocaleString()
+                          : fallbackStatusText}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {copy.usageThisMonth}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {!isBillingConnected && (
+                  <div
+                    className="flex flex-wrap items-center justify-between gap-2.5 bg-muted/35 px-4 py-3 text-xs"
                     data-testid="gcp-billing-setup-banner"
                   >
-                    <p className="min-w-0 flex-1 text-muted-foreground">
-                      <span className="font-medium text-foreground">
-                        {copy.usageGcpPendingLead}{" "}
-                      </span>
-                      {localizedCloudReason} {copy.usageGcpPendingTrail}
-                    </p>
-                    <Link
-                      className="inline-flex min-h-9 shrink-0 items-center rounded-full border border-[color:var(--hairline)] bg-background px-3 font-medium text-foreground text-xs hover:bg-muted"
-                      href="/setup#setup-gcp_billing"
-                    >
-                      {copy.usageOpenInSetup}
-                    </Link>
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <p className="text-foreground">
+                        {copy.usageCloudBillingManagedNote}
+                      </p>
+                      {localizedCloudReason && (
+                        <p className="text-[11px] text-muted-foreground">
+                          {localizedCloudReason}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap shrink-0 items-center gap-2">
+                      <a
+                        className="inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-full bg-primary px-3 font-medium text-primary-foreground text-xs transition-colors hover:bg-primary/90"
+                        data-testid="google-cloud-billing-link"
+                        href={billingConsoleUrl}
+                        rel="noopener noreferrer"
+                        target="_blank"
+                      >
+                        <span>{copy.usageOpenCloudBilling}</span>
+                        <ExternalLinkIcon className="size-3.5" />
+                      </a>
+                      <Link
+                        className="inline-flex min-h-9 shrink-0 items-center rounded-full border border-[color:var(--hairline)] bg-background px-3 font-medium text-foreground text-xs hover:bg-muted"
+                        href="/setup#setup-gcp_billing"
+                      >
+                        {copy.usageOpenInSetup}
+                      </Link>
+                    </div>
                   </div>
                 )}
 
@@ -887,63 +939,44 @@ function UsagePageContent() {
                           {copy.usageColModel}
                         </th>
                         <th className="px-3 py-2.5 text-right font-medium">
-                          {copy.usageColTokensIo}
-                        </th>
-                        <th className="px-3 py-2.5 text-right font-medium">
-                          {copy.usageColEstimatedCost}
+                          {copy.usageColInputOutput}
                         </th>
                         <th className="px-4 py-2.5 text-right font-medium">
-                          {copy.usageColRemainingCredit}
+                          {copy.usageColTotalTokens}
                         </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[color:var(--hairline)]">
                       {rows
-                        ? rows.map((row) => {
-                            const isCopilot = row.model === "claude-haiku-5.5";
-                            return (
-                              <tr key={row.model}>
-                                <td className="max-w-[140px] break-words px-4 py-2.5 sm:max-w-none">
-                                  <span className="font-medium text-foreground">
-                                    {MODEL_FRIENDLY_LABELS[row.model] ??
-                                      row.model}
-                                  </span>
-                                  <span className="block text-[11px] text-muted-foreground">
-                                    {row.calls} {copy.usageCallsSuffix}
-                                  </span>
-                                </td>
-                                <td className="whitespace-nowrap px-3 py-2.5 text-right text-foreground">
-                                  {row.totalTokens.toLocaleString()}
-                                  <span className="block text-[11px] text-muted-foreground">
-                                    {row.inputTokens.toLocaleString()}{" "}
-                                    {copy.usageInputShort} /{" "}
-                                    {row.outputTokens.toLocaleString()}{" "}
-                                    {copy.usageOutputShort}
-                                  </span>
-                                </td>
-                                <td className="whitespace-nowrap px-3 py-2.5 text-right text-foreground">
-                                  {isCopilot
-                                    ? copy.usageSubscriptionZero
-                                    : `$${row.referenceCostUsd.toFixed(4)}`}
-                                </td>
-                                <td className="whitespace-nowrap px-4 py-2.5 text-right text-muted-foreground">
-                                  {isCopilot
-                                    ? copy.usageCopilotIncluded
-                                    : `${gcp?.reachable ? "" : "~"}${fmtUsd(effectiveRemainingUsd)}`}
-                                </td>
-                              </tr>
-                            );
-                          })
+                        ? rows.map((row) => (
+                            <tr key={row.model}>
+                              <td className="max-w-[160px] break-words px-4 py-2.5 sm:max-w-none">
+                                <span className="font-medium text-foreground">
+                                  {MODEL_FRIENDLY_LABELS[row.model] ??
+                                    row.model}
+                                </span>
+                                <span className="block text-[11px] text-muted-foreground">
+                                  {row.calls} {copy.usageCallsSuffix}
+                                </span>
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-2.5 text-right text-muted-foreground">
+                                {row.inputTokens.toLocaleString()}{" "}
+                                {copy.usageInputShort} /{" "}
+                                {row.outputTokens.toLocaleString()}{" "}
+                                {copy.usageOutputShort}
+                              </td>
+                              <td className="whitespace-nowrap px-4 py-2.5 text-right font-medium text-foreground">
+                                {row.totalTokens.toLocaleString()}
+                              </td>
+                            </tr>
+                          ))
                         : ["r1", "r2", "r3"].map((sk) => (
                             <tr key={sk}>
                               <td className="px-4 py-3">
                                 <div className="h-3.5 w-32 animate-pulse rounded bg-muted" />
                               </td>
                               <td className="px-3 py-3 text-right">
-                                <div className="ml-auto h-3.5 w-16 animate-pulse rounded bg-muted" />
-                              </td>
-                              <td className="px-3 py-3 text-right">
-                                <div className="ml-auto h-3.5 w-14 animate-pulse rounded bg-muted" />
+                                <div className="ml-auto h-3.5 w-24 animate-pulse rounded bg-muted" />
                               </td>
                               <td className="px-4 py-3 text-right">
                                 <div className="ml-auto h-3.5 w-16 animate-pulse rounded bg-muted" />

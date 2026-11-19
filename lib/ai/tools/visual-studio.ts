@@ -477,7 +477,7 @@ export function createVisualStudioTools(opts: {
 
   const buildHtmlPageOrDashboard = tool({
     description:
-      "Build a single-file interactive HTML page or ECharts dashboard (readable in both dark and light modes), save it to /workspace on the Cloud Computer, and render a sandboxed preview in chat with Open full screen and Download (working on iPhone Safari).",
+      "Build a single-file interactive HTML page or ECharts dashboard (readable in both dark and light modes) and render a sandboxed preview card directly in chat with Open full screen and Download (working on iPhone Safari). Self-contained — do NOT call cloudExportFileToChat, cloudReadFile, or cloudWriteFile before or after this tool.",
     inputSchema: z.object({
       filename: z
         .string()
@@ -624,17 +624,19 @@ export function createVisualStudioTools(opts: {
       const hasCloudRelay = Boolean(
         (opts.relayUrl && opts.hmacSecret) || isCloudComputerConfigured()
       );
+      let savedToCloudWorkspace = false;
       if (hasCloudRelay) {
         await lifecycle
           .ensureAwakeForTask({ userId: opts.userId })
           .catch(() => null);
-        await cloudWriteWorkspaceFile({
+        const writeRes = await cloudWriteWorkspaceFile({
           path: workspacePath,
           contentBase64: Buffer.from(html, "utf8").toString("base64"),
           relayUrl: opts.relayUrl,
           hmacSecret: opts.hmacSecret,
           fetchImpl: opts.fetchImpl,
         }).catch(() => null);
+        savedToCloudWorkspace = Boolean(writeRes && writeRes.status === "ok");
         await lifecycle
           .recordActivity({ userId: opts.userId })
           .catch(() => null);
@@ -642,8 +644,12 @@ export function createVisualStudioTools(opts: {
 
       const bytes = new Uint8Array(Buffer.from(html, "utf8"));
       const encodedPath = encodeURIComponent(workspacePath);
-      let downloadUrl = `/api/cloud-computer/files?path=${encodedPath}&disposition=attachment`;
-      let previewUrl = `/api/cloud-computer/files?path=${encodedPath}&disposition=inline`;
+      let downloadUrl = savedToCloudWorkspace
+        ? `/api/cloud-computer/files?path=${encodedPath}&disposition=attachment`
+        : "";
+      let previewUrl = savedToCloudWorkspace
+        ? `/api/cloud-computer/files?path=${encodedPath}&disposition=inline`
+        : "";
 
       try {
         const stored = await fileStore.save({
@@ -665,14 +671,15 @@ export function createVisualStudioTools(opts: {
         downloadUrl = baseFileUrl;
         previewUrl = `${baseFileUrl}?disposition=inline`;
       } catch {
-        /* falls back to owner-authenticated /api/cloud-computer/files */
+        /* falls back to owner-authenticated /api/cloud-computer/files only when VM write succeeded */
       }
 
       return {
         status: "ok" as const,
         kind: "html_dashboard" as const,
         title: input.title,
-        path: workspacePath,
+        ...(savedToCloudWorkspace ? { path: workspacePath } : {}),
+        savedToCloudWorkspace,
         filename: safeName,
         mediaType: "text/html" as const,
         sizeBytes: bytes.byteLength,
@@ -691,9 +698,8 @@ export function createVisualStudioTools(opts: {
               kind: output.kind,
               title: output.title,
               filename: output.filename,
-              path: output.path,
               sizeBytes: output.sizeBytes,
-              note: "Interactive HTML dashboard preview card with Full Screen and Download buttons is already rendered in chat. Reply with a brief 1-2 sentence summary in the user's language without repeating the raw HTML.",
+              note: "Interactive HTML dashboard preview card with Full Screen and Download buttons is already rendered in chat. Do NOT call cloudExportFileToChat, cloudReadFile, or cloudWriteFile. Reply with a brief 1-2 sentence summary in the user's language without repeating the raw HTML.",
             }
           : output,
     }),

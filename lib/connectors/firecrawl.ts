@@ -1,10 +1,14 @@
 import { validateCloudBrowseUrl } from "@/lib/cloud-computer/client";
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import { fenceUntrustedContent } from "@/lib/safety/untrusted-content";
+import {
+  FIRECRAWL_KEY_CREATE_URL as UI_FIRECRAWL_KEY_CREATE_URL,
+  VERCEL_ENV_VARS_URL as UI_VERCEL_ENV_VARS_URL,
+} from "@/lib/ui-copy";
 
 export const FIRECRAWL_API_BASE_URL = "https://api.firecrawl.dev/v1";
-export const FIRECRAWL_KEY_CREATE_URL =
-  "https://www.firecrawl.dev/app/api-keys";
+export const FIRECRAWL_KEY_CREATE_URL = UI_FIRECRAWL_KEY_CREATE_URL;
+export const VERCEL_ENV_VARS_URL = UI_VERCEL_ENV_VARS_URL;
 export const FIRECRAWL_SETUP_HREF = "/setup#setup-firecrawl";
 
 export function getFirecrawlApiKey(override?: string | null): string | null {
@@ -22,6 +26,7 @@ export type FirecrawlNotConnectedResult = {
   connectProvider: "firecrawl";
   setupHref: string;
   externalKeyUrl: string;
+  vercelEnvVarsUrl: string;
   message: string;
   messageTr: string;
 };
@@ -33,8 +38,9 @@ export function buildFirecrawlNotConnectedResult(): FirecrawlNotConnectedResult 
     connectProvider: "firecrawl",
     setupHref: FIRECRAWL_SETUP_HREF,
     externalKeyUrl: FIRECRAWL_KEY_CREATE_URL,
-    message: `Firecrawl is not connected because FIRECRAWL_API_KEY is not set in environment variables. Open the Setup page Connect step (${FIRECRAWL_SETUP_HREF}) and create an API key at ${FIRECRAWL_KEY_CREATE_URL}.`,
-    messageTr: `Firecrawl bağlı değil çünkü FIRECRAWL_API_KEY henüz ortam değişkenlerinde tanımlanmamış. Kurulum sayfasındaki Bağla adımından (${FIRECRAWL_SETUP_HREF}) anahtar oluşturup bağlayabilirsin (${FIRECRAWL_KEY_CREATE_URL}).`,
+    vercelEnvVarsUrl: VERCEL_ENV_VARS_URL,
+    message: `Firecrawl is not connected because FIRECRAWL_API_KEY is not set in Vercel environment variables (there is no in-app API key input field). Connect in 2 steps: 1) Get a key at ${FIRECRAWL_KEY_CREATE_URL}. 2) Add FIRECRAWL_API_KEY at ${VERCEL_ENV_VARS_URL} and redeploy (also linked on ${FIRECRAWL_SETUP_HREF}).`,
+    messageTr: `Firecrawl bağlı değil çünkü FIRECRAWL_API_KEY henüz Vercel ortam değişkenlerinde tanımlanmamış (uygulama içinde API anahtarı giriş alanı yoktur). 2 adımda bağlayın: 1) ${FIRECRAWL_KEY_CREATE_URL} üzerinden anahtar alın. 2) ${VERCEL_ENV_VARS_URL} sayfasında FIRECRAWL_API_KEY olarak ekleyip yeniden dağıtın (redeploy).`,
   };
 }
 

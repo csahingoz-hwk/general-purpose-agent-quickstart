@@ -12,6 +12,7 @@ import {
 import {
   FIRECRAWL_KEY_CREATE_URL,
   isFirecrawlConfigured,
+  VERCEL_ENV_VARS_URL,
 } from "@/lib/connectors/firecrawl";
 import {
   type GoogleWorkspaceHealthResult,
@@ -21,6 +22,7 @@ import { hasStoredGoogleConnection } from "@/lib/connectors/google-vault-auth";
 import { isGoogleSignInConfigured } from "@/lib/google-owner";
 import { isMacBridgeConfigured } from "@/lib/mac-bridge/client";
 import { pingRedis } from "@/lib/ratelimit";
+import type { CloudBillingMissingCode } from "@/lib/ui-copy";
 import {
   createPostgresVaultStore,
   isVaultConfigured,
@@ -35,7 +37,21 @@ export type SetupChecklistItem = {
   actionKind: "none" | "connect_google" | "connect_github" | "external_link";
   externalUrl?: string;
   externalLabel?: string;
+  secondaryExternalUrl?: string;
+  secondaryExternalLabel?: string;
   connectedProvider?: "google" | "github";
+  variant?: string;
+  meta?: {
+    disabledServices?: string[];
+    projectNumber?: string | null;
+    billingUsedUsd?: number;
+    billingRemainingUsd?: number | null;
+    billingMissingCode?: CloudBillingMissingCode | null;
+    billingMissingDetail?: string | null;
+    billingMissingReason?: string | null;
+    billingProjectId?: string | null;
+    billingAccountId?: string | null;
+  };
 };
 
 type CachedSetupStatus = {
@@ -157,17 +173,33 @@ export async function GET(request: Request) {
     },
     {
       id: "gcp_billing",
-      label: "Google Cloud Billing & Ultra credit telemetry (Vertex)",
+      label: "Google Cloud Billing telemetry (Vertex)",
       summary: gcpBilling?.reachable
-        ? `Canlı Google Cloud fatura akışı aktif — bu ay $${(gcpBilling.mtdCreditsUsedUsd ?? 0).toFixed(2)} kredi kullanıldı, $${(gcpBilling.creditsRemainingUsd ?? gcpBilling.monthlyCreditLimitUsd).toFixed(2)} kredi kaldı (1 saat önbellekli).`
+        ? gcpBilling.creditsRemainingUsd !== null
+          ? `Canlı Google Cloud fatura akışı aktif — bu ay $${(gcpBilling.mtdCreditsUsedUsd ?? gcpBilling.mtdGrossCostUsd ?? 0).toFixed(2)} kullanıldı, $${gcpBilling.creditsRemainingUsd.toFixed(2)} bütçe kaldı (1 saat önbellekli).`
+          : `Canlı Google Cloud fatura akışı aktif — bu ay $${(gcpBilling.mtdGrossCostUsd ?? gcpBilling.mtdCreditsUsedUsd ?? 0).toFixed(2)} kullanım kaydedildi (1 saat önbellekli).`
         : (gcpBilling?.missingReason ??
-          "Canlı Vertex fatura ve kalan Ultra kredi bakiyesi için Cloud Billing + Budgets API, BigQuery Billing Export ve 'roles/billing.viewer' yetkisini açın."),
+          "Canlı Vertex fatura verisi için Cloud Billing + BigQuery Billing Export ve 'roles/billing.viewer' yetkisini açın; gerçek maliyet Google Cloud Billing üzerinde takip edilir."),
       status: gcpBilling?.reachable ? "ready" : "action_needed",
       actionKind: "external_link",
       externalUrl:
         gcpBilling?.setupActionUrl ??
         "https://console.cloud.google.com/flows/enableapi?apiid=cloudbilling.googleapis.com,billingbudgets.googleapis.com,bigquery.googleapis.com",
       externalLabel: gcpBilling?.setupActionLabel ?? "Enable Billing APIs",
+      meta: gcpBilling
+        ? {
+            billingUsedUsd:
+              gcpBilling.mtdCreditsUsedUsd ??
+              gcpBilling.mtdGrossCostUsd ??
+              undefined,
+            billingRemainingUsd: gcpBilling.creditsRemainingUsd,
+            billingMissingCode: gcpBilling.missingCode ?? null,
+            billingMissingDetail: gcpBilling.missingDetail ?? null,
+            billingMissingReason: gcpBilling.missingReason ?? null,
+            billingProjectId: gcpBilling.projectId,
+            billingAccountId: gcpBilling.billingAccountId,
+          }
+        : undefined,
     },
     {
       id: "copilot_fallback",
@@ -181,6 +213,11 @@ export async function GET(request: Request) {
       actionKind: "external_link",
       externalUrl: "https://github.com/settings/personal-access-tokens/new",
       externalLabel: "Copilot token",
+      variant: copilotFallbackReady
+        ? "ready"
+        : cloudComputerReady
+          ? "copilot_need_token"
+          : "copilot_need_vm",
     },
     {
       id: "database_vault",
@@ -231,6 +268,19 @@ export async function GET(request: Request) {
           : undefined,
       connectedProvider:
         googleConnected && !googleServiceDisabled ? "google" : undefined,
+      variant: googleServiceDisabled
+        ? "service_disabled"
+        : googleConnected
+          ? "connected"
+          : googleSignInReady
+            ? "oauth_ready"
+            : "manual",
+      meta: googleServiceDisabled
+        ? {
+            disabledServices: googleServiceDisabled.disabledServices,
+            projectNumber: googleServiceDisabled.projectNumber,
+          }
+        : undefined,
     },
     {
       id: "github",
@@ -260,18 +310,20 @@ export async function GET(request: Request) {
       id: "firecrawl",
       label: "Firecrawl web search, scrape & site map",
       summary: firecrawlReady
-        ? "Active via FIRECRAWL_API_KEY in Vercel env — server-side search, clean URL-to-Markdown scrape, and bounded site crawl/map."
-        : "Optional — add FIRECRAWL_API_KEY in Vercel project environment variables for deep URL-to-Markdown scraping, site mapping, and dated news extraction.",
+        ? "Active via FIRECRAWL_API_KEY in Vercel environment variables — server-side search, clean URL-to-Markdown scrape, and site mapping."
+        : "Optional — There is no in-app API key input field. Connect in 2 steps: 1) Get your key at firecrawl.dev. 2) Add FIRECRAWL_API_KEY in Vercel Environment Variables and redeploy.",
       status: firecrawlReady ? "ready" : "optional",
       actionKind: "external_link",
       externalUrl: FIRECRAWL_KEY_CREATE_URL,
-      externalLabel: firecrawlReady ? "Manage key" : "Get Firecrawl key",
+      externalLabel: firecrawlReady ? "Manage key" : "1. Get Firecrawl key",
+      secondaryExternalUrl: VERCEL_ENV_VARS_URL,
+      secondaryExternalLabel: "2. Vercel Env Variables",
     },
     {
       id: "gemini_live",
       label: "Live voice conversations (Gemini 3.8 Live)",
       summary: vertexReady
-        ? "Active automatically via Google Cloud Vertex AI on Ultra credit — zero API keys needed."
+        ? "Active automatically via Google Cloud Vertex AI — no separate API key needed."
         : geminiReady
           ? "Active — hands-free voice runs on Gemini 3.8 Live."
           : "Configure Google Cloud Vertex AI WIF to enable hands-free voice.",
@@ -281,12 +333,17 @@ export async function GET(request: Request) {
         ? undefined
         : "https://console.cloud.google.com/vertex-ai",
       externalLabel: geminiReady ? undefined : "Vertex AI",
+      variant: vertexReady
+        ? "vertex_ready"
+        : geminiReady
+          ? "gemini_key_fallback"
+          : "action_needed",
     },
     {
       id: "cloud_computer",
       label: "Cloud Computer (Linux VM)",
       summary: cloudComputerReady
-        ? "Active on Google Cloud (auto-wakes on demand, £0 net on Ultra credit)."
+        ? "Active on Google Cloud (auto-wakes on demand for sandbox & browser runs)."
         : "Optional — connect your Google Cloud sandbox relay for remote Linux & browser runs.",
       status: cloudComputerReady ? "ready" : "optional",
       actionKind: "none",
@@ -296,7 +353,7 @@ export async function GET(request: Request) {
       label: "Mac mini Tailscale bridge (tmux)",
       summary: macBridgeReady
         ? "Connected via private Tailscale SSH (non-admin botrunner, logged tmux sessions)."
-        : "Optional — replace App Store Tailscale with standalone tailscaled and run ops/mac-bridge/setup-mac-bridge.sh.",
+        : "Optional — install standalone tailscaled and run ops/mac-bridge/setup-mac-bridge.sh.",
       status: macBridgeReady ? "ready" : "optional",
       actionKind: "none",
     },
@@ -318,6 +375,11 @@ export async function GET(request: Request) {
         ? undefined
         : "https://vercel.com/dashboard/stores",
       externalLabel: redisReady ? undefined : "Vercel Stores",
+      variant: redisReady
+        ? "ready"
+        : redisConfigured
+          ? "unreachable"
+          : "optional",
     },
   ];
 

@@ -1,9 +1,9 @@
 import { HYDROGEN, NEON } from "./routing/catalog";
 
-export type ActiveReasoningEffort = "low" | "medium" | "high";
+export type ActiveReasoningEffort = "low" | "medium" | "high" | "xhigh";
 
 const HARD_OR_RESEARCH_PATTERN =
-  /(?<![\p{L}\p{N}])(?:research|compare|comparison|versus|vs\.?|top\s+\d+|highest[- ]paid|top\s+earners?|annual\s+(?:pay|salary|compensation|earnings)|benchmark|analy[sz]e|analysis|in[- ]depth|comprehensive|breakdown|ranking|rank|prove|theorem|architect(?:ure)?|trade[- ]?offs?|root\s+cause|debug|reconcil\p{L}*|araştır\p{L}*|karşılaştır\p{L}*|kıyasla\p{L}*|en\s+çok\s+kazanan\p{L}*|en\s+yüksek\s+(?:maaş|kazanç|gelir|ücret)\p{L}*|detaylı\s+(?:analiz|incele|rapor)\p{L}*|sıralama\p{L}*|yıllık\s+(?:maaş|kazanç|ücret|gelir)\p{L}*|derinlemesine|kapsamlı|mimari|nedenini\s+bul)(?![\p{L}\p{N}])/iu;
+  /(?<![\p{L}\p{N}])(?:research|compare|comparison|versus|vs\.?|top\s+\d+|highest[- ]paid|top\s+earners?|annual\s+(?:pay|salary|compensation|earnings)|benchmark|analy[sz]e|analysis|in[- ]depth|deep[- ]?dive|comprehensive|breakdown|ranking|rank|prove|theorem|architect(?:ure)?|trade[- ]?offs?|root\s+cause|debug|reconcil\p{L}*|fact[- ]?check\p{L}*|investigat\p{L}*|macroeconomic|economic\s+(?:analysis|outlook|overview)|with\s+(?:sources|citations)|(?:cited|sourced)\s+(?:analysis|brief|summary|report|overview)|research\s+(?:report|brief|summary)|araştır\p{L}*|karşılaştır\p{L}*|kıyasla\p{L}*|en\s+çok\s+kazanan\p{L}*|en\s+yüksek\s+(?:maaş|kazanç|gelir|ücret)\p{L}*|analiz\p{L}*|kaynakl[ıi]\p{L}*|kaynak(?:çalı|larla|lar\s+ile|göstererek|belirterek)|detaylı\s+(?:analiz|incele|rapor)\p{L}*|inceleme\p{L}*|değerlendirme\p{L}*|araştırma\s+rapor\p{L}*|(?:ekonomi|enflasyon|piyasa|sektör|pazar|makro)\s+(?:analiz|rapor|görünüm|değerlendirme)\p{L}*|sıralama\p{L}*|yıllık\s+(?:maaş|kazanç|ücret|gelir)\p{L}*|derinlemesine|kapsamlı|mimari|nedenini\s+bul)(?![\p{L}\p{N}])/iu;
 
 const SYNTHETIC_DEMO_GUARD_PATTERN =
   /\b(demo|mock|fictional|sample|synthetic|test inbox)\b|hayal[iî]|örnek|sahte/iu;
@@ -76,7 +76,7 @@ export function resolveTurnModelAndEffort(input: {
   availableModelIds: readonly string[];
   userText: string;
   requestedTools: readonly string[];
-  baseEffort?: "low" | "medium" | "high" | string;
+  baseEffort?: "low" | "medium" | "high" | "xhigh" | string;
 }): {
   modelId: string;
   reasoningEffort: ActiveReasoningEffort;
@@ -88,17 +88,19 @@ export function resolveTurnModelAndEffort(input: {
   );
 
   const normalizedBase: ActiveReasoningEffort =
-    input.baseEffort === "high"
-      ? "high"
-      : input.baseEffort === "medium"
-        ? "medium"
-        : input.baseEffort === "low"
-          ? "low"
-          : input.selectedModelId === NEON
-            ? "high"
-            : input.selectedModelId === HYDROGEN
-              ? "low"
-              : "medium";
+    input.baseEffort === "xhigh"
+      ? "xhigh"
+      : input.baseEffort === "high"
+        ? "high"
+        : input.baseEffort === "medium"
+          ? "medium"
+          : input.baseEffort === "low"
+            ? "low"
+            : input.selectedModelId === NEON
+              ? "high"
+              : input.selectedModelId === HYDROGEN
+                ? "low"
+                : "medium";
 
   if (!escalate) {
     // When Neon is explicitly selected, keep default HIGH on non-tool turns and

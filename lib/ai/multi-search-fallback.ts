@@ -206,9 +206,17 @@ export function createMultiSearchRecoveryStream(options: {
         typeof obj.setupHref === "string"
           ? obj.setupHref
           : "/setup#setup-firecrawl";
+      const keyUrl =
+        typeof obj.externalKeyUrl === "string"
+          ? obj.externalKeyUrl
+          : "https://www.firecrawl.dev/app/api-keys";
+      const vercelUrl =
+        typeof obj.vercelEnvVarsUrl === "string"
+          ? obj.vercelEnvVarsUrl
+          : "https://vercel.com/csahingoz-3779/general-purpose-agent-quickstart/settings/environment-variables";
       return isTr
-        ? `Firecrawl bağlı değil çünkü \`FIRECRAWL_API_KEY\` henüz ortam değişkenlerinde tanımlanmamış. Kurulum sayfasındaki Bağla adımından (\`${setupHref}\`) API anahtarı oluşturup bağlayabilirsin.`
-        : `Firecrawl is not connected yet because \`FIRECRAWL_API_KEY\` is not configured. Open the Setup page Connect step (\`${setupHref}\`) to create and add your API key.`;
+        ? `Firecrawl bağlı değil çünkü \`FIRECRAWL_API_KEY\` henüz tanımlanmamış (uygulama içinde anahtar giriş alanı yoktur). 2 adımda bağlayın: 1) [firecrawl.dev](${keyUrl}) üzerinden anahtar alın. 2) [Vercel Ortam Değişkenleri](${vercelUrl}) sayfasında \`FIRECRAWL_API_KEY\` olarak ekleyip yeniden dağıtın (redeploy). Ayrıca [Kurulum](${setupHref}) sayfasında da adımlar yer alır.`
+        : `Firecrawl is not connected yet because \`FIRECRAWL_API_KEY\` is not configured (there is no in-app key input field). Connect in 2 steps: 1) Create a key at [firecrawl.dev](${keyUrl}). 2) Add \`FIRECRAWL_API_KEY\` in [Vercel Environment Variables](${vercelUrl}) and redeploy (also linked on \`${setupHref}\`).`;
     }
 
     if (status === "ok" && toolName === "buildHtmlPageOrDashboard") {

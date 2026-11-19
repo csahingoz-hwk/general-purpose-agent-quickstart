@@ -38,6 +38,28 @@ function plain(value: unknown): string {
     : "";
 }
 
+const REDIRECT_SEARCH_HOSTS = new Set<string>([
+  "vertexaisearch.cloud.google.com",
+  "news.google.com",
+]);
+
+function cleanPublisherHost(raw: unknown): string | null {
+  if (typeof raw !== "string") {
+    return null;
+  }
+  const trimmed = raw
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .split("/")[0]
+    ?.trim();
+  if (!trimmed || !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
+}
+
 export function webSearchView(output: unknown): WebSearchView {
   if (!output || typeof output !== "object" || Array.isArray(output)) {
     return { kind: "unknown" };
@@ -56,7 +78,13 @@ export function webSearchView(output: unknown): WebSearchView {
     }
     const entry = item as Record<string, unknown>;
     const url = safeHttpUrl(entry.url);
-    const hostname = url?.hostname.replace(/^www\./, "") ?? null;
+    const urlHost = url?.hostname.replace(/^www\./, "") ?? null;
+    const publisherHost =
+      cleanPublisherHost(entry.domain) ?? cleanPublisherHost(entry.site_name);
+    const hostname =
+      urlHost && REDIRECT_SEARCH_HOSTS.has(urlHost) && publisherHost
+        ? publisherHost
+        : (urlHost ?? publisherHost);
     const title = plain(entry.title) || plain(entry.site_name) || hostname;
     if (!title) {
       continue;
@@ -66,7 +94,13 @@ export function webSearchView(output: unknown): WebSearchView {
       break;
     }
   }
-  return sources.length > 0 ? { kind: "results", sources } : { kind: "empty" };
+  if (sources.length > 0) {
+    return { kind: "results", sources };
+  }
+  if (record.searchUnavailable === true) {
+    return { kind: "error" };
+  }
+  return { kind: "empty" };
 }
 
 /** Bounded text for an output we cannot interpret (never rendered as HTML). */
