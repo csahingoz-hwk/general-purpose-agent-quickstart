@@ -10,7 +10,15 @@ import { SubpageHeader } from "@/components/chat/subpage-header";
 import { toast } from "@/components/chat/toast";
 import { useUiLocale } from "@/hooks/use-ui-locale";
 import { formatSetupChecklistItemCopy } from "@/lib/ui-copy";
-import { cn, fetcher } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+
+async function setupStatusFetcher(url: string): Promise<SetupStatusResponse> {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error("setup_status_failed");
+  }
+  return response.json() as Promise<SetupStatusResponse>;
+}
 
 type SetupStatusResponse = {
   items: SetupChecklistItem[];
@@ -39,11 +47,12 @@ function SetupPageContent() {
   const connectedParam = searchParams.get("connected");
   const { data, error, isLoading, mutate } = useSWR<SetupStatusResponse>(
     `${basePath}/api/setup-status${connectedParam ? "?refresh=1" : ""}`,
-    fetcher,
+    setupStatusFetcher,
     {
-      revalidateOnFocus: false,
-      revalidateOnReconnect: false,
-      dedupingInterval: 10 * 60_000,
+      revalidateOnFocus: true,
+      revalidateOnReconnect: true,
+      revalidateOnMount: true,
+      dedupingInterval: 2000,
     }
   );
 
@@ -218,12 +227,20 @@ function SetupPageContent() {
                     item.externalUrl ? (
                     <div className="flex flex-wrap items-center gap-2">
                       {item.status === "ready" && (
-                        <span className="text-emerald-600 text-xs dark:text-emerald-400">
+                        <span
+                          className="inline-flex items-center rounded-full bg-emerald-500/12 px-2.5 py-1 font-medium text-emerald-700 text-xs dark:text-emerald-300"
+                          data-testid={`setup-badge-${item.id}`}
+                        >
                           {copy.setupReady}
                         </span>
                       )}
                       <a
-                        className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-foreground text-xs hover:bg-muted"
+                        className={cn(
+                          "inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-xs hover:bg-muted",
+                          item.status === "ready"
+                            ? "text-muted-foreground hover:text-foreground"
+                            : "text-foreground"
+                        )}
                         data-testid={`setup-external-link-${item.id}`}
                         href={
                           item.externalUrl.startsWith("/")
@@ -246,7 +263,7 @@ function SetupPageContent() {
                           <ExternalLinkIcon className="size-3.5" />
                         )}
                       </a>
-                      {item.secondaryExternalUrl ? (
+                      {item.secondaryExternalUrl && item.status !== "ready" ? (
                         <a
                           className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-3.5 font-medium text-primary-foreground text-xs hover:bg-primary/90"
                           data-testid={`setup-secondary-link-${item.id}`}

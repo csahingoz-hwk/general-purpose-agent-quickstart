@@ -15,7 +15,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
+import { STREAMDOWN_SAFE_REHYPE_PLUGINS } from "@/lib/markdown-stream";
+import { cn, stripStrayBlockedTokens } from "@/lib/utils";
 import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
@@ -453,17 +454,24 @@ const streamdownLinkSafety: LinkSafetyConfig = {
 };
 
 export const MessageResponse = memo(
-  ({ className, ...props }: MessageResponseProps) => (
-    <Streamdown
-      className={cn(
-        "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
-        className
-      )}
-      linkSafety={streamdownLinkSafety}
-      plugins={streamdownPlugins}
-      {...props}
-    />
-  ),
+  ({ className, children, rehypePlugins, ...props }: MessageResponseProps) => {
+    const safeChildren =
+      typeof children === "string" ? stripStrayBlockedTokens(children) : children;
+    return (
+      <Streamdown
+        className={cn(
+          "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+          className
+        )}
+        linkSafety={streamdownLinkSafety}
+        plugins={streamdownPlugins}
+        rehypePlugins={rehypePlugins ?? STREAMDOWN_SAFE_REHYPE_PLUGINS}
+        {...props}
+      >
+        {safeChildren}
+      </Streamdown>
+    );
+  },
   (prevProps, nextProps) => prevProps.children === nextProps.children
 );
 

@@ -24,10 +24,13 @@ import {
 import { inputTokenBound, reserveCost } from "./cost";
 import { gatewaySlug } from "./gateway";
 import {
+  type Failure,
   failureKind,
   ModelFailure,
   mayFallback,
+  mayFallbackBetweenVertexModels,
   mayFallbackFromVertexToCopilot,
+  mayRetryVertexSameModel,
   type SafeErrorDiagnostic,
   safeErrorDiagnostic,
 } from "./policy";
@@ -96,6 +99,23 @@ function hasConsequentialToolInPrompt(
   return false;
 }
 
+function sleepAbortable(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal?.aborted) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 /** One request shares its exposure/tool/fallback boundary across all SDK steps and artifacts. */
 export function createRoutedModel(
   initial: PremiumModelId,
@@ -104,22 +124,55 @@ export function createRoutedModel(
   {
     gateway = false,
     vertexSearch = false,
-  }: { gateway?: boolean; vertexSearch?: boolean } = {}
+    retryDelayMs = 120,
+  }: { gateway?: boolean; vertexSearch?: boolean; retryDelayMs?: number } = {}
 ): LanguageModelV4 {
   function isSubscriptionBackedZeroCashModel(model: PremiumModelId): boolean {
     return isVertexModel(model) || isCopilotFallbackModel(model);
   }
-  function fallbackTargetFor(model: PremiumModelId): PremiumModelId | null {
-    // Owner chain: Gemini 4 Hydrogen -> Neon (escalation) -> Copilot Claude Haiku 5.5
-    // (fallback ONLY on Vertex failure/timeout via Cloud VM bridge).
-    if (model === HYDROGEN || model === NEON) {
-      return session.available.includes(COPILOT_HAIKU) ? COPILOT_HAIKU : null;
+  function fallbackTargetFor(
+    model: PremiumModelId,
+    failure: Failure = "transient",
+    visited?: Set<PremiumModelId>
+  ): PremiumModelId | null {
+    // Owner chain: Gemini 4 Hydrogen -> Neon (escalation & separate Vertex 429 quota pool)
+    // -> Copilot Claude Haiku 5.5 (fallback ONLY on Vertex failure/timeout via Cloud VM bridge).
+    if (model === HYDROGEN) {
+      if (
+        failure === "rate" &&
+        session.available.includes(NEON) &&
+        !visited?.has(NEON)
+      ) {
+        return NEON;
+      }
+      return session.available.includes(COPILOT_HAIKU) &&
+        !visited?.has(COPILOT_HAIKU)
+        ? COPILOT_HAIKU
+        : null;
+    }
+    if (model === NEON) {
+      if (
+        session.available.includes(COPILOT_HAIKU) &&
+        !visited?.has(COPILOT_HAIKU)
+      ) {
+        return COPILOT_HAIKU;
+      }
+      if (
+        failure === "rate" &&
+        session.available.includes(HYDROGEN) &&
+        !visited?.has(HYDROGEN)
+      ) {
+        return HYDROGEN;
+      }
+      return null;
     }
     if (model === COPILOT_HAIKU || model === TERRA) {
       return null;
     }
     // Synthetic unit-test compatibility when createRoutedModel(LUNA, ...) is tested directly:
-    return session.available.includes(TERRA) ? TERRA : null;
+    return session.available.includes(TERRA) && !visited?.has(TERRA)
+      ? TERRA
+      : null;
   }
   function options(
     model: PremiumModelId,
@@ -186,7 +239,7 @@ export function createRoutedModel(
     if (session.exposed) {
       return `${failure}_after_output`;
     }
-    const target = fallbackTargetFor(model);
+    const target = fallbackTargetFor(model, failure);
     if (!target) {
       return `${failure}_terra_unavailable`;
     }
@@ -201,15 +254,16 @@ export function createRoutedModel(
     error: unknown,
     params: LanguageModelV4CallOptions,
     visited: Set<PremiumModelId>,
+    retriedModels: Set<PremiumModelId>,
     stepState?: { stepExposed: boolean; stepToolBoundary: boolean }
-  ): { reason: string; target: PremiumModelId } {
+  ): { kind: "retry" | "fallback"; reason: string; target: PremiumModelId } {
     const failure = failureKind(error);
     const diag = safeErrorDiagnostic(error);
     const role = visited.size <= 1 ? "primary" : "fallback";
     if (!primaryFailure) {
       primaryFailure = { model, ...diag };
     }
-    const target = fallbackTargetFor(model);
+    const target = fallbackTargetFor(model, failure, visited);
     const cancelled = params.abortSignal?.aborted ?? false;
     if (!cancelled) {
       console.error("[routing] model attempt failed", {
@@ -225,26 +279,55 @@ export function createRoutedModel(
       ? stepState.stepToolBoundary ||
         hasConsequentialToolInPrompt(params.prompt)
       : session.toolBoundary;
+
+    // On Vertex models, automatically retry ONCE on brief transient errors
+    // (or on 429 rate limits when no separate quota pool / fallback lane is available).
+    // Permanent errors (400 INVALID_ARGUMENT, auth, billing, safety, work_boundary)
+    // and long timeouts are never retried in a loop.
+    if (
+      isVertexModel(model) &&
+      mayRetryVertexSameModel({
+        error,
+        failure,
+        exposed: vertexStepExposed,
+        toolBoundary: vertexToolBoundary,
+        retried: retriedModels.has(model),
+        cancelled,
+      }) &&
+      (failure === "transient" || target === null)
+    ) {
+      retriedModels.add(model);
+      return { kind: "retry", reason: failure, target: model };
+    }
+
     const allowed =
       target !== null &&
       !visited.has(target) &&
-      (isVertexModel(model) && target === COPILOT_HAIKU
-        ? mayFallbackFromVertexToCopilot({
+      (isVertexModel(model) && isVertexModel(target)
+        ? mayFallbackBetweenVertexModels({
             failure,
             exposed: vertexStepExposed,
             toolBoundary: vertexToolBoundary,
-            used: session.fallbackUsed,
             available: true,
             cancelled,
           })
-        : mayFallback({
-            failure,
-            exposed: session.exposed,
-            toolBoundary: session.toolBoundary,
-            used: session.fallbackUsed,
-            available: true,
-            cancelled,
-          }));
+        : isVertexModel(model) && target === COPILOT_HAIKU
+          ? mayFallbackFromVertexToCopilot({
+              failure,
+              exposed: vertexStepExposed,
+              toolBoundary: vertexToolBoundary,
+              used: false,
+              available: true,
+              cancelled,
+            })
+          : mayFallback({
+              failure,
+              exposed: session.exposed,
+              toolBoundary: session.toolBoundary,
+              used: session.fallbackUsed,
+              available: true,
+              cancelled,
+            }));
     if (!allowed || !target) {
       throw new ModelFailure(failure, {
         statusCode: diag.statusCode,
@@ -261,7 +344,7 @@ export function createRoutedModel(
       toModel: target,
       reason: failure,
     });
-    return { reason: failure, target };
+    return { kind: "fallback", reason: failure, target };
   }
   function reserve(
     model: PremiumModelId,
@@ -356,6 +439,16 @@ export function createRoutedModel(
       let model = initial;
       let reason: string | undefined;
       const visited = new Set<PremiumModelId>([initial]);
+      const retriedModels = new Set<PremiumModelId>();
+      const adapters = new Map<PremiumModelId, LanguageModelV4>();
+      const getAdapter = (id: PremiumModelId) => {
+        let existing = adapters.get(id);
+        if (!existing) {
+          existing = factory(id);
+          adapters.set(id, existing);
+        }
+        return existing;
+      };
       for (;;) {
         session.activeModelId = model;
         const opts = options(model, params);
@@ -363,7 +456,7 @@ export function createRoutedModel(
         let usage: LanguageModelV4Usage | undefined;
         let searches = 0;
         try {
-          const result = await factory(model).doGenerate(opts);
+          const result = await getAdapter(model).doGenerate(opts);
           usage = result.usage;
           searches = searchCalls(result.content);
           if (searches > WEB_SEARCH_MAX_CALLS) {
@@ -372,13 +465,16 @@ export function createRoutedModel(
           const isStructuredJson =
             params.responseFormat?.type === "json" &&
             Boolean(params.responseFormat.schema);
-          if (
-            result.finishReason.unified === "error" ||
-            (isStructuredJson && result.finishReason.unified === "length")
-          ) {
+          if (result.finishReason.unified === "error") {
             throw new ModelFailure(
-              isStructuredJson ? "structured" : "unavailable"
+              isStructuredJson ? "structured" : "transient",
+              { upstreamCode: "finish_error" }
             );
+          }
+          if (isStructuredJson && result.finishReason.unified === "length") {
+            throw new ModelFailure("structured", {
+              upstreamCode: "finish_length",
+            });
           }
           if (
             params.responseFormat?.type === "json" &&
@@ -424,9 +520,12 @@ export function createRoutedModel(
                 ? 0
                 : WEB_SEARCH_COST_USD)
           );
-          const fallback = next(model, error, params, visited);
-          reason = fallback.reason;
-          model = fallback.target;
+          const decision = next(model, error, params, visited, retriedModels);
+          if (decision.kind === "retry") {
+            await sleepAbortable(retryDelayMs, params.abortSignal);
+          }
+          reason = decision.reason;
+          model = decision.target;
         }
       }
     },
@@ -441,6 +540,16 @@ export function createRoutedModel(
             let model = initial;
             let reason: string | undefined;
             const visited = new Set<PremiumModelId>([initial]);
+            const retriedModels = new Set<PremiumModelId>();
+            const adapters = new Map<PremiumModelId, LanguageModelV4>();
+            const getAdapter = (id: PremiumModelId) => {
+              let existing = adapters.get(id);
+              if (!existing) {
+                existing = factory(id);
+                adapters.set(id, existing);
+              }
+              return existing;
+            };
             for (;;) {
               session.activeModelId = model;
               const opts = options(model, params);
@@ -451,7 +560,7 @@ export function createRoutedModel(
               let stepToolBoundary = false;
               try {
                 id = await reserve(model, opts, reason);
-                const result = await factory(model).doStream(opts);
+                const result = await getAdapter(model).doStream(opts);
                 currentReader = result.stream.getReader();
                 const structured =
                   params.responseFormat?.type === "json" &&
@@ -478,11 +587,20 @@ export function createRoutedModel(
                   }
                   if (part.type === "finish") {
                     usage = part.usage;
-                    if (
-                      ["error", "length"].includes(part.finishReason.unified)
-                    ) {
+                    if (part.finishReason.unified === "error") {
                       throw new ModelFailure(
-                        structured ? "structured" : "unavailable"
+                        structured
+                          ? "structured"
+                          : !stepExposed && !stepToolBoundary
+                            ? "transient"
+                            : "unavailable",
+                        { upstreamCode: "finish_error" }
+                      );
+                    }
+                    if (part.finishReason.unified === "length") {
+                      throw new ModelFailure(
+                        structured ? "structured" : "unavailable",
+                        { upstreamCode: "finish_length" }
                       );
                     }
                     finished = true;
@@ -537,7 +655,17 @@ export function createRoutedModel(
                   throw new ModelFailure("cancelled");
                 }
                 if (!finished) {
-                  throw new ModelFailure("unavailable");
+                  throw new ModelFailure(
+                    !stepExposed && !stepToolBoundary
+                      ? "transient"
+                      : "unavailable",
+                    {
+                      upstreamCode:
+                        !stepExposed && !stepToolBoundary
+                          ? "empty_stream"
+                          : "stream_incomplete",
+                    }
+                  );
                 }
                 if (structured) {
                   try {
@@ -582,12 +710,22 @@ export function createRoutedModel(
                   return;
                 }
                 try {
-                  const fallback = next(model, error, params, visited, {
-                    stepExposed,
-                    stepToolBoundary,
-                  });
-                  reason = fallback.reason;
-                  model = fallback.target;
+                  const decision = next(
+                    model,
+                    error,
+                    params,
+                    visited,
+                    retriedModels,
+                    {
+                      stepExposed,
+                      stepToolBoundary,
+                    }
+                  );
+                  if (decision.kind === "retry") {
+                    await sleepAbortable(retryDelayMs, params.abortSignal);
+                  }
+                  reason = decision.reason;
+                  model = decision.target;
                 } catch (safeError) {
                   controller.error(safeError);
                   return;

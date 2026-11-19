@@ -75,10 +75,104 @@ export class ModelFailure extends Error {
   }
 }
 
+type ErrorLike = {
+  name?: unknown;
+  statusCode?: unknown;
+  status?: unknown;
+  code?: unknown;
+  message?: unknown;
+  cause?: unknown;
+  lastError?: unknown;
+  error?: unknown;
+  data?: {
+    error?: {
+      code?: unknown;
+      status?: unknown;
+      type?: unknown;
+    };
+  };
+};
+
+const TRANSIENT_NETWORK_CODES = new Set<string>([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "ETIMEDOUT",
+  "EPIPE",
+  "ENOTFOUND",
+  "EAI_AGAIN",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_SOCKET",
+  "UND_ERR_ABORTED",
+  "vertex_timeout",
+  "vertex_empty_stream",
+  "empty_stream",
+  "stream_ended_without_finish",
+  "copilot_empty_stream",
+  "copilot_bridge_unreachable",
+]);
+
+const PERMANENT_NON_RETRYABLE_CODES_RE =
+  /INVALID_ARGUMENT|FAILED_PRECONDITION|PERMISSION_DENIED|SAFETY|RECITATION|BLOCKLIST|PROHIBITED_CONTENT|content_filter|finish_length/i;
+
+export function collectErrorChain(error: unknown, maxDepth = 5): unknown[] {
+  const chain: unknown[] = [];
+  const seen = new Set<unknown>();
+  let cur: unknown = error;
+  while (cur !== null && cur !== undefined && chain.length < maxDepth) {
+    if (seen.has(cur)) {
+      break;
+    }
+    seen.add(cur);
+    chain.push(cur);
+    if (typeof cur !== "object") {
+      break;
+    }
+    const rec = cur as ErrorLike;
+    cur = rec.cause ?? rec.lastError ?? rec.error ?? null;
+  }
+  return chain;
+}
+
+function extractRawCode(e: ErrorLike | null): string {
+  const candidates = [
+    e?.code,
+    e?.data?.error?.code,
+    e?.data?.error?.status,
+    e?.data?.error?.type,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return "";
+}
+
+function isTransientNetworkLike(e: ErrorLike | null): boolean {
+  if (!e) {
+    return false;
+  }
+  const code = extractRawCode(e);
+  if (code && TRANSIENT_NETWORK_CODES.has(code)) {
+    return true;
+  }
+  const msg = typeof e.message === "string" ? e.message : "";
+  if (
+    (e.name === "TypeError" || e.name === "FetchError") &&
+    /fetch failed|network|socket|terminated|other side closed/i.test(msg)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Extracts safe diagnostic metadata (`{ kind, statusCode, code, name }`) for
  * structured server logs without EVER returning secrets, headers, prompts,
- * URLs, or raw upstream response bodies.
+ * URLs, or raw upstream response bodies. Unwraps `.cause` / `.lastError` so
+ * a bare wrapper `Error` never hides the underlying HTTP status or provider code.
  */
 export function safeErrorDiagnostic(error: unknown): SafeErrorDiagnostic {
   const kind = failureKind(error);
@@ -90,36 +184,51 @@ export function safeErrorDiagnostic(error: unknown): SafeErrorDiagnostic {
       name: error.upstreamName ?? error.name,
     };
   }
-  const e = error as {
-    name?: unknown;
-    statusCode?: unknown;
-    status?: unknown;
-    code?: unknown;
-    message?: unknown;
-    data?: {
-      error?: {
-        code?: unknown;
-        status?: unknown;
-        type?: unknown;
-      };
-    };
-  } | null;
 
-  const statusCode =
-    sanitizeHttpStatusCode(e?.statusCode) ?? sanitizeHttpStatusCode(e?.status);
-  const sentinelMessageCode =
-    typeof e?.message === "string" &&
-    e.message.includes("_") &&
-    /^[a-z][a-z0-9_]{2,48}$/.test(e.message)
-      ? sanitizeDiagToken(e.message)
-      : null;
-  const code =
-    sanitizeDiagToken(e?.code) ??
-    sanitizeDiagToken(e?.data?.error?.code) ??
-    sanitizeDiagToken(e?.data?.error?.status) ??
-    sanitizeDiagToken(e?.data?.error?.type) ??
-    sentinelMessageCode;
-  const name = sanitizeDiagToken(e?.name);
+  let statusCode: number | null = null;
+  let code: string | null = null;
+  let name: string | null = null;
+
+  for (const link of collectErrorChain(error)) {
+    if (link instanceof ModelFailure) {
+      statusCode = statusCode ?? link.statusCode;
+      code = code ?? link.upstreamCode ?? link.code;
+      if (!name || name === "Error") {
+        name = link.upstreamName ?? link.name;
+      }
+      continue;
+    }
+    if (!link || typeof link !== "object") {
+      continue;
+    }
+    const e = link as ErrorLike;
+    if (statusCode === null) {
+      statusCode =
+        sanitizeHttpStatusCode(e.statusCode) ??
+        sanitizeHttpStatusCode(e.status);
+    }
+    if (code === null) {
+      const sentinelMessageCode =
+        typeof e.message === "string" &&
+        e.message.includes("_") &&
+        /^[a-z][a-z0-9_]{2,48}$/.test(e.message)
+          ? sanitizeDiagToken(e.message)
+          : null;
+      code =
+        sanitizeDiagToken(e.code) ??
+        sanitizeDiagToken(e.data?.error?.code) ??
+        sanitizeDiagToken(e.data?.error?.status) ??
+        sanitizeDiagToken(e.data?.error?.type) ??
+        sentinelMessageCode;
+    }
+    const candidateName = sanitizeDiagToken(e.name);
+    if (
+      candidateName &&
+      (!name || (name === "Error" && candidateName !== "Error"))
+    ) {
+      name = candidateName;
+    }
+  }
 
   return {
     kind,
@@ -128,43 +237,175 @@ export function safeErrorDiagnostic(error: unknown): SafeErrorDiagnostic {
     name,
   };
 }
+
 /** Inspect upstream data privately; never return raw messages, bodies or headers. */
 export function failureKind(error: unknown): Failure {
-  if (error instanceof ModelFailure) {
-    return error.code;
-  }
-  const e = error as {
-    name?: string;
-    statusCode?: number;
-    data?: { error?: { code?: string; type?: string } };
-    code?: string;
-    message?: string;
-  } | null;
-  if (e?.name === "AbortError" || e?.name === "TimeoutError") {
-    return "cancelled";
-  }
-  const code = e?.data?.error?.code ?? e?.code ?? e?.data?.error?.type ?? "";
-  if (
-    e?.statusCode === 402 ||
-    /insufficient_funds|quota_for_entity_exceeded|customer_verification_required|insufficient_quota|credit_balance|spend_limit|usage_limit|billing/.test(
-      code
-    )
-  ) {
-    return "billing";
-  }
-  if (e?.statusCode === 401 || e?.statusCode === 403) {
-    return "auth";
-  }
-  if (e?.statusCode === 429) {
-    return "rate";
-  }
-  if (/context_length|context_window/.test(code) || e?.statusCode === 413) {
-    return "context";
-  }
-  if (e?.statusCode && e.statusCode >= 500 && e.statusCode <= 599) {
-    return "transient";
+  for (const link of collectErrorChain(error)) {
+    if (link instanceof ModelFailure) {
+      return link.code;
+    }
+    if (!link || typeof link !== "object") {
+      continue;
+    }
+    const e = link as ErrorLike;
+    if (e.name === "AbortError") {
+      return "cancelled";
+    }
+    if (e.name === "TimeoutError" || e.name === "VertexTimeoutError") {
+      return "transient";
+    }
+    const status =
+      sanitizeHttpStatusCode(e.statusCode) ?? sanitizeHttpStatusCode(e.status);
+    const code = extractRawCode(e);
+    const msg = typeof e.message === "string" ? e.message : "";
+    if (
+      status === 402 ||
+      /insufficient_funds|quota_for_entity_exceeded|customer_verification_required|insufficient_quota|credit_balance|spend_limit|usage_limit|billing/.test(
+        code
+      )
+    ) {
+      return "billing";
+    }
+    if (status === 401 || status === 403) {
+      return "auth";
+    }
+    if (
+      status === 429 ||
+      /RESOURCE_EXHAUSTED|rate_limit|rateLimitExceeded/i.test(code) ||
+      /\bmodel_rate\b/i.test(msg)
+    ) {
+      return "rate";
+    }
+    if (/context_length|context_window/.test(code) || status === 413) {
+      return "context";
+    }
+    if (status === 408 || (status !== null && status >= 500 && status <= 599)) {
+      return "transient";
+    }
+    if (isTransientNetworkLike(e)) {
+      return "transient";
+    }
   }
   return "unavailable";
+}
+
+export function isTimeoutError(error: unknown): boolean {
+  for (const link of collectErrorChain(error)) {
+    if (link instanceof ModelFailure) {
+      if (
+        link.statusCode === 504 ||
+        link.upstreamCode === "vertex_timeout" ||
+        link.upstreamName === "VertexTimeoutError"
+      ) {
+        return true;
+      }
+      continue;
+    }
+    if (!link || typeof link !== "object") {
+      continue;
+    }
+    const e = link as ErrorLike;
+    const status =
+      sanitizeHttpStatusCode(e.statusCode) ?? sanitizeHttpStatusCode(e.status);
+    if (
+      e.name === "TimeoutError" ||
+      e.name === "VertexTimeoutError" ||
+      status === 504 ||
+      extractRawCode(e) === "vertex_timeout"
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function isPermanentNonRetryableError(error: unknown): boolean {
+  const kind = failureKind(error);
+  if (
+    kind === "auth" ||
+    kind === "billing" ||
+    kind === "context" ||
+    kind === "cancelled" ||
+    kind === "tool" ||
+    kind === "spend" ||
+    kind === "work_boundary"
+  ) {
+    return true;
+  }
+  for (const link of collectErrorChain(error)) {
+    if (link instanceof ModelFailure) {
+      if (
+        link.statusCode === 400 ||
+        link.statusCode === 404 ||
+        link.statusCode === 422 ||
+        (link.upstreamCode &&
+          PERMANENT_NON_RETRYABLE_CODES_RE.test(link.upstreamCode))
+      ) {
+        return true;
+      }
+      continue;
+    }
+    if (!link || typeof link !== "object") {
+      continue;
+    }
+    const e = link as ErrorLike;
+    const status =
+      sanitizeHttpStatusCode(e.statusCode) ?? sanitizeHttpStatusCode(e.status);
+    const code = extractRawCode(e);
+    if (
+      status === 400 ||
+      status === 404 ||
+      status === 422 ||
+      PERMANENT_NON_RETRYABLE_CODES_RE.test(code)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function mayRetryVertexSameModel({
+  error,
+  failure,
+  exposed,
+  toolBoundary,
+  retried,
+  cancelled,
+}: {
+  error: unknown;
+  failure: Failure;
+  exposed: boolean;
+  toolBoundary: boolean;
+  retried: boolean;
+  cancelled: boolean;
+}): boolean {
+  return (
+    !cancelled &&
+    !exposed &&
+    !toolBoundary &&
+    !retried &&
+    !isPermanentNonRetryableError(error) &&
+    !isTimeoutError(error) &&
+    (failure === "transient" || failure === "rate")
+  );
+}
+
+export function mayFallbackBetweenVertexModels({
+  failure,
+  exposed,
+  toolBoundary,
+  available,
+  cancelled,
+}: {
+  failure: Failure;
+  exposed: boolean;
+  toolBoundary: boolean;
+  available: boolean;
+  cancelled: boolean;
+}): boolean {
+  return (
+    available && !cancelled && !exposed && !toolBoundary && failure === "rate"
+  );
 }
 export function mayFallback({
   failure,

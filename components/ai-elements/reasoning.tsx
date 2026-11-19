@@ -7,7 +7,8 @@ import {
   Collapsible,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { cn } from "@/lib/utils";
+import { STREAMDOWN_SAFE_REHYPE_PLUGINS } from "@/lib/markdown-stream";
+import { cn, stripStrayBlockedTokens } from "@/lib/utils";
 import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
@@ -227,8 +228,14 @@ export const ReasoningContent = memo(
           ref={scrollRef}
           style={{ scrollbarWidth: "none", msOverflowStyle: "none" }}
         >
-          <Streamdown plugins={streamdownPlugins} {...props}>
-            {children}
+          <Streamdown
+            plugins={streamdownPlugins}
+            rehypePlugins={STREAMDOWN_SAFE_REHYPE_PLUGINS}
+            {...props}
+          >
+            {typeof children === "string"
+              ? stripStrayBlockedTokens(children)
+              : children}
           </Streamdown>
         </div>
       </div>
