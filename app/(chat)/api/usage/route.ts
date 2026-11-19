@@ -1,8 +1,8 @@
 import { auth } from "@/app/(auth)/auth";
 import { summarizeCallsByModel, usageSummary } from "@/lib/ai/routing/ledger";
 import {
+  buildBillingConsoleUrl,
   DEFAULT_BILLING_ACCOUNT_ID,
-  DEFAULT_ULTRA_MONTHLY_CREDIT_USD,
   getVertexCloudBillingStatus,
 } from "@/lib/billing/vertex-cloud-usage";
 
@@ -35,7 +35,7 @@ export async function GET() {
                 projectId: process.env.GOOGLE_VERTEX_PROJECT_ID?.trim() || null,
                 billingAccountId: DEFAULT_BILLING_ACCOUNT_ID,
                 currency: "USD",
-                monthlyCreditLimitUsd: DEFAULT_ULTRA_MONTHLY_CREDIT_USD,
+                monthlyCreditLimitUsd: null,
                 mtdGrossCostUsd: null,
                 mtdCreditsUsedUsd: null,
                 creditsRemainingUsd: null,
@@ -43,6 +43,9 @@ export async function GET() {
                   "Google Cloud Billing sorgusu zaman aşımına uğradı; uygulama içi token kayıtları gösteriliyor.",
                 missingCode: "timeout",
                 missingDetail: null,
+                billingConsoleUrl: buildBillingConsoleUrl(
+                  DEFAULT_BILLING_ACCOUNT_ID
+                ),
                 setupActionUrl:
                   "https://console.cloud.google.com/flows/enableapi?apiid=cloudbilling.googleapis.com,billingbudgets.googleapis.com,bigquery.googleapis.com",
                 setupActionLabel: "Enable Billing APIs",

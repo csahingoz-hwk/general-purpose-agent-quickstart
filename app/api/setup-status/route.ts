@@ -157,11 +157,13 @@ export async function GET(request: Request) {
     },
     {
       id: "gcp_billing",
-      label: "Google Cloud Billing & Ultra credit telemetry (Vertex)",
+      label: "Google Cloud Billing telemetry (Vertex)",
       summary: gcpBilling?.reachable
-        ? `Canlı Google Cloud fatura akışı aktif — bu ay $${(gcpBilling.mtdCreditsUsedUsd ?? 0).toFixed(2)} kredi kullanıldı, $${(gcpBilling.creditsRemainingUsd ?? gcpBilling.monthlyCreditLimitUsd).toFixed(2)} kredi kaldı (1 saat önbellekli).`
+        ? gcpBilling.creditsRemainingUsd !== null
+          ? `Canlı Google Cloud fatura akışı aktif — bu ay $${(gcpBilling.mtdCreditsUsedUsd ?? gcpBilling.mtdGrossCostUsd ?? 0).toFixed(2)} kullanıldı, $${gcpBilling.creditsRemainingUsd.toFixed(2)} bütçe kaldı (1 saat önbellekli).`
+          : `Canlı Google Cloud fatura akışı aktif — bu ay $${(gcpBilling.mtdGrossCostUsd ?? gcpBilling.mtdCreditsUsedUsd ?? 0).toFixed(2)} kullanım kaydedildi (1 saat önbellekli).`
         : (gcpBilling?.missingReason ??
-          "Canlı Vertex fatura ve kalan Ultra kredi bakiyesi için Cloud Billing + Budgets API, BigQuery Billing Export ve 'roles/billing.viewer' yetkisini açın."),
+          "Canlı Vertex fatura verisi için Cloud Billing + BigQuery Billing Export ve 'roles/billing.viewer' yetkisini açın; gerçek maliyet Google Cloud Billing üzerinde takip edilir."),
       status: gcpBilling?.reachable ? "ready" : "action_needed",
       actionKind: "external_link",
       externalUrl:

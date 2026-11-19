@@ -6,8 +6,16 @@ import {
 import type { CloudBillingMissingCode } from "@/lib/ui-copy";
 
 export const VERTEX_BILLING_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
-export const DEFAULT_ULTRA_MONTHLY_CREDIT_USD = 40;
 export const DEFAULT_BILLING_ACCOUNT_ID = "0140A2-72DEB2-62EDCD";
+
+export function buildBillingConsoleUrl(
+  billingAccountId?: string | null
+): string {
+  const clean = billingAccountId?.trim();
+  return clean
+    ? `https://console.cloud.google.com/billing/${encodeURIComponent(clean)}`
+    : "https://console.cloud.google.com/billing";
+}
 
 /**
  * Reference Vertex list rates (USD per 1M tokens) used ONLY for informational
@@ -44,19 +52,21 @@ export type VertexCloudBillingStatus = {
   projectId: string | null;
   billingAccountId: string;
   currency: string;
-  /** Monthly credit/budget target in USD (from Cloud Billing Budgets API or $40 Ultra credit). */
-  monthlyCreditLimitUsd: number;
+  /** Real monthly budget amount from GCP Budgets API ONLY when live BigQuery billing export is also connected; otherwise null (never an invented cap). */
+  monthlyCreditLimitUsd: number | null;
   /** Real MTD gross cost before credits (null when BigQuery billing export isn't reachable). */
   mtdGrossCostUsd: number | null;
   /** Real MTD credits applied in Google Cloud (null when BigQuery billing export isn't reachable). */
   mtdCreditsUsedUsd: number | null;
-  /** Real remaining credit from Google Cloud when obtainable, else null. */
+  /** Real remaining budget/credit from Google Cloud ONLY when both live billing export and a real GCP budget exist; otherwise null. */
   creditsRemainingUsd: number | null;
   /** Exact technical reason when live Cloud Billing / BigQuery data is not reachable. */
   missingReason: string | null;
   /** Locale-neutral reason code + API detail for EN/TR rendering on /usage. */
   missingCode?: CloudBillingMissingCode | null;
   missingDetail?: string | null;
+  /** Direct Google Cloud Billing Console URL for viewing actual costs and credits. */
+  billingConsoleUrl: string;
   /** One-click Google Cloud Console URL for the owner Setup checklist item. */
   setupActionUrl: string;
   setupActionLabel: string;
@@ -357,7 +367,7 @@ export async function getVertexCloudBillingStatus(opts?: {
       projectId,
       billingAccountId: configuredBillingAccount,
       currency: "USD",
-      monthlyCreditLimitUsd: DEFAULT_ULTRA_MONTHLY_CREDIT_USD,
+      monthlyCreditLimitUsd: null,
       mtdGrossCostUsd: null,
       mtdCreditsUsedUsd: null,
       creditsRemainingUsd: null,
@@ -365,6 +375,7 @@ export async function getVertexCloudBillingStatus(opts?: {
         "Vertex AI Workload Identity Federation (GOOGLE_VERTEX_PROJECT_ID + GOOGLE_VERTEX_WORKLOAD_AUDIENCE) bu ortamda tanımlı değil.",
       missingCode: "wif_not_configured",
       missingDetail: null,
+      billingConsoleUrl: buildBillingConsoleUrl(configuredBillingAccount),
       setupActionUrl: buildEnableBillingApisUrl(projectId),
       setupActionLabel: "Open Google Cloud",
       checkedAt,
@@ -383,7 +394,7 @@ export async function getVertexCloudBillingStatus(opts?: {
       projectId,
       billingAccountId: configuredBillingAccount,
       currency: "USD",
-      monthlyCreditLimitUsd: DEFAULT_ULTRA_MONTHLY_CREDIT_USD,
+      monthlyCreditLimitUsd: null,
       mtdGrossCostUsd: null,
       mtdCreditsUsedUsd: null,
       creditsRemainingUsd: null,
@@ -391,6 +402,7 @@ export async function getVertexCloudBillingStatus(opts?: {
         "Sunucu ortamında aktif Vercel OIDC belirteci alınamadı; canlı Google Cloud fatura sorgusu yalnızca Vercel sunucusunda çalışır.",
       missingCode: "oidc_unavailable",
       missingDetail: null,
+      billingConsoleUrl: buildBillingConsoleUrl(configuredBillingAccount),
       setupActionUrl: buildEnableBillingApisUrl(projectId),
       setupActionLabel: "Open Cloud Billing",
       checkedAt,
@@ -447,8 +459,10 @@ export async function getVertexCloudBillingStatus(opts?: {
     billingMissingDetail = "Cloud Billing API (cloudbilling.googleapis.com)";
   }
 
-  // 2. Read-only Cloud Billing Budgets API check (for configured monthly budget/credit alert)
-  let monthlyCreditLimitUsd = DEFAULT_ULTRA_MONTHLY_CREDIT_USD;
+  // 2. Read-only Cloud Billing Budgets API check (for configured monthly budget alert;
+  //    never defaulted to an invented app-side cap and never exposed as a remaining
+  //    pool unless live BigQuery billing export is also connected).
+  let parsedBudgetLimitUsd: number | null = null;
   let currency = "USD";
   let budgetsReachable = false;
 
@@ -479,7 +493,7 @@ export async function getVertexCloudBillingStatus(opts?: {
       )?.amount?.specifiedAmount;
       const parsedBudget = parseMoneyAmount(firstSpecified);
       if (parsedBudget !== null && parsedBudget > 0) {
-        monthlyCreditLimitUsd = parsedBudget;
+        parsedBudgetLimitUsd = parsedBudget;
         currency = firstSpecified?.currencyCode || "USD";
         budgetsReachable = true;
       }
@@ -499,7 +513,7 @@ export async function getVertexCloudBillingStatus(opts?: {
       setupActionLabel = diag.actionLabel;
     }
   } catch {
-    /* keep default Ultra $40 credit reference */
+    /* keep parsedBudgetLimitUsd null — never invent an internal budget cap */
   }
 
   // 3. Read-only BigQuery Billing Export check (actual MTD cost & credits used)
@@ -524,29 +538,34 @@ export async function getVertexCloudBillingStatus(opts?: {
     };
   }
 
+  const billingConsoleUrl = buildBillingConsoleUrl(billingAccountId);
   let status: VertexCloudBillingStatus;
   if (bqResult.ok) {
     const creditsUsed =
       bqResult.creditsUsedUsd > 0
         ? bqResult.creditsUsedUsd
         : bqResult.grossCostUsd;
-    const remaining = Math.max(
-      0,
-      Math.round((monthlyCreditLimitUsd - creditsUsed) * 100) / 100
-    );
+    const remaining =
+      parsedBudgetLimitUsd !== null
+        ? Math.max(
+            0,
+            Math.round((parsedBudgetLimitUsd - creditsUsed) * 100) / 100
+          )
+        : null;
     status = {
       reachable: true,
       source: "gcp_bigquery_and_budgets",
       projectId,
       billingAccountId,
       currency: bqResult.currency || currency,
-      monthlyCreditLimitUsd,
+      monthlyCreditLimitUsd: parsedBudgetLimitUsd,
       mtdGrossCostUsd: Math.round(bqResult.grossCostUsd * 10_000) / 10_000,
       mtdCreditsUsedUsd: Math.round(creditsUsed * 10_000) / 10_000,
       creditsRemainingUsd: remaining,
       missingReason: null,
       missingCode: null,
       missingDetail: null,
+      billingConsoleUrl,
       setupActionUrl: buildBillingExportConsoleUrl(billingAccountId),
       setupActionLabel: "Open Cloud Billing",
       checkedAt,
@@ -558,7 +577,7 @@ export async function getVertexCloudBillingStatus(opts?: {
       projectId,
       billingAccountId,
       currency,
-      monthlyCreditLimitUsd,
+      monthlyCreditLimitUsd: null,
       mtdGrossCostUsd: null,
       mtdCreditsUsedUsd: null,
       creditsRemainingUsd: null,
@@ -569,6 +588,7 @@ export async function getVertexCloudBillingStatus(opts?: {
       missingDetail: billingMissingReason
         ? billingMissingDetail
         : bqResult.missingDetail,
+      billingConsoleUrl,
       setupActionUrl: billingMissingReason
         ? setupActionUrl
         : bqResult.actionUrl,

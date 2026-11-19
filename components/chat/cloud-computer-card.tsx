@@ -50,6 +50,10 @@ export function resolveCloudFileUrls(output: Record<string, unknown>): {
       ? `${basePath}${u}`
       : u;
 
+  const canUseCloudFallbackPath =
+    output.savedToCloudWorkspace !== false &&
+    (rawPath.startsWith("/workspace") || rawPath.length > 0);
+
   let downloadUrl: string | null = null;
   let previewUrl: string | null = null;
 
@@ -58,7 +62,7 @@ export function resolveCloudFileUrls(output: Record<string, unknown>): {
     downloadUrl = dl.includes("disposition=")
       ? dl
       : `${dl}${dl.includes("?") ? "&" : "?"}disposition=attachment`;
-  } else if (rawPath.startsWith("/workspace") || rawPath.length > 0) {
+  } else if (canUseCloudFallbackPath) {
     downloadUrl = `${basePath}/api/cloud-computer/files?path=${encodeURIComponent(rawPath)}&disposition=attachment`;
   }
 
@@ -69,7 +73,7 @@ export function resolveCloudFileUrls(output: Record<string, unknown>): {
     previewUrl = dl.includes("disposition=")
       ? dl.replace(/disposition=attachment/g, "disposition=inline")
       : `${dl}${dl.includes("?") ? "&" : "?"}disposition=inline`;
-  } else if (rawPath.startsWith("/workspace") || rawPath.length > 0) {
+  } else if (canUseCloudFallbackPath) {
     previewUrl = `${basePath}/api/cloud-computer/files?path=${encodeURIComponent(rawPath)}&disposition=inline`;
   }
 
@@ -197,8 +201,12 @@ export function CloudComputerCard({
                   {cardDisplayTitle}
                 </span>
                 <span className="block truncate text-muted-foreground text-xs">
-                  {cardDisplayTitle !== filename ? `${filename} · ` : ""}Cloud
-                  VM · {sizeKb} KB
+                  {cardDisplayTitle !== filename ? `${filename} · ` : ""}
+                  {toolName === "buildHtmlPageOrDashboard" &&
+                  output.savedToCloudWorkspace !== true
+                    ? "HTML"
+                    : "Cloud VM"}{" "}
+                  · {sizeKb} KB
                 </span>
               </span>
             </button>

@@ -499,7 +499,7 @@ export function buildVertexRequestBody(
     functionDeclarations.push({
       name: SPLIT_WEB_SEARCH_FN_NAME,
       description:
-        "Search Google on the public web for current live facts, news, prices, exchange rates, or match scores.",
+        "Search Google on the public web immediately for current live facts, sourced research, current statistics, economic indicators (such as inflation or interest rates), news, prices, exchange rates, or match scores. Call directly without asking permission.",
       parametersJsonSchema: {
         type: "object",
         properties: {
@@ -525,25 +525,29 @@ export function buildVertexRequestBody(
     params.providerOptions?.openai as { reasoningEffort?: string } | undefined
   )?.reasoningEffort?.toLowerCase();
   // Gemini 4 Neon: default thinking_level is HIGH; thinking_budget and MINIMAL return HTTP 400.
-  // Use LOW, MEDIUM, or HIGH only (MEDIUM for latency-sensitive turns).
-  const thinkingLevel: "LOW" | "MEDIUM" | "HIGH" =
-    requestedEffort === "high"
-      ? "HIGH"
-      : requestedEffort === "medium"
-        ? "MEDIUM"
-        : requestedEffort === "low" ||
-            requestedEffort === "minimal" ||
-            requestedEffort === "none"
-          ? "LOW"
-          : modelId === "gemini-4-neon"
-            ? "HIGH"
-            : "MEDIUM";
+  // Use LOW, MEDIUM, HIGH, or XHIGH only (MEDIUM for latency-sensitive turns).
+  const thinkingLevel: "LOW" | "MEDIUM" | "HIGH" | "XHIGH" =
+    requestedEffort === "xhigh"
+      ? "XHIGH"
+      : requestedEffort === "high"
+        ? "HIGH"
+        : requestedEffort === "medium"
+          ? "MEDIUM"
+          : requestedEffort === "low" ||
+              requestedEffort === "minimal" ||
+              requestedEffort === "none"
+            ? "LOW"
+            : modelId === "gemini-4-neon"
+              ? "HIGH"
+              : "MEDIUM";
 
   // Vertex Gemini 4 counts `thoughtsTokenCount` toward `generationConfig.maxOutputTokens`.
   // Add thinking headroom on top of the caller's visible-text `maxOutputTokens` budget
   // so deep reasoning never starves or truncates the visible answer.
   const thinkingHeadroom =
-    modelId === "gemini-4-neon" || thinkingLevel === "HIGH"
+    modelId === "gemini-4-neon" ||
+    thinkingLevel === "HIGH" ||
+    thinkingLevel === "XHIGH"
       ? 8192
       : thinkingLevel === "MEDIUM"
         ? 4096

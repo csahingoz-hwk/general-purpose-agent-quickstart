@@ -73,22 +73,22 @@ const EXPLICIT_OPEN_WEB_SEARCH_PATTERN =
   /\b(search (?:the web|online)|look(?:ing)? (?:it |this |that |them )?up|google(?!\s+(?:drive|calendar|docs?|sheets?|slides?|workspace|account|cloud|ai))|find (?:it |this |that |out )?(?:online|on the web)|on the web|web search)\b|(?<![\p{L}])(?:internette\s+ara\p{L}*|internetten\s+ara\p{L}*|internette|internetten|bunu\s+araştır\p{L}*)(?![\p{L}])/iu;
 
 const SEARCH_PATTERN_EN =
-  /\b(search|look(?:ing)? (?:it |this |that |them )?up|google(?!\s+(?:drive|calendar|docs?|sheets?|slides?|workspace|account|cloud|ai))|find (?:it |this |that |out )?(?:online|on the web)|on the web|web search|latest|news|breaking|who won|(?:current|today'?s|live) (?:price|prices|score|scores|result|results|rate|rates|exchange rate)|exchange rate|stock price|share price)\b/;
+  /\b(search|look(?:ing)? (?:it |this |that |them )?up|google(?!\s+(?:drive|calendar|docs?|sheets?|slides?|workspace|account|cloud|ai))|find (?:it |this |that |out )?(?:online|on the web)|on the web|web search|latest|news|breaking|who won|(?:current|today'?s|live) (?:price|prices|score|scores|result|results|rate|rates|exchange rate|stats?|statistics?)|latest statistics?|exchange rate|stock price|share price|with (?:sources|citations)|(?:cited|sourced) (?:analysis|brief|summary|report|overview)|fact[- ]?check)\b/;
 
 const SEARCH_PATTERN_TR =
-  /(?<![\p{L}])(?:(?<!drive['’]?(?:da|daki)\s)ara(?!\s+beni)|arar mısın|arama yap\p{L}*|araştır\p{L}*|internette|internetten|güncel|haber|haberler\p{L}*|haberi|son dakika|bugünkü|bugunku|kim kazandı|maç sonucu|dolar\s+kaç|dolar\s+kac|euro\s+kaç|euro\s+kac|altın\s+fiyat\p{L}*)(?![\p{L}])/u;
+  /(?<![\p{L}])(?:(?<!drive['’]?(?:da|daki)\s)ara(?!\s+beni)|arar mısın|arama yap\p{L}*|araştır\p{L}*|kaynakl[ıi]\p{L}*|kaynak(?:çalı|larla|lar\s+ile|göstererek|belirterek)|internette|internetten|güncel|haber|haberler\p{L}*|haberi|son dakika|bugünkü|bugunku|kim kazandı|maç sonucu|dolar\s+kaç|dolar\s+kac|euro\s+kaç|euro\s+kac|altın\s+fiyat\p{L}*)(?![\p{L}])/u;
 
 /**
  * Live-fact signals: fixtures, prices, news, years, comparisons of products,
- * population/current-holder queries, and club names in English and Turkish.
+ * economic/current-stats indicators, population/current-holder queries, and club names in English and Turkish.
  * Note: Turkish football match requires `ç` (`maç*`) or vowel-inflected ASCII `maci/macı`
  * so English/macOS `"mac"` / `"mac'imde"` / `"on my Mac"` never triggers live-fact search.
  */
 const FACT_PATTERN_EN =
-  /\b(next (?:match|game|fixture)|fixtures?|kick-?off|line-?ups?|standings|when (?:is|are|does|do|'s)|who(?:'s| is| are)|how (?:much|many)|(?:ticket |stock |share )?prices?|scores?|202[4-9]|2030|iphone\s+\d+|pixel\s+\d+|galaxy\s+s\d+|galatasaray|fenerbah[cç]e|be[sş]ikta[sş]|trabzonspor|real madrid|barcelona|manchester (?:united|city)|liverpool|arsenal|chelsea|bayern|juventus|psg|premier league|champions league|s[uü]per lig|nba|nfl)\b/;
+  /\b(next (?:match|game|fixture)|fixtures?|kick-?off|line-?ups?|standings|when (?:is|are|does|do|'s)|who(?:'s| is| are)|how (?:much|many)|(?:ticket |stock |share )?prices?|scores?|inflation|interest rates?|central bank|gdp(?: growth| rate)?|unemployment rate|202[4-9]|2030|iphone\s+\d+|pixel\s+\d+|galaxy\s+s\d+|galatasaray|fenerbah[cç]e|be[sş]ikta[sş]|trabzonspor|real madrid|barcelona|manchester (?:united|city)|liverpool|arsenal|chelsea|bayern|juventus|psg|premier league|champions league|s[uü]per lig|nba|nfl)\b/;
 
 const FACT_PATTERN_TR =
-  /(?<![\p{L}])(?:maç\p{L}*|mac[ıiuü]\p{L}*|fikst[uü]r\p{L}*|ne zaman|bi(?:r)? dahaki|sonraki ma[cç]\p{L}*|gelecek ma[cç]\p{L}*|kimdir|kim kazan\p{L}*|fiyat\p{L}*|ne kadar|ka[cç] para|puan durumu|skor\p{L}*|karşılaştır\p{L}*|kıyasla\p{L}*|iphone\s+\d+|pixel\s+\d+|202[4-9]|2030|galatasaray|fenerbah[cç]e|be[sş]ikta[sş]|trabzonspor)(?![\p{L}])/u;
+  /(?<![\p{L}])(?:maç\p{L}*|mac[ıiuü]\p{L}*|fikst[uü]r\p{L}*|ne zaman|bi(?:r)? dahaki|sonraki ma[cç]\p{L}*|gelecek ma[cç]\p{L}*|kimdir|kim kazan\p{L}*|fiyat\p{L}*|ne kadar|ka[cç] para|puan durumu|skor\p{L}*|karşılaştır\p{L}*|kıyasla\p{L}*|enflasyon\p{L}*|tüik|tcmb|merkez\s+bankas[ıi]\p{L}*|faiz\s+(?:oran\p{L}*|karar\p{L}*)|gsyh|büyüme\s+oran\p{L}*|işsizlik\s+oran\p{L}*|tüfe|üfe|iphone\s+\d+|pixel\s+\d+|202[4-9]|2030|galatasaray|fenerbah[cç]e|be[sş]ikta[sş]|trabzonspor)(?![\p{L}])/u;
 
 const CHITCHAT_PATTERN =
   /^(?:merhaba|selam|selamlar|hey|hi|hello|thanks|thank you|teşekkür(?:ler)?|tesekkur(?:ler)?|günaydın|gunaydin|iyi geceler|nasılsın(?:\s+bugün)?|nasilsin(?:\s+bugun)?|hey,?\s*how are you|hi,?\s*how are you|hello,?\s*how are you|how are you(?:\s+today)?|nasılsın\?\s*bugün ne yapıyorsun|ok|okay|tamam)[!.?\s]*$|\b(?:tell me a joke|explain this clearly|help me plan my day|para biriktirmek|ne yapmal[ıi]y[ıi]m|what should i (?:do|say))\b|şaka yap|fıkra anlat\p{L}*|fikra anlat\p{L}*/iu;
@@ -650,17 +650,35 @@ const ALWAYS_CONNECTED_CORE_TOOLS: readonly ChatToolName[] = [
   "askUserQuestion",
 ];
 
+const CLOUD_WORKSPACE_FILE_TOOLS = new Set<ChatToolName>([
+  "cloudExec",
+  "cloudWriteFile",
+  "cloudReadFile",
+  "cloudExportFileToChat",
+]);
+
+const VISUAL_STUDIO_TOOLS = new Set<ChatToolName>([
+  "buildHtmlPageOrDashboard",
+  "createExcalidrawDiagram",
+  "generateInfographic",
+]);
+
 function appendConnectedManifestTools(
   rankedIntentTools: readonly ChatToolName[],
   canPersonalize: boolean,
-  manifest?: CapabilityManifest
+  manifest?: CapabilityManifest,
+  opts?: { suppressCloudWorkspaceTools?: boolean }
 ): ChatToolName[] {
   if (!manifest) {
     return [...new Set(rankedIntentTools)];
   }
   const fromManifest = connectedToolsFromManifest(manifest).filter(
     (name): name is ChatToolName =>
-      (AVAILABLE_CHAT_TOOLS as readonly string[]).includes(name)
+      (AVAILABLE_CHAT_TOOLS as readonly string[]).includes(name) &&
+      !(
+        opts?.suppressCloudWorkspaceTools &&
+        CLOUD_WORKSPACE_FILE_TOOLS.has(name as ChatToolName)
+      )
   );
   const ownerSelfService: ChatToolName[] = canPersonalize
     ? ["setHomeLocation", "setSoul", "draftOutboundMessage"]
@@ -1161,11 +1179,16 @@ export function selectToolsWithRanking(
         ]
       : [...new Set(intentOnly)];
 
+  const suppressCloudWorkspaceTools =
+    sanitizedIntentOnly.some((name) => VISUAL_STUDIO_TOOLS.has(name)) &&
+    !CLOUD_COMPUTER_PATTERN.test(phrase);
+
   return {
     activeTools: appendConnectedManifestTools(
       sanitizedIntent,
       canPersonalize,
-      options?.capabilityManifest
+      options?.capabilityManifest,
+      { suppressCloudWorkspaceTools }
     ),
     intentMatchedTools: sanitizedIntentOnly,
   };
