@@ -48,6 +48,7 @@ import {
 } from "@/lib/ai/conversation-state";
 import { resolveTurnModelAndEffort } from "@/lib/ai/escalation";
 import { isNewsPageOrBriefingTarget } from "@/lib/ai/grounded-news";
+import { AUTO_ROUTING_MODEL_ID } from "@/lib/ai/model-picker";
 import { getRequestModelAvailability } from "@/lib/ai/model-runtime";
 import {
   chatModels,
@@ -280,10 +281,18 @@ export async function POST(request: Request) {
     if (availability.status !== "ready") {
       return new ChatbotError("offline:model_setup").toResponse();
     }
-    if (!availability.models.some((model) => model.id === selectedChatModel)) {
+    const resolvedRequestedModel =
+      selectedChatModel === AUTO_ROUTING_MODEL_ID
+        ? "defaultModelId" in availability && availability.defaultModelId
+          ? availability.defaultModelId
+          : (availability.models[0]?.id ?? "")
+        : selectedChatModel;
+    if (
+      !availability.models.some((model) => model.id === resolvedRequestedModel)
+    ) {
       return new ChatbotError("bad_request:api").toResponse();
     }
-    let chatModel = selectedChatModel;
+    let chatModel = resolvedRequestedModel;
 
     const isOwnerUser = session.user.type !== "guest";
     const memoryStore =
@@ -775,6 +784,33 @@ export async function POST(request: Request) {
       memoryTurnState: createMemoryTurnState(explicitSavedFact),
     };
 
+    // AI SDK 7 `processUIMessageStream` re-invokes `onError` with a synthetic
+    // bare `new Error(chunk.errorText)` when our emitted `{ type: "error" }`
+    // chunk flows through `handleUIMessageStreamFinish`. Track the localized
+    // text already emitted so we preserve the original error cause in logs
+    // instead of emitting a bogus `{ kind: "unavailable", statusCode: null }`.
+    let lastLocalizedStreamError: string | null = null;
+    const handleUiStreamError = (error: unknown): string => {
+      if (
+        error instanceof Error &&
+        !(error instanceof ModelFailure) &&
+        lastLocalizedStreamError !== null &&
+        error.message === lastLocalizedStreamError
+      ) {
+        return lastLocalizedStreamError;
+      }
+      console.error("[chat] ui stream error", {
+        ...safeErrorDiagnostic(error),
+        kind: failureKind(error),
+        ...(error instanceof ModelFailure && error.primaryDiagnostic
+          ? { primary: error.primaryDiagnostic }
+          : {}),
+      });
+      const safeText = safeModelError(error, finalUserText);
+      lastLocalizedStreamError = safeText;
+      return safeText;
+    };
+
     const stream = createUIMessageStream<ChatMessage>({
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
       execute: ({ writer: dataStream }) =>
@@ -1219,16 +1255,7 @@ export async function POST(request: Request) {
                 primaryOutcome = outcome;
               },
               sendReasoning: false,
-              onError: (error) => {
-                console.error("[chat] ui stream error", {
-                  ...safeErrorDiagnostic(error),
-                  kind: failureKind(error),
-                  ...(error instanceof ModelFailure && error.primaryDiagnostic
-                    ? { primary: error.primaryDiagnostic }
-                    : {}),
-                });
-                return safeModelError(error, finalUserText);
-              },
+              onError: handleUiStreamError,
             })
               .pipeThrough(
                 createMultiSearchRecoveryStream({
@@ -1335,16 +1362,7 @@ export async function POST(request: Request) {
           await releaseLock?.();
         }
       },
-      onError: (error) => {
-        console.error("[chat] ui stream error", {
-          ...safeErrorDiagnostic(error),
-          kind: failureKind(error),
-          ...(error instanceof ModelFailure && error.primaryDiagnostic
-            ? { primary: error.primaryDiagnostic }
-            : {}),
-        });
-        return safeModelError(error, finalUserText);
-      },
+      onError: handleUiStreamError,
     });
 
     streamOwnsLock = true;

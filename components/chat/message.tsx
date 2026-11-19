@@ -959,7 +959,7 @@ const PurePreviewMessage = ({
             )}
           />
           <span className="truncate">
-            {modelUsed.isFallback
+            {modelUsed.isFallback && modelUsed.modelId === "claude-haiku-5.5"
               ? locale === "tr"
                 ? `${modelUsed.modelName} · Copilot yedek`
                 : `${modelUsed.modelName} · Copilot fallback`

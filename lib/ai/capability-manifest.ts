@@ -955,7 +955,19 @@ export async function resolveLiveCapabilityManifest(opts: {
     });
   }
 
-  const cacheKey = `${opts.userId}:${opts.webSearchAvailable ? "1" : "0"}`;
+  const envSig = [
+    vertexReady ? "1" : "0",
+    dbReady ? "1" : "0",
+    vaultReady ? "1" : "0",
+    firecrawlConnected ? "1" : "0",
+    cloudComputerConnected ? "1" : "0",
+    copilotTokenReady ? "1" : "0",
+    macBridgeConnected ? "1" : "0",
+    googleSignInReady ? "1" : "0",
+    googleConnectorsEnabled ? "1" : "0",
+    githubConnectorEnabled ? "1" : "0",
+  ].join("");
+  const cacheKey = `${opts.userId}:${opts.webSearchAvailable ? "1" : "0"}:${envSig}`;
   if (!opts.forceRefresh && !opts.vaultStore) {
     const hit = manifestCache.get(cacheKey);
     if (hit && hit.expiresAtMs > Date.now()) {

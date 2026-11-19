@@ -1765,7 +1765,11 @@ export function createVertexGeminiAdapter(
               });
               controller.close();
             } catch (err) {
-              controller.error(err);
+              try {
+                normalizeUpstreamError(err, params.abortSignal);
+              } catch (normalized) {
+                controller.error(normalized);
+              }
             } finally {
               upstreamReader.releaseLock();
             }

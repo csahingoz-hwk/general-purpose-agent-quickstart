@@ -82,6 +82,8 @@ export function resolveTurnModelAndEffort(input: {
   reasoningEffort: ActiveReasoningEffort;
   escalated: boolean;
 } {
+  const effectiveSelectedId =
+    input.selectedModelId === "auto" ? HYDROGEN : input.selectedModelId;
   const { escalate } = isResearchOrHardTurn(
     input.userText,
     input.requestedTools
@@ -96,16 +98,16 @@ export function resolveTurnModelAndEffort(input: {
           ? "medium"
           : input.baseEffort === "low"
             ? "low"
-            : input.selectedModelId === NEON
+            : effectiveSelectedId === NEON
               ? "high"
-              : input.selectedModelId === HYDROGEN
+              : effectiveSelectedId === HYDROGEN
                 ? "low"
                 : "medium";
 
   if (!escalate) {
     // When Neon is explicitly selected, keep default HIGH on non-tool turns and
     // use MEDIUM on latency-sensitive multi-step tool turns.
-    if (input.selectedModelId === NEON) {
+    if (effectiveSelectedId === NEON) {
       const neonEffort: ActiveReasoningEffort =
         input.requestedTools.length > 0 && input.baseEffort !== "low"
           ? "medium"
@@ -117,17 +119,17 @@ export function resolveTurnModelAndEffort(input: {
       };
     }
     const everydayEffort: ActiveReasoningEffort =
-      input.selectedModelId === HYDROGEN && !input.baseEffort
+      effectiveSelectedId === HYDROGEN && !input.baseEffort
         ? "low"
         : normalizedBase;
     return {
-      modelId: input.selectedModelId,
+      modelId: effectiveSelectedId,
       reasoningEffort: everydayEffort,
       escalated: false,
     };
   }
 
-  let targetModel = input.selectedModelId;
+  let targetModel = effectiveSelectedId;
   let escalated = false;
 
   if (targetModel === HYDROGEN && input.availableModelIds.includes(NEON)) {

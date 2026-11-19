@@ -64,12 +64,24 @@ export function getDocumentTimestampByIndex(
   return documents[index].createdAt;
 }
 
+export function stripStrayBlockedTokens(text: string): string {
+  const segments = text.split(/(```[\s\S]*?(?:```|$))/g);
+  return segments
+    .map((segment, index) =>
+      index % 2 === 1
+        ? segment
+        : segment.replace(/[ \t]*\[blocked\](?=[ \t.,;:!?)\]]|$)/gi, "")
+    )
+    .join("");
+}
+
 export function sanitizeText(text: string) {
-  return text
-    .replace("<has_function_call>", "")
-    .replace(/```visual-json[\s\S]*?(?:```|$)/gi, "")
-    .replace(/```openui[\s\S]*?(?:```|$)/gi, "")
-    .trimEnd();
+  return stripStrayBlockedTokens(
+    text
+      .replace("<has_function_call>", "")
+      .replace(/```visual-json[\s\S]*?(?:```|$)/gi, "")
+      .replace(/```openui[\s\S]*?(?:```|$)/gi, "")
+  ).trimEnd();
 }
 
 export function convertToUIMessages(messages: DBMessage[]): ChatMessage[] {

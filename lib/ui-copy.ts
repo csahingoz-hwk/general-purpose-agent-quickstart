@@ -103,6 +103,10 @@ const en = {
   modelMenuHeading: "Choose how the assistant answers",
   modelMenuLabel: "Answer style",
   modelSearchPlaceholder: "Search",
+  modelAutoName: "Auto",
+  modelAutoDescription: "Hydrogen everyday / Neon for hard & research",
+  modelNeonDescription:
+    "Always Gemini 4 Neon — deep reasoning, research & visual creation",
   jumpToLatest: "Jump to latest",
   retryResponse: "Retry response",
   statusThinking: "Thinking…",
@@ -508,6 +512,10 @@ const tr: UiCopy = {
   modelMenuHeading: "Asistanın nasıl yanıtlayacağını seç",
   modelMenuLabel: "Yanıt tarzı",
   modelSearchPlaceholder: "Ara",
+  modelAutoName: "Otomatik",
+  modelAutoDescription: "Hydrogen günlük / Neon zor ve araştırma",
+  modelNeonDescription:
+    "Her zaman Gemini 4 Neon — derin analiz, araştırma ve görsel üretim",
   jumpToLatest: "Son mesaja git",
   retryResponse: "Yanıtı yeniden dene",
   statusThinking: "Düşünüyor…",
@@ -1209,7 +1217,8 @@ export function formatSetupChecklistItemCopy(
           item.status === "ready"
             ? copy.setupItemFirecrawlManageBtn
             : copy.firecrawlStep1Button,
-        secondaryExternalLabel: copy.firecrawlStep2VercelButton,
+        secondaryExternalLabel:
+          item.status === "ready" ? undefined : copy.firecrawlStep2VercelButton,
       };
 
     case "gemini_live":

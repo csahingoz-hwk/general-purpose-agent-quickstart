@@ -30,7 +30,12 @@ import {
   ModelSelectorTrigger,
 } from "@/components/ai-elements/model-selector";
 import { useUiLocale } from "@/hooks/use-ui-locale";
-import type { ChatModel } from "@/lib/ai/models";
+import {
+  AUTO_ROUTING_MODEL_ID,
+  resolveModelPickerOptions,
+  resolveModelPickerTriggerState,
+} from "@/lib/ai/model-picker";
+import { type ChatModel, DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
@@ -116,9 +121,10 @@ function PureMultimodalInput({
   );
   const modelReady =
     modelAvailability?.status === "ready" &&
-    modelAvailability.models?.some(
-      (model: ChatModel) => model.id === selectedModelId
-    );
+    (selectedModelId === AUTO_ROUTING_MODEL_ID ||
+      modelAvailability.models?.some(
+        (model: ChatModel) => model.id === selectedModelId
+      ));
   const voiceReadiness = useVoiceReadiness();
   const { setTheme, resolvedTheme } = useTheme();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -590,6 +596,7 @@ function PureMultimodalInput({
               }}
             />
             <ModelSelectorCompact
+              messages={messages}
               onModelChange={onModelChange}
               selectedModelId={selectedModelId}
             />
@@ -707,13 +714,15 @@ function PureAttachmentsButton({
 const AttachmentsButton = memo(PureAttachmentsButton);
 
 function PureModelSelectorCompact({
+  messages,
   selectedModelId,
   onModelChange,
 }: {
+  messages: UIMessage[];
   selectedModelId: string;
   onModelChange?: (modelId: string) => void;
 }) {
-  const { copy } = useUiLocale();
+  const { locale, copy } = useUiLocale();
   const [open, setOpen] = useState(false);
   const { data } = useSWR(
     `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/models`,
@@ -728,51 +737,61 @@ function PureModelSelectorCompact({
   );
   const models: ChatModel[] =
     data?.status === "ready" ? (data.models ?? []) : [];
-  const selected = models.find((model) => model.id === selectedModelId);
-  if (!selected) {
+  const options = resolveModelPickerOptions(models, locale);
+  const trigger = resolveModelPickerTriggerState({
+    selectedModelId,
+    models,
+    messages,
+    locale,
+  });
+  if (!trigger) {
     return (
       <span className="px-2 text-sm text-muted-foreground">
         {copy.chatNotReady}
       </span>
     );
   }
+  const effectiveSelectedId =
+    selectedModelId === AUTO_ROUTING_MODEL_ID
+      ? DEFAULT_CHAT_MODEL
+      : selectedModelId;
   return (
     <ModelSelector onOpenChange={setOpen} open={open}>
       <ModelSelectorTrigger asChild>
         <Button
-          aria-label={`${copy.modelMenuLabel}: ${selected.name}`}
+          aria-label={trigger.ariaLabel}
           className="h-11 max-w-[11.5rem] gap-1.5 rounded-full px-3 text-[14px] font-medium text-muted-foreground hover:bg-control sm:max-w-[13.5rem] md:h-11"
           data-testid="model-selector"
           variant="ghost"
         >
-          <ModelSelectorName>{selected.name}</ModelSelectorName>
+          <ModelSelectorName>{trigger.label}</ModelSelectorName>
         </Button>
       </ModelSelectorTrigger>
       <ModelSelectorContent>
-        {models.length > 5 && (
+        {options.length > 5 && (
           <ModelSelectorInput placeholder={copy.modelSearchPlaceholder} />
         )}
         <ModelSelectorList>
           <ModelSelectorGroup heading={copy.modelMenuHeading}>
-            {models.map((model) => (
+            {options.map((option) => (
               <ModelSelectorItem
                 className="min-h-11 items-start gap-2 md:min-h-0"
-                key={model.id}
-                keywords={[model.name, model.description]}
+                key={option.id}
+                keywords={[option.name, option.description]}
                 onSelect={() => {
-                  onModelChange?.(model.id);
-                  setCookie("chat-model-manual-v2", model.id);
+                  onModelChange?.(option.id);
+                  setCookie("chat-model-manual-v2", option.id);
                   setOpen(false);
                 }}
-                value={model.id}
+                value={option.id}
               >
                 <div className="min-w-0 flex-1">
-                  <ModelSelectorName>{model.name}</ModelSelectorName>
+                  <ModelSelectorName>{option.name}</ModelSelectorName>
                   <p className="text-[13px] text-muted-foreground">
-                    {model.description}
+                    {option.description}
                   </p>
                 </div>
-                {model.id === selectedModelId && (
+                {option.id === effectiveSelectedId && (
                   <CheckIcon aria-label="Selected" className="mt-0.5 size-4" />
                 )}
               </ModelSelectorItem>
