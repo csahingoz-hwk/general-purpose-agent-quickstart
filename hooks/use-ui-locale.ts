@@ -90,15 +90,18 @@ export function useUiLocale(fallbackLocale?: UiLocale): {
   preference: UiLocalePreference;
   locale: UiLocale;
   copy: UiCopy;
+  resolved: boolean;
   setLocalePreference: (next: UiLocalePreference) => void;
 } {
   const [preference, setPreference] = useState<UiLocalePreference>("auto");
   const [browserLocale, setBrowserLocale] = useState<UiLocale>("en");
+  const [resolved, setResolved] = useState(false);
 
   useEffect(() => {
     const stored = readStoredLocalePreference();
     setPreference(stored);
     setBrowserLocale(detectBrowserLocale());
+    setResolved(true);
 
     if (!serverSyncedOnce) {
       serverSyncedOnce = true;
@@ -161,35 +164,11 @@ export function useUiLocale(fallbackLocale?: UiLocale): {
 
   const copy = getCopy(locale);
 
-  useEffect(() => {
-    if (typeof document === "undefined") {
-      return;
-    }
-    document.documentElement.lang = locale;
-    const syncTitle = () => {
-      const currentTitle = document.title.trim();
-      if (
-        !currentTitle ||
-        (locale === "tr" && currentTitle === "Assistant") ||
-        (locale === "en" && currentTitle === "Asistan")
-      ) {
-        document.title = copy.pageTitle;
-      }
-    };
-    syncTitle();
-    const observer = new MutationObserver(syncTitle);
-    observer.observe(document.head, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
-    return () => observer.disconnect();
-  }, [locale, copy.pageTitle]);
-
   return {
     preference,
     locale,
     copy,
+    resolved,
     setLocalePreference,
   };
 }

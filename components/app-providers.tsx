@@ -1,8 +1,10 @@
 "use client";
 
 import { SessionProvider } from "next-auth/react";
+import { Suspense } from "react";
 import { SWRConfig } from "swr";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { UiLocaleDocumentSync } from "@/components/ui-locale-document-sync";
 
 export function AppProviders({
   basePath,
@@ -24,7 +26,12 @@ export function AppProviders({
           dedupingInterval: 5 * 60_000,
         }}
       >
-        <TooltipProvider>{children}</TooltipProvider>
+        <TooltipProvider>
+          <Suspense fallback={null}>
+            <UiLocaleDocumentSync />
+          </Suspense>
+          {children}
+        </TooltipProvider>
       </SWRConfig>
     </SessionProvider>
   );

@@ -82,7 +82,10 @@ const THEME_COLOR_SCRIPT = `\
       try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch (_) {}
       isTr = hasTrLang || tz === "Europe/Istanbul";
     }
-    html.lang = isTr ? "tr" : "en";
+    var nextLang = isTr ? "tr" : "en";
+    if (html.lang !== nextLang) {
+      html.lang = nextLang;
+    }
     if (isTr && (!document.title || document.title === "Assistant")) {
       document.title = "Asistan";
     }

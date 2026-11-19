@@ -1234,7 +1234,7 @@ test("Fix 4: Remaining English UI strings are in EN/TR dictionary with natural T
       ],
     },
     {
-      file: "hooks/use-ui-locale.ts",
+      file: "components/ui-locale-document-sync.tsx",
       mustNotContain: [],
       mustContain: [/document\.title = copy\.pageTitle/],
     },
