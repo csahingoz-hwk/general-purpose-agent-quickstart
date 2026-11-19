@@ -34,15 +34,43 @@ const en = {
   searchFailed: "The web search could not be completed.",
   searchNoResults: "No results were found.",
   searchSources: "Sources",
-  composerPlaceholder: "Ask …",
+  composerPlaceholder: "Ask…",
   editPlaceholder: "Edit your message…",
   editingMessage: "Editing message",
   cancel: "Cancel",
   send: "Send",
   stop: "Stop",
   attachFile: "Attach a file",
+  dictateMessage: "Dictate message",
+  stopDictation: "Stop dictation",
+  dictateTooltip: "Dictate into message box",
+  stopDictationTooltip: "Tap to finish dictation",
   copy: "Copy",
   edit: "Edit",
+  upvoteResponse: "Upvote Response",
+  downvoteResponse: "Downvote Response",
+  toggleDarkMode: "Toggle dark mode",
+  toggleLightMode: "Toggle light mode",
+  accountLabel: "Account",
+  signedInFallback: "Signed in",
+  loginToAccount: "Login to your account",
+  homeLabel: "Home",
+  homeCityAriaLabel: "Home city",
+  noCitySaved: "No city saved",
+  homeCityPlaceholder: "e.g. London, Istanbul",
+  useCurrentLocation: "Use my current location",
+  clearSavedLocation: "Clear saved location",
+  locationNotFoundError: "Could not find that place. Try a nearby city.",
+  locationUnsupportedError: "This browser cannot share its location.",
+  locationPermissionDeniedError:
+    "Location permission was not given. Nothing was saved.",
+  historyToday: "Today",
+  historyYesterday: "Yesterday",
+  historyLastWeek: "Last 7 days",
+  historyLastMonth: "Last 30 days",
+  historyOlder: "Older",
+  emptyHistoryHint:
+    "Your conversations will appear here once you start chatting!",
   preview: "Preview",
   save: "Save",
   approve: "Allow",
@@ -132,6 +160,10 @@ const en = {
   memoryManageTitle: "Manage memories & paste list",
   memoryManageSubtitleSingular: "saved memory · Search, edit, delete & export",
   memoryManageSubtitlePlural: "saved memories · Search, edit, delete & export",
+  memoryStatusSetupRequired:
+    "Setup required — Postgres memory store is not connected",
+  memoryStatusUnavailable: "Memory store temporarily unavailable",
+  memoryStatusDisabled: "Memory disabled by environment setting",
   openButton: "Open",
   capabilitiesHeading: "Personal apps & capabilities",
   capabilitiesDescription:
@@ -166,6 +198,9 @@ const en = {
   usageMtdCreditUsed: "MTD Credit Used",
   usageSourceGcpLive: "Live Google Cloud data",
   usageSourceTokenEstimate: "Token reference estimate",
+  usageCloudUnavailableCardNote: "Cloud billing unavailable · token estimate",
+  usageCloudEstimateSuffix: "est. (Cloud billing unavailable)",
+  usageUnavailableShort: "Temporarily unavailable",
   usageRemainingCredit: "Remaining Credit",
   usageUltraCreditSuffix: "Ultra credit",
   usageTotalTokensMonth: "Total Tokens (Month)",
@@ -301,8 +336,36 @@ const tr: UiCopy = {
   send: "Gönder",
   stop: "Durdur",
   attachFile: "Dosya ekle",
+  dictateMessage: "Mesaj yazdır",
+  stopDictation: "Yazdırmayı durdur",
+  dictateTooltip: "Mesaj kutusuna sesle yazdır",
+  stopDictationTooltip: "Yazdırmayı bitirmek için dokun",
   copy: "Kopyala",
   edit: "Düzenle",
+  upvoteResponse: "Yanıtı beğen",
+  downvoteResponse: "Yanıtı beğenme",
+  toggleDarkMode: "Koyu temaya geç",
+  toggleLightMode: "Açık temaya geç",
+  accountLabel: "Hesap",
+  signedInFallback: "Giriş yapıldı",
+  loginToAccount: "Hesabına giriş yap",
+  homeLabel: "Ev konumu",
+  homeCityAriaLabel: "Ev şehri",
+  noCitySaved: "Kayıtlı şehir yok",
+  homeCityPlaceholder: "örn. Londra, İstanbul",
+  useCurrentLocation: "Mevcut konumumu kullan",
+  clearSavedLocation: "Kayıtlı konumu temizle",
+  locationNotFoundError: "Bu konum bulunamadı. Yakın bir şehir deneyin.",
+  locationUnsupportedError: "Bu tarayıcı konum paylaşamıyor.",
+  locationPermissionDeniedError:
+    "Konum izni verilmedi. Hiçbir şey kaydedilmedi.",
+  historyToday: "Bugün",
+  historyYesterday: "Dün",
+  historyLastWeek: "Son 7 gün",
+  historyLastMonth: "Son 30 gün",
+  historyOlder: "Daha eski",
+  emptyHistoryHint:
+    "Sohbete başladığında geçmiş konuşmaların burada görünecek.",
   preview: "Önizle",
   save: "Kaydet",
   approve: "Onayla",
@@ -393,6 +456,10 @@ const tr: UiCopy = {
   memoryManageSubtitleSingular:
     "kayıtlı bilgi · Ara, düzenle, sil ve dışa aktar",
   memoryManageSubtitlePlural: "kayıtlı bilgi · Ara, düzenle, sil ve dışa aktar",
+  memoryStatusSetupRequired:
+    "Kurulum gerekli — Postgres bellek deposu bağlı değil",
+  memoryStatusUnavailable: "Bellek deposuna şu an ulaşılamıyor",
+  memoryStatusDisabled: "Bellek ortam ayarıyla devre dışı",
   openButton: "Aç",
   capabilitiesHeading: "Kişisel uygulamalar ve yetenekler",
   capabilitiesDescription:
@@ -427,6 +494,9 @@ const tr: UiCopy = {
   usageMtdCreditUsed: "Ay İçi Kredi Kullanımı",
   usageSourceGcpLive: "Google Cloud gerçek veri",
   usageSourceTokenEstimate: "Token referans tahmini",
+  usageCloudUnavailableCardNote: "Bulut faturası bağlı değil · token tahmini",
+  usageCloudEstimateSuffix: "tahmini (Bulut faturası bağlı değil)",
+  usageUnavailableShort: "Geçici olarak kullanılamıyor",
   usageRemainingCredit: "Kalan Kredi",
   usageUltraCreditSuffix: "Ultra kredi",
   usageTotalTokensMonth: "Toplam Token (Ay)",
@@ -532,6 +602,118 @@ export const DEFAULT_UI_LOCALE: UiLocale = "en";
 
 export function getCopy(locale: UiLocale = DEFAULT_UI_LOCALE): UiCopy {
   return uiCopy[locale] ?? uiCopy.en;
+}
+
+export function formatMemorySummaryStatus(
+  summary:
+    | {
+        status?: string;
+        toolsEnabled?: boolean;
+        profileFacts?: readonly unknown[];
+      }
+    | null
+    | undefined,
+  opts: { loading?: boolean; hasError?: boolean; locale?: UiLocale } = {}
+): string {
+  const copy = getCopy(opts.locale ?? DEFAULT_UI_LOCALE);
+  if (opts.hasError) {
+    return copy.memoryStatusUnavailable;
+  }
+  if (opts.loading || !summary) {
+    return copy.statusChecking;
+  }
+  if (summary.status === "setup_required") {
+    return copy.memoryStatusSetupRequired;
+  }
+  if (summary.toolsEnabled === false) {
+    return copy.memoryStatusDisabled;
+  }
+  const count = summary.profileFacts?.length ?? 0;
+  return `${count} ${
+    count === 1
+      ? copy.memoryManageSubtitleSingular
+      : copy.memoryManageSubtitlePlural
+  }`;
+}
+
+export type CloudBillingMissingCode =
+  | "wif_not_configured"
+  | "oidc_unavailable"
+  | "api_disabled"
+  | "billing_permission_denied"
+  | "bigquery_export_missing"
+  | "timeout"
+  | "http_error";
+
+export function formatCloudBillingUnavailableReason(
+  gcp:
+    | {
+        missingCode?: CloudBillingMissingCode | null;
+        missingDetail?: string | null;
+        missingReason?: string | null;
+        projectId?: string | null;
+        billingAccountId?: string | null;
+      }
+    | null
+    | undefined,
+  locale: UiLocale = DEFAULT_UI_LOCALE
+): string {
+  const projectLabel = gcp?.projectId || "GCP";
+  const acctLabel = gcp?.billingAccountId || "0140A2-72DEB2-62EDCD";
+  const detail = gcp?.missingDetail?.trim() || "Cloud Billing API";
+  switch (gcp?.missingCode) {
+    case "wif_not_configured":
+      return locale === "tr"
+        ? "Vertex AI Workload Identity Federation (GOOGLE_VERTEX_PROJECT_ID + GOOGLE_VERTEX_WORKLOAD_AUDIENCE) bu ortamda tanımlı değil."
+        : "Vertex AI Workload Identity Federation (GOOGLE_VERTEX_PROJECT_ID + GOOGLE_VERTEX_WORKLOAD_AUDIENCE) is not configured in this environment.";
+    case "oidc_unavailable":
+      return locale === "tr"
+        ? "Sunucu ortamında aktif Vercel OIDC belirteci alınamadı; canlı Google Cloud fatura verisi yalnızca Vercel sunucusunda sorgulanabilir."
+        : "Active Vercel OIDC token is not available in this runtime; live Google Cloud billing figures require the Vercel server environment.";
+    case "api_disabled":
+      return locale === "tr"
+        ? `${detail} henüz Vertex projesinde (${projectLabel}) etkinleştirilmemiş.`
+        : `${detail} is not yet enabled on the Vertex project (${projectLabel}).`;
+    case "billing_permission_denied":
+      return locale === "tr"
+        ? `Vertex WIF servis hesabında '${detail}' okuma yetkisi eksik (${acctLabel} üzerinde 'roles/billing.viewer' izni gerekli).`
+        : `Vertex WIF service account is missing read permission for '${detail}' ('roles/billing.viewer' required on ${acctLabel}).`;
+    case "bigquery_export_missing":
+      return locale === "tr"
+        ? "Cloud Billing -> BigQuery standart maliyet dışa aktarımı (gcp_billing_export_v1) henüz etkinleştirilmemiş."
+        : "Cloud Billing -> BigQuery standard cost export (gcp_billing_export_v1) is not enabled yet on this project.";
+    case "timeout":
+      return locale === "tr"
+        ? "Google Cloud fatura sorgusu zaman aşımına uğradı; uygulama içi token kayıtları gösteriliyor."
+        : "Google Cloud billing query timed out; showing in-app monthly token logs.";
+    case "http_error":
+      return locale === "tr"
+        ? `${detail} yanıt vermedi.`
+        : `${detail} did not respond.`;
+    default:
+      if (gcp?.missingReason?.trim()) {
+        if (locale === "en") {
+          if (
+            /gcp_billing_export|etkinleştirilmemiş/i.test(gcp.missingReason)
+          ) {
+            return "Google Cloud Billing / BigQuery export is not enabled yet on this project.";
+          }
+          if (/yetkisi eksik|roles\/billing/i.test(gcp.missingReason)) {
+            return `Vertex WIF service account needs Billing Viewer permission on ${acctLabel}.`;
+          }
+          if (/zaman aşımı/i.test(gcp.missingReason)) {
+            return "Google Cloud billing query timed out; showing in-app monthly token logs.";
+          }
+          if (/OIDC|tanımlı değil/i.test(gcp.missingReason)) {
+            return "Live Google Cloud billing credentials (WIF / OIDC) are unavailable in this runtime.";
+          }
+        }
+        return gcp.missingReason.trim();
+      }
+      return locale === "tr"
+        ? "Canlı Google Cloud fatura verisi şu an alınamıyor."
+        : "Live Google Cloud billing figures are currently unavailable.";
+  }
 }
 
 export type DictionaryValidationReport = {

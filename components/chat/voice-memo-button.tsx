@@ -133,6 +133,7 @@ export function VoiceMemoControls({
   onTranscript: (text: string) => void;
 }) {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+  const { copy } = useUiLocale();
   const { serverSttReady } = useVoiceReadiness();
   const [hasSpeechApi, setHasSpeechApi] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -325,7 +326,7 @@ export function VoiceMemoControls({
 
   return (
     <Button
-      aria-label={recording ? "Stop dictation" : "Dictate message"}
+      aria-label={recording ? copy.stopDictation : copy.dictateMessage}
       aria-pressed={recording}
       className={cn(
         "size-11! rounded-full border-transparent bg-control p-0 shadow-none transition-colors motion-reduce:transition-none hover:bg-control",
@@ -344,7 +345,7 @@ export function VoiceMemoControls({
           startDictation();
         }
       }}
-      title={recording ? "Tap to finish dictation" : "Dictate into message box"}
+      title={recording ? copy.stopDictationTooltip : copy.dictateTooltip}
       type="button"
       variant="ghost"
     >

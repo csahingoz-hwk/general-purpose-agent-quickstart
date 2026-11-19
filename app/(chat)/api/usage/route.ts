@@ -41,6 +41,8 @@ export async function GET() {
                 creditsRemainingUsd: null,
                 missingReason:
                   "Google Cloud Billing sorgusu zaman aşımına uğradı; uygulama içi token kayıtları gösteriliyor.",
+                missingCode: "timeout",
+                missingDetail: null,
                 setupActionUrl:
                   "https://console.cloud.google.com/flows/enableapi?apiid=cloudbilling.googleapis.com,billingbudgets.googleapis.com,bigquery.googleapis.com",
                 setupActionLabel: "Enable Billing APIs",

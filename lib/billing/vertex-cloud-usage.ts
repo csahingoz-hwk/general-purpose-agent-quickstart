@@ -3,6 +3,7 @@ import {
   getVertexWifAccessToken,
   isVertexWifConfigured,
 } from "@/lib/ai/vertex-auth";
+import type { CloudBillingMissingCode } from "@/lib/ui-copy";
 
 export const VERTEX_BILLING_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 export const DEFAULT_ULTRA_MONTHLY_CREDIT_USD = 40;
@@ -53,6 +54,9 @@ export type VertexCloudBillingStatus = {
   creditsRemainingUsd: number | null;
   /** Exact technical reason when live Cloud Billing / BigQuery data is not reachable. */
   missingReason: string | null;
+  /** Locale-neutral reason code + API detail for EN/TR rendering on /usage. */
+  missingCode?: CloudBillingMissingCode | null;
+  missingDetail?: string | null;
   /** One-click Google Cloud Console URL for the owner Setup checklist item. */
   setupActionUrl: string;
   setupActionLabel: string;
@@ -101,7 +105,13 @@ function classifyGoogleApiError(
   apiLabel: string,
   projectId: string | null,
   billingAccountId: string
-): { reason: string; actionUrl: string; actionLabel: string } {
+): {
+  reason: string;
+  missingCode: CloudBillingMissingCode;
+  missingDetail: string;
+  actionUrl: string;
+  actionLabel: string;
+} {
   if (
     status === 403 &&
     /SERVICE_DISABLED|accessNotConfigured|has not been used in project/i.test(
@@ -110,6 +120,8 @@ function classifyGoogleApiError(
   ) {
     return {
       reason: `${apiLabel} henüz Vertex projesinde (${projectId ?? "GCP"}) etkinleştirilmemiş.`,
+      missingCode: "api_disabled",
+      missingDetail: apiLabel,
       actionUrl: buildEnableBillingApisUrl(projectId),
       actionLabel: "Enable Billing APIs",
     };
@@ -117,12 +129,16 @@ function classifyGoogleApiError(
   if (status === 403 || status === 401) {
     return {
       reason: `Vertex WIF servis hesabında '${apiLabel}' okuma yetkisi eksik (faturalandırma hesabı ${billingAccountId} üzerinde 'roles/billing.viewer' izni gerekli).`,
+      missingCode: "billing_permission_denied",
+      missingDetail: apiLabel,
       actionUrl: `https://console.cloud.google.com/billing/${encodeURIComponent(billingAccountId)}/manage`,
       actionLabel: "Grant Billing Viewer",
     };
   }
   return {
     reason: `${apiLabel} yanıt vermedi (HTTP ${status}).`,
+    missingCode: "http_error",
+    missingDetail: `${apiLabel} (HTTP ${status})`,
     actionUrl: buildEnableBillingApisUrl(projectId),
     actionLabel: "Open Cloud Billing",
   };
@@ -139,7 +155,14 @@ async function discoverAndQueryBigQueryBillingExport(opts: {
       creditsUsedUsd: number;
       currency: string;
     }
-  | { ok: false; missingReason: string; actionUrl: string; actionLabel: string }
+  | {
+      ok: false;
+      missingReason: string;
+      missingCode: CloudBillingMissingCode;
+      missingDetail: string | null;
+      actionUrl: string;
+      actionLabel: string;
+    }
 > {
   const configuredTable = process.env.GOOGLE_BIGQUERY_BILLING_TABLE?.trim();
   let fqTable = configuredTable || null;
@@ -165,6 +188,8 @@ async function discoverAndQueryBigQueryBillingExport(opts: {
       return {
         ok: false,
         missingReason: diag.reason,
+        missingCode: diag.missingCode,
+        missingDetail: diag.missingDetail,
         actionUrl: diag.actionUrl,
         actionLabel: diag.actionLabel,
       };
@@ -212,6 +237,8 @@ async function discoverAndQueryBigQueryBillingExport(opts: {
       ok: false,
       missingReason:
         "Cloud Billing -> BigQuery standart maliyet dışa aktarımı (gcp_billing_export_v1) henüz bu projede etkinleştirilmemiş.",
+      missingCode: "bigquery_export_missing",
+      missingDetail: null,
       actionUrl: buildBillingExportConsoleUrl(DEFAULT_BILLING_ACCOUNT_ID),
       actionLabel: "Enable Billing Export",
     };
@@ -270,6 +297,8 @@ async function discoverAndQueryBigQueryBillingExport(opts: {
     return {
       ok: false,
       missingReason: diag.reason,
+      missingCode: diag.missingCode,
+      missingDetail: diag.missingDetail,
       actionUrl: diag.actionUrl,
       actionLabel: diag.actionLabel,
     };
@@ -334,6 +363,8 @@ export async function getVertexCloudBillingStatus(opts?: {
       creditsRemainingUsd: null,
       missingReason:
         "Vertex AI Workload Identity Federation (GOOGLE_VERTEX_PROJECT_ID + GOOGLE_VERTEX_WORKLOAD_AUDIENCE) bu ortamda tanımlı değil.",
+      missingCode: "wif_not_configured",
+      missingDetail: null,
       setupActionUrl: buildEnableBillingApisUrl(projectId),
       setupActionLabel: "Open Google Cloud",
       checkedAt,
@@ -358,6 +389,8 @@ export async function getVertexCloudBillingStatus(opts?: {
       creditsRemainingUsd: null,
       missingReason:
         "Sunucu ortamında aktif Vercel OIDC belirteci alınamadı; canlı Google Cloud fatura sorgusu yalnızca Vercel sunucusunda çalışır.",
+      missingCode: "oidc_unavailable",
+      missingDetail: null,
       setupActionUrl: buildEnableBillingApisUrl(projectId),
       setupActionLabel: "Open Cloud Billing",
       checkedAt,
@@ -367,6 +400,8 @@ export async function getVertexCloudBillingStatus(opts?: {
   // 1. Read-only Cloud Billing project association check
   let billingAccountId = configuredBillingAccount;
   let billingMissingReason: string | null = null;
+  let billingMissingCode: CloudBillingMissingCode | null = null;
+  let billingMissingDetail: string | null = null;
   let setupActionUrl = buildEnableBillingApisUrl(projectId);
   let setupActionLabel = "Enable Billing APIs";
 
@@ -400,12 +435,16 @@ export async function getVertexCloudBillingStatus(opts?: {
         billingAccountId
       );
       billingMissingReason = diag.reason;
+      billingMissingCode = diag.missingCode;
+      billingMissingDetail = diag.missingDetail;
       setupActionUrl = diag.actionUrl;
       setupActionLabel = diag.actionLabel;
     }
   } catch {
     billingMissingReason =
       "Cloud Billing API (cloudbilling.googleapis.com) zaman aşımına uğradı.";
+    billingMissingCode = "timeout";
+    billingMissingDetail = "Cloud Billing API (cloudbilling.googleapis.com)";
   }
 
   // 2. Read-only Cloud Billing Budgets API check (for configured monthly budget/credit alert)
@@ -454,6 +493,8 @@ export async function getVertexCloudBillingStatus(opts?: {
         billingAccountId
       );
       billingMissingReason = diag.reason;
+      billingMissingCode = diag.missingCode;
+      billingMissingDetail = diag.missingDetail;
       setupActionUrl = diag.actionUrl;
       setupActionLabel = diag.actionLabel;
     }
@@ -476,6 +517,8 @@ export async function getVertexCloudBillingStatus(opts?: {
       ok: false,
       missingReason:
         "BigQuery fatura dışa aktarım sorgusu zaman aşımına uğradı.",
+      missingCode: "timeout",
+      missingDetail: "BigQuery Billing Export",
       actionUrl: buildBillingExportConsoleUrl(billingAccountId),
       actionLabel: "Enable Billing Export",
     };
@@ -502,6 +545,8 @@ export async function getVertexCloudBillingStatus(opts?: {
       mtdCreditsUsedUsd: Math.round(creditsUsed * 10_000) / 10_000,
       creditsRemainingUsd: remaining,
       missingReason: null,
+      missingCode: null,
+      missingDetail: null,
       setupActionUrl: buildBillingExportConsoleUrl(billingAccountId),
       setupActionLabel: "Open Cloud Billing",
       checkedAt,
@@ -518,6 +563,12 @@ export async function getVertexCloudBillingStatus(opts?: {
       mtdCreditsUsedUsd: null,
       creditsRemainingUsd: null,
       missingReason: billingMissingReason ?? bqResult.missingReason,
+      missingCode: billingMissingReason
+        ? billingMissingCode
+        : bqResult.missingCode,
+      missingDetail: billingMissingReason
+        ? billingMissingDetail
+        : bqResult.missingDetail,
       setupActionUrl: billingMissingReason
         ? setupActionUrl
         : bqResult.actionUrl,

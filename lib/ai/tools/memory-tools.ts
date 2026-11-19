@@ -1,16 +1,31 @@
 import { tool } from "ai";
 import { z } from "zod";
 import {
+  inferenceSession,
+  type MemoryTurnDedupeState,
+} from "@/lib/ai/routing/session";
+import {
   deriveFactKey,
   toSelfContainedSentence,
 } from "@/lib/memory/bulk-import";
 import {
-  type JournalEntry,
   type MemorySource,
   type MemoryStore,
   type ProfileFact,
   SensitiveMemoryBlockedError,
 } from "@/lib/memory/store";
+
+export type { MemoryTurnDedupeState } from "@/lib/ai/routing/session";
+
+export function createMemoryTurnState(
+  alreadySavedFact: ProfileFact | null = null
+): MemoryTurnDedupeState {
+  return {
+    savedFact: alreadySavedFact,
+    savedJournal: null,
+    inFlightSavePromise: null,
+  };
+}
 
 export function dedupeAssistantMemoryParts<
   T extends { type: string; output?: unknown },
@@ -41,16 +56,24 @@ export function createMemoryTools({
   defaultSource = "chat",
   alreadySavedFact = null,
   dedupePerTurn = false,
+  turnState,
 }: {
   userId: string;
   store: MemoryStore;
   defaultSource?: MemorySource;
   alreadySavedFact?: ProfileFact | null;
   dedupePerTurn?: boolean;
+  turnState?: MemoryTurnDedupeState;
 }) {
-  let turnSavedFact: ProfileFact | null = alreadySavedFact;
-  let turnSavedJournal: JournalEntry | null = null;
-  let inFlightSavePromise: Promise<ProfileFact> | null = null;
+  const state: MemoryTurnDedupeState =
+    turnState ??
+    (dedupePerTurn
+      ? inferenceSession.getStore()?.memoryTurnState
+      : undefined) ??
+    createMemoryTurnState(alreadySavedFact);
+  if (alreadySavedFact && !state.savedFact) {
+    state.savedFact = alreadySavedFact;
+  }
 
   const saveProfileFact = tool({
     description:
@@ -78,8 +101,8 @@ export function createMemoryTools({
     }),
     execute: async ({ category, key, value, pinned, sharedAcrossBots }) => {
       try {
-        if (inFlightSavePromise) {
-          const firstSaved = await inFlightSavePromise;
+        if (state.inFlightSavePromise) {
+          const firstSaved = await state.inFlightSavePromise;
           return {
             saved: true as const,
             deduplicated: true as const,
@@ -88,35 +111,23 @@ export function createMemoryTools({
         }
 
         const sentence = toSelfContainedSentence(value);
-        if (turnSavedFact) {
-          const existingLower = turnSavedFact.value.toLowerCase();
+        if (state.savedFact) {
+          const existingLower = state.savedFact.value.toLowerCase();
           const incomingLower = sentence.toLowerCase();
           const sameFact =
             existingLower.includes(incomingLower) ||
             incomingLower.includes(existingLower) ||
-            turnSavedFact.key === key.trim();
+            state.savedFact.key === key.trim();
           if (dedupePerTurn || sameFact) {
-            if (!sameFact) {
-              const combined = `${turnSavedFact.value.replace(/[.!?]+$/, "")}. ${sentence}`;
-              turnSavedFact = await store.upsertProfileFact({
-                userId,
-                category: turnSavedFact.category,
-                key: turnSavedFact.key,
-                value: combined.slice(0, 1500),
-                source: defaultSource,
-                pinned: pinned ?? turnSavedFact.pinned,
-                sharedAcrossBots,
-              });
-            }
             return {
               saved: true as const,
               deduplicated: true as const,
-              fact: turnSavedFact,
+              fact: state.savedFact,
             };
           }
         }
 
-        if (dedupePerTurn && turnSavedJournal) {
+        if (dedupePerTurn && state.savedJournal) {
           return {
             saved: false as const,
             deduplicated: true as const,
@@ -134,16 +145,16 @@ export function createMemoryTools({
           pinned,
           sharedAcrossBots,
         });
-        inFlightSavePromise = writePromise;
+        state.inFlightSavePromise = writePromise;
         try {
           const saved = await writePromise;
-          turnSavedFact = saved;
+          state.savedFact = saved;
           return {
             saved: true as const,
             fact: saved,
           };
         } finally {
-          inFlightSavePromise = null;
+          state.inFlightSavePromise = null;
         }
       } catch (err) {
         if (err instanceof SensitiveMemoryBlockedError) {
@@ -187,21 +198,21 @@ export function createMemoryTools({
     }),
     execute: async ({ title, body, tags }) => {
       try {
-        if (turnSavedJournal) {
+        if (state.savedJournal) {
           const sameEntry =
-            turnSavedJournal.title.trim().toLowerCase() ===
+            state.savedJournal.title.trim().toLowerCase() ===
               title.trim().toLowerCase() ||
-            turnSavedJournal.body.trim().toLowerCase() ===
+            state.savedJournal.body.trim().toLowerCase() ===
               body.trim().toLowerCase();
           if (dedupePerTurn || sameEntry) {
             return {
               logged: true as const,
               deduplicated: true as const,
-              entry: turnSavedJournal,
+              entry: state.savedJournal,
             };
           }
         }
-        if (dedupePerTurn && turnSavedFact) {
+        if (dedupePerTurn && state.savedFact) {
           return {
             logged: false as const,
             deduplicated: true as const,
@@ -216,7 +227,7 @@ export function createMemoryTools({
           tags,
           source: "chat",
         });
-        turnSavedJournal = entry;
+        state.savedJournal = entry;
         return {
           logged: true as const,
           entry,

@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { AgentMascot } from "@/components/chat/agent-mascot";
+import { useUiLocale } from "@/hooks/use-ui-locale";
 import {
   AGENT_MASCOTS,
   DEFAULT_AGENT_MASCOT,
@@ -15,10 +16,7 @@ import {
   MASCOT_STORAGE_KEY,
   type MascotVariant,
 } from "@/lib/mascot";
-import { getCopy } from "@/lib/ui-copy";
 import { cn } from "@/lib/utils";
-
-const copy = getCopy();
 
 type MascotPreference = {
   variant: MascotVariant;
@@ -83,6 +81,7 @@ export function useMascotPreference(): MascotPreference {
 
 export function MascotPicker() {
   const { variant, setVariant } = useMascotPreference();
+  const { copy } = useUiLocale();
 
   return (
     <fieldset className="space-y-2 border-0 p-0">

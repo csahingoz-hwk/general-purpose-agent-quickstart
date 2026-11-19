@@ -422,11 +422,11 @@ test("Item 10: buildHtmlPageOrDashboard produces single-file ECharts HTML (dark/
     charts: [
       {
         title: "ARR Trend",
-        option: {
+        optionJson: JSON.stringify({
           xAxis: { type: "category", data: ["Q1", "Q2", "Q3"] },
           yAxis: { type: "value" },
           series: [{ type: "line", data: [3.8, 4.3, 4.8] }],
-        },
+        }),
       },
     ],
   });
@@ -497,7 +497,7 @@ test("Item 11: createExcalidrawDiagram validates Excalidraw scene JSON, expands 
 
   const validOut = await execTool(diagramTool, {
     title: "Event-Driven Order Pipeline",
-    elements: [
+    elementsJson: JSON.stringify([
       {
         id: "api_gw",
         type: "rectangle",
@@ -531,7 +531,7 @@ test("Item 11: createExcalidrawDiagram validates Excalidraw scene JSON, expands 
         endBinding: { elementId: "worker_q" },
         label: "enqueue",
       },
-    ],
+    ]),
     mermaidFallback:
       "flowchart LR\n  A[API Gateway] -->|enqueue| B[Order Worker]",
   });

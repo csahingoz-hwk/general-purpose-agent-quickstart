@@ -2,6 +2,16 @@ import postgres from "postgres";
 
 const sharedPools = new Map<string, ReturnType<typeof postgres>>();
 
+export function resolveSharedPostgresUrl(rawUrl?: string): string {
+  const explicit = rawUrl?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  return (
+    process.env.POSTGRES_URL?.trim() || process.env.DATABASE_URL?.trim() || ""
+  );
+}
+
 /**
  * Process-wide shared PostgreSQL connection pool keyed by URL so parallel
  * chat-turn reads (messages, soul, memory, vault, approvals, summaries, skills,
@@ -9,18 +19,18 @@ const sharedPools = new Map<string, ReturnType<typeof postgres>>();
  * connection pools per request.
  */
 export function getSharedPostgresClient(
-  rawUrl = process.env.POSTGRES_URL ?? ""
+  rawUrl?: string
 ): ReturnType<typeof postgres> {
-  const key = rawUrl.trim();
+  const key = resolveSharedPostgresUrl(rawUrl);
   const existing = sharedPools.get(key);
   if (existing) {
     return existing;
   }
   const client = postgres(key, {
-    max: 10,
+    max: 5,
     prepare: false,
     idle_timeout: 20,
-    connect_timeout: 10,
+    connect_timeout: 20,
   });
   sharedPools.set(key, client);
   return client;

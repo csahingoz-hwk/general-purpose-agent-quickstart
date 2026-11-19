@@ -1,20 +1,20 @@
 import { motion, useReducedMotion } from "framer-motion";
+import { useUiLocale } from "@/hooks/use-ui-locale";
 import type { MascotState } from "@/lib/mascot";
-import { getCopy } from "@/lib/ui-copy";
 import { AgentMascot } from "./agent-mascot";
 import { useMascotPreference } from "./mascot-preference";
-
-const copy = getCopy();
 
 export const Greeting = ({ activity }: { activity: MascotState }) => {
   const reduceMotion = useReducedMotion();
   const { variant } = useMascotPreference();
+  const { copy, locale } = useUiLocale();
   const initial = reduceMotion ? false : { opacity: 0, y: 10 };
 
   return (
     <div className="flex flex-col items-center px-4" key="overview">
       <AgentMascot
         animated
+        locale={locale}
         priority
         size={156}
         state={activity}

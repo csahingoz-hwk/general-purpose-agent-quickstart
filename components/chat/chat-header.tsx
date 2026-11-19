@@ -235,7 +235,9 @@ function PureChatHeader({
                 <Settings2Icon className="size-4 text-muted-foreground" />
                 {copy.usageAndSettings}
               </span>
-              <span className="text-muted-foreground text-xs">Open</span>
+              <span className="text-muted-foreground text-xs">
+                {copy.openButton}
+              </span>
             </Link>
           </PopoverContent>
         </Popover>

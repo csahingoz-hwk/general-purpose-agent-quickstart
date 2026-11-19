@@ -34,6 +34,7 @@ export async function ensureParitySchema(
         mpf: string | null;
         oas: string | null;
         rtpe: string | null;
+        mpf_legacy?: boolean;
       }[]
     >`
       SELECT
@@ -42,7 +43,22 @@ export async function ensureParitySchema(
         to_regclass('public."ChatBotBinding"')::text AS cb,
         to_regclass('public."MemoryProfileFact"')::text AS mpf,
         to_regclass('public."OwnerAssistantSettings"')::text AS oas,
-        to_regclass('public."RoutineTriggerProcessedEvent"')::text AS rtpe
+        to_regclass('public."RoutineTriggerProcessedEvent"')::text AS rtpe,
+        EXISTS (
+          SELECT 1
+          FROM pg_class c
+          WHERE c.oid = to_regclass('public."MemoryProfileFact"')
+            AND (
+              NOT EXISTS (
+                SELECT 1 FROM pg_attribute a
+                WHERE a.attrelid = c.oid AND a.attname = 'learnedAt' AND NOT a.attisdropped
+              )
+              OR NOT EXISTS (
+                SELECT 1 FROM pg_attribute a
+                WHERE a.attrelid = c.oid AND a.attname = 'pinned' AND NOT a.attisdropped
+              )
+            )
+        ) AS mpf_legacy
     `.catch(() => []);
     const row = existing[0];
     const hasCoreTables = Boolean(row?.pf && row?.rt && row?.cb && row?.mpf);
@@ -50,7 +66,8 @@ export async function ensureParitySchema(
       row !== undefined &&
       ("oas" in row || "rtpe" in row) &&
       (!row.oas || !row.rtpe);
-    if (hasCoreTables && !missingAutonomyTables) {
+    const needsMemoryColumnUpgrade = row?.mpf_legacy === true;
+    if (hasCoreTables && !missingAutonomyTables && !needsMemoryColumnUpgrade) {
       schemaEnsuredForProcess = true;
       return;
     }

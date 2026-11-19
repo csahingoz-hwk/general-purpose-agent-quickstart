@@ -663,14 +663,7 @@ function appendConnectedManifestTools(
       (AVAILABLE_CHAT_TOOLS as readonly string[]).includes(name)
   );
   const ownerSelfService: ChatToolName[] = canPersonalize
-    ? [
-        "setHomeLocation",
-        "setSoul",
-        "draftOutboundMessage",
-        "buildHtmlPageOrDashboard",
-        "createExcalidrawDiagram",
-        "generateInfographic",
-      ]
+    ? ["setHomeLocation", "setSoul", "draftOutboundMessage"]
     : [];
   const combined = [
     ...rankedIntentTools,

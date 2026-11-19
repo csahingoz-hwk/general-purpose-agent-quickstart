@@ -50,7 +50,7 @@ export function SidebarUserNav({
   const { setOpenMobile } = useSidebar();
   const { data } = useSession();
   const { setTheme, resolvedTheme } = useTheme();
-  const { copy } = useUiLocale("en");
+  const { copy } = useUiLocale();
 
   const email = user?.email ?? data?.user?.email ?? "";
   const isGuest = guestRegex.test(email);
@@ -108,12 +108,14 @@ export function SidebarUserNav({
                 }}
               />
               <div className="min-w-0 flex-1">
-                <p className="text-[11px] text-muted-foreground">Account</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {copy.accountLabel}
+                </p>
                 <p
                   className="truncate font-medium text-[13px] text-foreground"
                   data-testid="user-menu-email"
                 >
-                  {isGuest ? "Guest" : email || "Signed in"}
+                  {isGuest ? "Guest" : email || copy.signedInFallback}
                 </p>
               </div>
             </div>
@@ -171,7 +173,9 @@ export function SidebarUserNav({
               }
             >
               <SunMoonIcon className="size-4 text-muted-foreground" />
-              {`Toggle ${resolvedTheme === "light" ? "dark" : "light"} mode`}
+              {resolvedTheme === "light"
+                ? copy.toggleDarkMode
+                : copy.toggleLightMode}
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
@@ -189,7 +193,7 @@ export function SidebarUserNav({
               }}
             >
               <LogOutIcon className="size-4 text-muted-foreground" />
-              {isGuest ? "Login to your account" : copy.signOut}
+              {isGuest ? copy.loginToAccount : copy.signOut}
             </DropdownMenuItem>
             {onRequestDeleteAll && (
               <>
