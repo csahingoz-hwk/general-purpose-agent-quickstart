@@ -178,7 +178,7 @@ export const LIVE_VOICE_TOOL_DECLARATIONS: readonly LiveToolDeclaration[] = [
     type: "function",
     name: "getFixtures",
     description:
-      "Look up a single football club's next match, kickoff time, and latest score (for league-wide fixtures or standings such as 'Süper Lig', use webSearch instead).",
+      "Look up a single football club's domestic league schedule, next match, local kickoff time, and latest score. Coverage may be domestic league only — for Champions League, Europa League, Conference League, cup, national-team, or league-wide (such as 'Süper Lig') questions, call webSearch instead.",
     parameters: {
       type: "object",
       properties: {
@@ -552,7 +552,7 @@ export function fillerPhraseForTool(
   );
 }
 
-const MAX_FILLER_UTTERANCE_CHARS = 80;
+const MAX_FILLER_UTTERANCE_CHARS = 120;
 
 function normalizeFillerKey(value: string): string {
   return value
@@ -577,26 +577,64 @@ const KNOWN_FILLER_KEYS = new Set<string>(
     "Bir saniye…",
     "One moment…",
     "Just a second…",
+    "Give me a sec…",
+    "I'll get right back to you…",
   ].map(normalizeFillerKey)
 );
 
 const FILLER_PHRASE_RE =
-  /(?:(?<!\p{L})(?:kontrol\s+ediyorum|bakıyorum|arıyorum|araştırıyorum|hazırlıyorum|oluşturuyorum|kaydediyorum|ekliyorum|çalıştırıyorum|açıyorum|başlatıyorum)(?!\p{L})|(?<!\p{L})(?:checking|looking(?:\s+(?:into|up|at|for))?|searching|finding|fetching|pulling\s+up|working\s+on|preparing|let\s+me\s+(?:check|look|search|find))(?!\p{L}))/iu;
+  /(?:(?<!\p{L})(?:kontrol\s+ediyorum|bakıyorum|arıyorum|araştırıyorum|inceliyorum|sorguluyorum|hazırlıyorum|oluşturuyorum|kaydediyorum|ekliyorum|çalıştırıyorum|açıyorum|başlatıyorum|getiriyorum)(?!\p{L})|(?<!\p{L})(?:checking|looking(?:\s+(?:into|up|at|for))?|searching|finding|fetching|pulling\s+up|working\s+on|preparing|let\s+me\s+(?:check|look|search|find))(?!\p{L}))/iu;
 
 const NON_FILLER_CONTENT_RE =
-  /(?:(?<!\p{L})looking\s+forward(?!\p{L})|(?<!\p{L})(?:finished|done|found|here(?:'s| is| are)|there(?:'s| is| are)|you have|buldum|yok|değil|başarısız|failed|unable|could not|couldn't)(?!\p{L})|\d{1,2}[:.]\d{2}|\d+\s*(?:°|%|tl|usd|eur|gbp|puan|gol|maç|unread|emails?|messages?)(?!\p{L}))/iu;
+  /(?:(?<!\p{L})looking\s+forward(?!\p{L})|(?<!\p{L})(?:finished|done|found|here(?:'s| is| are)|there(?:'s| is| are)|you have|buldum|yok|değil|başarısız|failed|unable|could not|couldn't|oynayacak|oynuyor|oynandı|kazandı|yenildi|berabere|deplasmanda|evinde|stadyum|arena|faces|plays|playing|beat|won|lost|away\s+at|at\s+home|vs\.?|versus)(?!\p{L})|\d{1,2}[:.]\d{2}|\b\d+\s*[-–]\s*\d+\b|\bsaat\s+\d{1,2}\b|\b\d{1,2}\s*(?:ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?!\p{L})|(?:ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}\b|\d+\s*(?:°|%|tl|usd|eur|gbp|puan|gol|maç|unread|emails?|messages?|derece)(?!\p{L}))/iu;
 
-const TR_FILLER_END_RE =
-  /(?<!\p{L})(?:kontrol\s+ediyorum|bakıyorum|arıyorum|araştırıyorum|hazırlıyorum|oluşturuyorum|kaydediyorum|ekliyorum|çalıştırıyorum|açıyorum|başlatıyorum)[.!…]*$/iu;
+const ACK_PREFIX_CLAUSE_RE =
+  /^(?:tamam|tabii|tabi|peki|elbette|anladım|sure|okay|ok|alright|got\s+it|of\s+course|right)$/iu;
+
+const WAIT_FILLER_CLAUSE_RE =
+  /^(?:(?:bir|bi)\s+(?:saniye|dakika|an)(?:\s+(?:bekle(?:yin)?|lütfen))?|lütfen\s+bekle(?:yin)?|bekle(?:yin)?\s+lütfen|one\s+moment(?:\s+please)?|just\s+a\s+(?:moment|second|sec)|give\s+me\s+a\s+(?:moment|second|sec)|hang\s+on|hold\s+on(?:\s+a\s+(?:moment|second|sec))?|bear\s+with\s+me)$/iu;
+
+const TR_ACTION_CLAUSE_RE =
+  /(?<!\p{L})(?:kontrol\s+ediyorum|bakıyorum|arıyorum|araştırıyorum|inceliyorum|sorguluyorum|hazırlıyorum|oluşturuyorum|kaydediyorum|ekliyorum|çalıştırıyorum|açıyorum|başlatıyorum|getiriyorum)$/iu;
+
+const TR_PROMISE_END_RE =
+  /(?<!\p{L})(?:bilgi(?:yi|leri)?\s+vereceğim|haber\s+vereceğim|söyleyeceğim|paylaşacağım|aktaracağım|ileteceğim|döneceğim|vereceğim|bakacağım|kontrol\s+edeceğim|arayacağım)$/iu;
+
+const TR_PROMISE_CUE_RE =
+  /(?<!\p{L})(?:hemen|şimdi|birazdan|az\s+sonra|kısa\s+sürede|bilgi(?:yi|leri)?|haber|güncel|detaylı|sonucu|kontrol\s+ed|bakacağım|arayacağım|döneceğim)(?!\p{L})/iu;
 
 const EN_EXPLICIT_FILLER_RE =
-  /^(?:(?:sure|okay|ok|alright|got\s+it|one\s+moment|just\s+a\s+second|hold\s+on)[,.!]?\s+)*(?:(?:i(?:'m| am)|let\s+me|just)\s+(?:checking|check|looking\s+(?:into|up|at|for)|look\s+(?:into|up|at|for)|searching|search|fetching|pulling\s+up|working\s+on|preparing)(?!\p{L})|(?:checking|looking\s+(?:into|up)|searching|working\s+on|preparing)\s+(?:that|this|it|now|your(?!\p{L})|the\s+(?:web|weather|clock|fixtures|schedule|scores|standings|news|inbox|calendar|drive|results)(?!\p{L})|fixtures(?!\p{L})|online(?!\p{L})|for\s+that(?!\p{L})|for\s+you(?!\p{L})))/iu;
+  /^(?:(?:sure|okay|ok|alright|got\s+it|one\s+moment|just\s+a\s+(?:moment|second|sec)|give\s+me\s+a\s+(?:moment|second|sec)|hold\s+on|hang\s+on)[,.!]?\s+)*(?:(?:i(?:'m| am)|let\s+me|just)\s+(?:checking|check|looking\s+(?:into|up|at|for)|look\s+(?:into|up|at|for)|searching|search|fetching|pulling\s+up|working\s+on|preparing)(?!\p{L})|(?:checking|looking\s+(?:into|up)|searching|working\s+on|preparing|pulling\s+up)\s+(?:that|this|it|now|your(?!\p{L})|the\s+(?:latest\s+|detailed\s+)?(?:web|weather|clock|fixtures|schedule|scores|standings|news|inbox|calendar|drive|results|details)(?!\p{L})|fixtures(?!\p{L})|online(?!\p{L})|for\s+that(?!\p{L})|for\s+you(?!\p{L})))/iu;
+
+const EN_PROMISE_CLAUSE_RE =
+  /^(?:and\s+)?i(?:'ll| will)\s+(?:get\s+(?:right\s+)?back\s+to\s+you|let\s+you\s+know|tell\s+you|share\s+(?:the\s+)?(?:details|results?|update|info|answer)|give\s+you\s+(?:an?\s+update|the\s+(?:latest|details|info|information|answer|results?))|be\s+right\s+back|check\s+(?:that|this|it|on\s+that)(?:\s+(?:right\s+now|now|for\s+you))?|have\s+(?:that|the\s+answer|it)\s+(?:for\s+you\s+)?(?:in\s+a\s+(?:moment|second|sec)|shortly|right\s+away))(?:\s+(?:right\s+away|shortly|in\s+a\s+(?:moment|second|sec)|soon|now))?$/iu;
+
+function classifyFillerClause(clause: string): "ack" | "filler" | "other" {
+  const cleaned = clause.replace(/[.!…]+$/u, "").trim();
+  if (!cleaned) {
+    return "ack";
+  }
+  if (ACK_PREFIX_CLAUSE_RE.test(cleaned)) {
+    return "ack";
+  }
+  if (
+    WAIT_FILLER_CLAUSE_RE.test(cleaned) ||
+    TR_ACTION_CLAUSE_RE.test(cleaned) ||
+    (TR_PROMISE_END_RE.test(cleaned) && TR_PROMISE_CUE_RE.test(cleaned)) ||
+    EN_EXPLICIT_FILLER_RE.test(cleaned) ||
+    EN_PROMISE_CLAUSE_RE.test(cleaned)
+  ) {
+    return "filler";
+  }
+  return "other";
+}
 
 /**
- * Returns true when a pending pre-tool assistant voice caption is only a short
- * spoken filler ("Kontrol ediyorum…", "Web'de arıyorum…", "Checking that now…")
- * that should NOT be persisted as a separate chat bubble because the tool card
- * replaces it. Spoken audio is unaffected.
+ * Returns true when an assistant voice caption is only a short spoken filler
+ * or wait/promise phrase ("Kontrol ediyorum…", "Maç programını kontrol ediyorum...",
+ * "Detaylı fikstüre bakıyorum, hemen sana güncel bilgiyi vereceğim.",
+ * "Checking that now…", "One moment, I'll get back to you.") that should NOT
+ * be persisted as a separate chat bubble. Spoken audio is unaffected.
  */
 export function isFillerOnlyUtterance(text: string): boolean {
   const trimmed = text.trim().replace(/\s+/g, " ");
@@ -624,15 +662,31 @@ export function isFillerOnlyUtterance(text: string): boolean {
   if (sentences.length > 2) {
     return false;
   }
+
+  const clauses = lower
+    .split(/(?:[.!…]+(?:\s+|$)|\s*[,;]\s+)/u)
+    .map((c) => c.trim())
+    .filter(Boolean);
+  if (clauses.length > 0 && clauses.length <= 3) {
+    let sawFiller = false;
+    let allFillerOrAck = true;
+    for (const clause of clauses) {
+      const kind = classifyFillerClause(clause);
+      if (kind === "filler") {
+        sawFiller = true;
+      } else if (kind === "other") {
+        allFillerOrAck = false;
+        break;
+      }
+    }
+    if (allFillerOrAck && sawFiller) {
+      return true;
+    }
+  }
+
   const endsWithEllipsis = /(?:…|\.{2,})$/u.test(trimmed);
   if (endsWithEllipsis) {
     return FILLER_PHRASE_RE.test(lower);
-  }
-  if (TR_FILLER_END_RE.test(lower)) {
-    return true;
-  }
-  if (EN_EXPLICIT_FILLER_RE.test(lower)) {
-    return true;
   }
   return false;
 }
@@ -1103,6 +1157,103 @@ export type CommittedLiveTurn = {
   interrupted: boolean;
 };
 
+/**
+ * Filters a committed live turn before UI rendering or DB persistence so
+ * filler-only assistant bubbles are dropped while keeping user speech and
+ * substantive assistant answers intact.
+ */
+export function filterCommittedLiveTurn(
+  turn: CommittedLiveTurn,
+  opts?: {
+    dropFillerAssistant?: boolean;
+  }
+): CommittedLiveTurn | null {
+  const user = turn.user.trim();
+  let assistant = turn.assistant.trim();
+  const shouldDrop =
+    Boolean(opts?.dropFillerAssistant) ||
+    (!user && Boolean(assistant) && isFillerOnlyUtterance(assistant));
+  if (shouldDrop && assistant && isFillerOnlyUtterance(assistant)) {
+    assistant = "";
+  }
+  if (!user && !assistant) {
+    return null;
+  }
+  return {
+    user,
+    assistant,
+    interrupted: turn.interrupted,
+  };
+}
+
+/**
+ * Tracks active tool calls and the post-tool window prior to the real spoken
+ * answer so late pre-tool filler captions arriving on turnComplete, interrupted,
+ * tool-done, pause, or stop are never persisted as chat bubbles.
+ */
+export class LiveToolTurnGuard {
+  private readonly inFlight = new Set<string>();
+  private awaitingPostToolAnswer = false;
+
+  get hasInFlightTools(): boolean {
+    return this.inFlight.size > 0;
+  }
+
+  get isDroppingFillers(): boolean {
+    return this.inFlight.size > 0 || this.awaitingPostToolAnswer;
+  }
+
+  onToolStart(callId: string) {
+    this.inFlight.add(callId);
+    this.awaitingPostToolAnswer = true;
+  }
+
+  onToolDone(callId: string) {
+    this.inFlight.delete(callId);
+  }
+
+  onToolCancelled(callId: string) {
+    this.inFlight.delete(callId);
+  }
+
+  reset() {
+    this.inFlight.clear();
+    this.awaitingPostToolAnswer = false;
+  }
+
+  filterCommit(
+    turn: CommittedLiveTurn,
+    opts?: { dropFillerAssistant?: boolean }
+  ): CommittedLiveTurn | null {
+    const dropFillerAssistant =
+      Boolean(opts?.dropFillerAssistant) || this.isDroppingFillers;
+    const filtered = filterCommittedLiveTurn(turn, { dropFillerAssistant });
+    if (
+      filtered?.assistant &&
+      this.inFlight.size === 0 &&
+      !isFillerOnlyUtterance(filtered.assistant)
+    ) {
+      this.awaitingPostToolAnswer = false;
+    }
+    return filtered;
+  }
+}
+
+/**
+ * Builds the POST payload for `/api/voice/live-session` on initial start,
+ * resume, or socket reconnect, preserving `chatId` and `timeZone` so the
+ * server reloads recent chat context from Postgres.
+ */
+export function buildLiveSessionRequestBody(
+  sessionBody: Record<string, unknown>,
+  resumeHandle?: string | null
+): Record<string, unknown> {
+  return {
+    ...sessionBody,
+    ...(resumeHandle ? { resumeHandle } : {}),
+  };
+}
+
 const UTTERANCE_PAUSE_GAP_MS = 850;
 
 /**
@@ -1187,6 +1338,10 @@ export class LiveTurnAssembler {
   addOutput(text: string) {
     this.outputStarted = true;
     this.output = appendTranscriptSegment(this.output, text, 0);
+  }
+
+  clearAssistantOutput() {
+    this.output = "";
   }
 
   markOutputStarted() {

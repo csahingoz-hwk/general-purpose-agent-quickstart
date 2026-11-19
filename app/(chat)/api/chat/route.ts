@@ -135,6 +135,7 @@ import {
 import type { DBMessage } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
 import { prepareMessagesWithAttachments } from "@/lib/files/parse-attachment";
+import { textLocale } from "@/lib/fixtures";
 import { isMacBridgeConfigured } from "@/lib/mac-bridge/client";
 import { isMediaStudioEnabled } from "@/lib/media/media-studio";
 import {
@@ -915,6 +916,8 @@ export async function POST(request: Request) {
             getFixtures: getFixtures({
               now: () => requestNow,
               footballDataKey: process.env.FOOTBALL_DATA_API_KEY ?? null,
+              timeZone: requestTimeZone ?? homeLocation?.timeZone ?? null,
+              locale: textLocale(finalUserText),
             }),
             getCurrentTime: getCurrentTime({
               defaultTimeZone:

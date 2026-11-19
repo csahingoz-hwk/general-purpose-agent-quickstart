@@ -147,7 +147,8 @@ test("owner clock is Europe/London on every context block and next events cannot
   assert.match(block, /sıradaki/);
   assert.match(block, /do not guess a date or kickoff/);
   const prompt = systemPrompt({ supportsTools: true, includeFixtures: true });
-  assert.match(prompt, /kickoff in Europe\/London/);
+  assert.match(prompt, /user's local time zone/);
+  assert.match(prompt, /never give raw UTC/i);
   assert.match(prompt, /one short sentence/);
   assert.equal(OWNER_TIME_ZONE, "Europe/London");
   const label = labelKickoff(

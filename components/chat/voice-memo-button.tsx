@@ -17,7 +17,10 @@ import { Button } from "@/components/ui/button";
 import { useUiLocale } from "@/hooks/use-ui-locale";
 import type { ChatMessage } from "@/lib/types";
 import { cn, fetcher, generateUUID } from "@/lib/utils";
-import type { CommittedLiveTurn } from "@/lib/voice/live-protocol";
+import {
+  type CommittedLiveTurn,
+  filterCommittedLiveTurn,
+} from "@/lib/voice/live-protocol";
 import { AgentMascot } from "./agent-mascot";
 import {
   type LivePhase,
@@ -405,25 +408,30 @@ export function LiveVoiceButton({
 
   const sessionBody = useCallback(() => {
     let selectedBotSlug: string | undefined;
-    let timeZone = "Europe/London";
+    let timeZone: string | undefined;
     try {
       selectedBotSlug =
         window.localStorage.getItem("assistant-active-bot")?.trim() ||
         undefined;
-      timeZone =
-        Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/London";
+      timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || undefined;
     } catch {
       /* defaults */
     }
     return {
       chatId,
-      timeZone,
+      ...(timeZone ? { timeZone } : {}),
       ...(selectedBotSlug ? { selectedBotSlug } : {}),
     };
   }, [chatId]);
 
   const persistTurn = useCallback(
-    (turn: CommittedLiveTurn) => {
+    (rawTurn: CommittedLiveTurn) => {
+      const turn = filterCommittedLiveTurn(rawTurn, {
+        dropFillerAssistant: true,
+      });
+      if (!turn) {
+        return;
+      }
       const userMessageId = generateUUID();
       const assistantMessageId = generateUUID();
       const createdAt = new Date().toISOString();

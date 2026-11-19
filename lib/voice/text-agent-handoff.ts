@@ -43,10 +43,14 @@ import {
   type ToolExecutionJournalStore,
 } from "@/lib/safety/approval-preferences";
 import type { BackgroundTaskStore } from "@/lib/tasks/runner";
-import { contextBlock, type HomeLocation } from "@/lib/temporal";
+import { contextBlock, type HomeLocation, validTimeZone } from "@/lib/temporal";
 import type { ChatMessage } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
 import type { SecretVaultStore } from "@/lib/vault/secret-vault";
+import {
+  formatVoiceRecentContextBlock,
+  type VoiceRecentTurn,
+} from "./live-session";
 
 export function stripMarkdownForSpeech(raw: string): string {
   return raw
@@ -133,8 +137,9 @@ export async function executeVoiceTextAgentHandoff(opts: {
   chatId: string;
   request: string;
   locale?: "en" | "tr";
-  timeZone?: string;
+  timeZone?: string | null;
   homeLocation?: HomeLocation | null;
+  recentTurns?: VoiceRecentTurn[];
   vaultStore?: SecretVaultStore;
   memoryStore?: MemoryStore;
   approvalPrefsStore?: ApprovalPreferencesStore;
@@ -190,7 +195,9 @@ export async function executeVoiceTextAgentHandoff(opts: {
 
   const memStore = resolveVoiceMemoryStore(opts.memoryStore);
   const prefsStore = resolveApprovalPreferencesStore(opts.approvalPrefsStore);
-  const resolvedTz = opts.timeZone || "Europe/London";
+  const explicitTz = validTimeZone(opts.timeZone);
+  const homeTz = validTimeZone(opts.homeLocation?.timeZone);
+  const resolvedTz = explicitTz ?? homeTz ?? "Europe/London";
 
   const [facts, journalEntries, approvalSettings, toolRules] =
     await Promise.all([
@@ -235,6 +242,8 @@ export async function executeVoiceTextAgentHandoff(opts: {
     userId: opts.userId,
     homeLocation: opts.homeLocation ?? LONDON_FALLBACK_HOME,
     defaultTimeZone: resolvedTz,
+    fixtureTimeZone: explicitTz ?? homeTz ?? null,
+    locale: detectedLocale,
     hasUntrustedContext:
       selectedToolNames.includes("gmailReadMessages") ||
       selectedToolNames.includes("calendarReadEvents") ||
@@ -264,13 +273,20 @@ export async function executeVoiceTextAgentHandoff(opts: {
     timeZone: resolvedTz,
     home: opts.homeLocation ?? LONDON_FALLBACK_HOME,
   });
+  const recentContextBlock = formatVoiceRecentContextBlock(opts.recentTurns, {
+    maxTurns: 20,
+    maxChars: 6000,
+  });
 
   const instructions = `${systemPrompt({
     supportsTools: true,
     includeArtifacts: false,
+    includeFixtures: activeTools.includes("getFixtures"),
     includeOperatorTools: true,
     googleConnected: true,
-    context: [temporalContext, memoryBlock].filter(Boolean).join("\n\n"),
+    context: [temporalContext, memoryBlock, recentContextBlock]
+      .filter(Boolean)
+      .join("\n\n"),
   })}\n\n## Voice Handoff Output Rule\nYour final reply will be spoken aloud on a live voice call (${detectedLocale === "tr" ? "Turkish" : "English"}): keep it warm, plain-spoken, 1–3 concise sentences, with zero markdown or raw URLs.`;
 
   const availableModels = [

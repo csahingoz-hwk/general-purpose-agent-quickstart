@@ -4,6 +4,7 @@ import {
   base64ToInt16,
   buildLiveAudioClientMessage,
   buildLiveCancelMessage,
+  buildLiveSessionRequestBody,
   buildLiveStreamEndMessage,
   buildLiveToolOutputItemMessage,
   CLIENT_FILLERS_EN,
@@ -15,6 +16,7 @@ import {
   LIVE_FRAME_MS,
   LIVE_FRAME_SAMPLES,
   LIVE_OUTPUT_SAMPLE_RATE,
+  LiveToolTurnGuard,
   type LiveTransportKind,
   LiveTurnAssembler,
   parseLiveServerMessage,
@@ -200,6 +202,7 @@ export class LiveVoiceEngine {
   private readonly seenToolCalls = new Set<string>();
   private readonly inFlightToolCalls = new Set<string>();
   private readonly cancelledToolCalls = new Set<string>();
+  private readonly toolTurnGuard = new LiveToolTurnGuard();
   private pendingGatewayResponseCreate = false;
 
   private readonly onVisibility = () => {
@@ -268,7 +271,7 @@ export class LiveVoiceEngine {
    * MUST be called synchronously from the tap handler: the AudioContext,
    * audio session and mic request are all unlocked by that user gesture.
    */
-  start() {
+  start(opts?: { bypassPrefetch?: boolean }) {
     this.stopped = false;
     setAudioSessionType("play-and-record");
     const AudioCtx =
@@ -301,10 +304,13 @@ export class LiveVoiceEngine {
         })
       : Promise.reject(new Error("no-media-devices"));
 
-    const tokenPromise = this.takeToken({
-      ...this.sessionBody,
-      ...(this.resumeHandle ? { resumeHandle: this.resumeHandle } : {}),
-    });
+    const sessionReq = buildLiveSessionRequestBody(
+      this.sessionBody,
+      this.resumeHandle
+    );
+    const tokenPromise = opts?.bypassPrefetch
+      ? requestToken(this.basePath, sessionReq)
+      : this.takeToken(sessionReq);
 
     document.addEventListener("visibilitychange", this.onVisibility);
     this.requestWakeLock();
@@ -494,6 +500,10 @@ export class LiveVoiceEngine {
         );
         return;
       }
+      if (this.resumeHandle && this.reconnectAttempts >= 1) {
+        // Fallback to a fresh Live session seeded with reloaded DB context.
+        this.resumeHandle = null;
+      }
       this.reconnect();
     };
   }
@@ -510,10 +520,10 @@ export class LiveVoiceEngine {
     this.reconnectAttempts += 1;
     this.flushPlayback();
     this.setPhase("reconnecting");
-    requestToken(this.basePath, {
-      ...this.sessionBody,
-      ...(this.resumeHandle ? { resumeHandle: this.resumeHandle } : {}),
-    })
+    requestToken(
+      this.basePath,
+      buildLiveSessionRequestBody(this.sessionBody, this.resumeHandle)
+    )
       .then((grant) => {
         this.reconnecting = false;
         if (!this.stopped) {
@@ -536,6 +546,7 @@ export class LiveVoiceEngine {
             this.ready = true;
             this.reconnectAttempts = 0;
             this.dropStaleAudio = false;
+            this.toolTurnGuard.reset();
             this.gate.reset();
             this.setPhase("listening");
           }
@@ -600,6 +611,7 @@ export class LiveVoiceEngine {
           for (const id of event.ids) {
             this.cancelledToolCalls.add(id);
             this.inFlightToolCalls.delete(id);
+            this.toolTurnGuard.onToolCancelled(id);
           }
           if (this.inFlightToolCalls.size === 0) {
             this.cb.onToolActivity?.(null);
@@ -746,6 +758,7 @@ export class LiveVoiceEngine {
     }
     this.seenToolCalls.add(callId);
     this.inFlightToolCalls.add(callId);
+    this.toolTurnGuard.onToolStart(callId);
     this.clearThinkingTimer();
 
     const locale = detectTurkishText(this.turns.userCaption) ? "tr" : "en";
@@ -793,6 +806,7 @@ export class LiveVoiceEngine {
       };
 
       this.inFlightToolCalls.delete(callId);
+      this.toolTurnGuard.onToolDone(callId);
       if (this.inFlightToolCalls.size === 0) {
         this.cb.onToolActivity?.(null);
       }
@@ -820,15 +834,16 @@ export class LiveVoiceEngine {
       }
 
       // If a spoken filler caption finished arriving while the tool was in
-      // flight, clear it before the tool response triggers the real answer so
-      // it never gets persisted or prepended to the post-tool reply.
+      // flight, record it for echo cancellation and drop it before the tool
+      // response triggers the real answer so it never gets persisted or
+      // prepended to the post-tool reply.
       if (
-        this.inFlightToolCalls.size === 0 &&
-        !this.turns.hasPendingUser &&
         this.turns.assistantCaption &&
         isFillerOnlyUtterance(this.turns.assistantCaption)
       ) {
-        this.commitTurn(false, { dropFillerAssistant: true });
+        this.recordAssistantUtterance(this.turns.assistantCaption);
+        this.turns.clearAssistantOutput();
+        this.emitCaptions();
       }
 
       if (this.ws?.readyState === WebSocket.OPEN && this.ready) {
@@ -852,6 +867,7 @@ export class LiveVoiceEngine {
       }
     } catch {
       this.inFlightToolCalls.delete(callId);
+      this.toolTurnGuard.onToolDone(callId);
       if (this.inFlightToolCalls.size === 0) {
         this.cb.onToolActivity?.(null);
       }
@@ -1036,15 +1052,9 @@ export class LiveVoiceEngine {
     if (!leaked && turn.assistant) {
       this.recordAssistantUtterance(turn.assistant);
     }
-    if (
-      opts?.dropFillerAssistant &&
-      turn.assistant &&
-      isFillerOnlyUtterance(turn.assistant)
-    ) {
-      turn.assistant = "";
-    }
-    if (turn.user || turn.assistant) {
-      this.cb.onTurn(turn);
+    const filtered = this.toolTurnGuard.filterCommit(turn, opts);
+    if (filtered) {
+      this.cb.onTurn(filtered);
     }
   }
 
@@ -1083,7 +1093,7 @@ export class LiveVoiceEngine {
   /** Resume after the app came back to the foreground (needs a tap). */
   resume() {
     this.teardownAll(false);
-    this.start();
+    this.start({ bypassPrefetch: true });
   }
 
   private async requestWakeLock() {

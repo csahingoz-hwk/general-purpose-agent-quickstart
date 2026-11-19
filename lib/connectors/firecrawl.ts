@@ -78,6 +78,210 @@ function extractPublishedDateFromMetadata(
   return null;
 }
 
+export function unwrapUntrustedContentFence(text: string): string {
+  const trimmed = text.trim();
+  const match = trimmed.match(
+    /^<untrusted_content\b[^>]*>\s*([\s\S]*?)\s*<\/untrusted_content>$/i
+  );
+  return (match?.[1] ?? trimmed).trim();
+}
+
+function foldForMatch(value: string): string {
+  return value
+    .toLocaleLowerCase("tr")
+    .replaceAll("ı", "i")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const PASSAGE_STOP_WORDS = new Set([
+  "ve",
+  "ile",
+  "bu",
+  "de",
+  "da",
+  "mi",
+  "ne",
+  "bir",
+  "icin",
+  "gibi",
+  "the",
+  "for",
+  "and",
+  "with",
+  "from",
+  "that",
+  "this",
+  "are",
+  "was",
+  "were",
+  "what",
+  "when",
+  "where",
+  "who",
+  "how",
+  "into",
+  "about",
+]);
+
+function extractQueryTerms(query: string): string[] {
+  const folded = foldForMatch(query);
+  const rawTokens = folded.split(/[^a-z0-9]+/).filter(Boolean);
+  const terms: string[] = [];
+  const seen = new Set<string>();
+  for (const token of rawTokens) {
+    const isNumber = /^\d{1,4}$/.test(token);
+    if (!isNumber && (token.length < 3 || PASSAGE_STOP_WORDS.has(token))) {
+      continue;
+    }
+    if (!seen.has(token)) {
+      seen.add(token);
+      terms.push(token);
+    }
+  }
+  return terms;
+}
+
+function cleanMarkdownForPassage(raw: string): string {
+  return raw
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, "$1")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function splitIntoBlocks(text: string): string[] {
+  const rawParagraphs = text
+    .split(/\n\n+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const blocks: string[] = [];
+  for (const para of rawParagraphs) {
+    if (para.length <= 550) {
+      blocks.push(para);
+      continue;
+    }
+    const lines = para
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    let current = "";
+    for (const line of lines) {
+      if (!current) {
+        current = line;
+      } else if (current.length + 1 + line.length <= 480) {
+        current = `${current}\n${line}`;
+      } else {
+        blocks.push(current);
+        current = line;
+      }
+    }
+    if (current) {
+      blocks.push(current);
+    }
+  }
+  return blocks;
+}
+
+const CONCRETE_FACT_TIME_RE = /\b\d{1,2}[:.]\d{2}\b/;
+const CONCRETE_FACT_DATE_RE =
+  /\b(?:ocak|subat|mart|nisan|mayis|haziran|temmuz|agustos|eylul|ekim|kasim|aralik|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b/i;
+const CONCRETE_FACT_MATCH_RE =
+  /\b(?:stadyum|arena|stadi|deplasman|evinde|venue|stadium|away|home|uefa|champions|sampiyonlar|europa|avrupa|conference|konferans|fikstur|fixture|kupa|cup|hafta|round|saat|tsi|cet|gmt|utc)\b/i;
+
+/**
+ * Extracts the most relevant passage(s) from scraped markdown for a query,
+ * preferring blocks that contain query key terms (team names, competitions,
+ * dates, times, venues) while preserving original reading order.
+ * Callers MUST re-fence the returned string with `fenceUntrustedContent`.
+ */
+export function extractRelevantWebPassage(
+  rawOrFencedText: string,
+  query: string,
+  maxChars = 1500
+): string {
+  const unwrapped = unwrapUntrustedContentFence(rawOrFencedText);
+  const cleaned = cleanMarkdownForPassage(unwrapped);
+  if (!cleaned) {
+    return "";
+  }
+  const budget = Math.max(120, maxChars);
+  if (cleaned.length <= budget) {
+    return cleaned;
+  }
+
+  const terms = extractQueryTerms(query);
+  const blocks = splitIntoBlocks(cleaned);
+  if (blocks.length === 0) {
+    return cleaned.slice(0, budget).trim();
+  }
+
+  const scored = blocks.map((block, index) => {
+    const folded = foldForMatch(block);
+    let score = 1 / (index + 2);
+    let matchedTerms = 0;
+    for (const term of terms) {
+      if (folded.includes(term)) {
+        matchedTerms += 1;
+        score += 4;
+      }
+    }
+    if (CONCRETE_FACT_TIME_RE.test(folded)) {
+      score += 3;
+    }
+    if (CONCRETE_FACT_DATE_RE.test(folded)) {
+      score += 3;
+    }
+    if (CONCRETE_FACT_MATCH_RE.test(folded)) {
+      score += 2;
+    }
+    // Slight penalty for tiny navigation fragments with no query terms
+    if (block.length < 30 && matchedTerms === 0) {
+      score -= 1;
+    }
+    return { index, block, score, matchedTerms };
+  });
+
+  scored.sort((a, b) => b.score - a.score || a.index - b.index);
+
+  const chosenIndices = new Set<number>();
+  let used = 0;
+  for (const candidate of scored) {
+    const sep = chosenIndices.size > 0 ? 2 : 0;
+    if (used + sep + candidate.block.length <= budget) {
+      chosenIndices.add(candidate.index);
+      used += sep + candidate.block.length;
+    } else if (chosenIndices.size === 0) {
+      // Single best block exceeds budget: window around the first matched term.
+      const folded = foldForMatch(candidate.block);
+      let matchPos = -1;
+      for (const term of terms) {
+        const pos = folded.indexOf(term);
+        if (pos !== -1 && (matchPos === -1 || pos < matchPos)) {
+          matchPos = pos;
+        }
+      }
+      const start =
+        matchPos > 0
+          ? Math.max(
+              0,
+              Math.min(candidate.block.length - budget, matchPos - 160)
+            )
+          : 0;
+      return candidate.block.slice(start, start + budget).trim();
+    }
+  }
+
+  const ordered = [...chosenIndices]
+    .sort((a, b) => a - b)
+    .map((idx) => blocks[idx] ?? "");
+  return ordered.join("\n\n").slice(0, budget).trim();
+}
+
 export type FirecrawlSearchItem = {
   title: string;
   url: string;
@@ -222,10 +426,15 @@ export async function runFirecrawlSearch(opts: {
         item.metadata,
         md || desc
       );
+      const rawContent = md || desc;
+      const focusedContent =
+        rawContent.length > 6000
+          ? extractRelevantWebPassage(rawContent, cleanQuery, 6000)
+          : rawContent;
       const fenced = fenceUntrustedContent({
-        text: md || desc,
+        text: focusedContent,
         source: `firecrawl:search:${safeUrl}`,
-        maxChars: 4000,
+        maxChars: 6000,
       });
       results.push({
         title,

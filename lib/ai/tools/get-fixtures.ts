@@ -1,11 +1,17 @@
 import { tool } from "ai";
 import { z } from "zod";
 import {
+  FIXTURES_COVERAGE_NOTE,
   type FixtureMatch,
   type FixturePayload,
   type FixtureSide,
+  formatKickoffLocal,
+  formatTimeZoneLabel,
+  isTurkishClubOrCompetition,
   OWNER_TIME_ZONE,
+  resolveFixtureTimeZone,
   safeBadgeUrl,
+  TURKEY_TIME_ZONE,
 } from "@/lib/fixtures";
 
 const CACHE_MS = 10 * 60 * 1000;
@@ -81,11 +87,17 @@ const fdMatchSchema = z.object({
     .optional(),
 });
 
+type CachedFixtureBase =
+  | {
+      team: FixturePayload["team"];
+      upcoming: FixtureMatch[];
+      last: FixtureMatch | null;
+    }
+  | { error: "team_not_found"; team: string };
+
 type CacheEntry = {
   expires: number;
-  value:
-    | Omit<FixturePayload, "now">
-    | { error: "team_not_found"; team: string };
+  value: CachedFixtureBase;
 };
 
 const cache = new Map<string, CacheEntry>();
@@ -339,15 +351,7 @@ type Loaded =
       matches: FixtureMatch[];
     });
 
-function splitMatches(
-  loaded: Loaded,
-  now: Date
-):
-  | Omit<FixturePayload, "now">
-  | {
-      error: "team_not_found";
-      team: string;
-    } {
+function splitMatches(loaded: Loaded, now: Date): CachedFixtureBase {
   if ("error" in loaded) {
     return loaded;
   }
@@ -365,9 +369,69 @@ function splitMatches(
     .sort((a, b) => Date.parse(b.kickoffUtc) - Date.parse(a.kickoffUtc));
   return {
     team: loaded.team,
-    timeZone: OWNER_TIME_ZONE,
     upcoming,
     last: finished[0] ?? null,
+  };
+}
+
+function enrichFixturePayload(
+  base: Exclude<CachedFixtureBase, { error: "team_not_found" }>,
+  opts: {
+    now: Date;
+    userTimeZone?: string | null;
+    locale?: "en" | "tr";
+  }
+): FixturePayload {
+  const allMatches = [...base.upcoming, ...(base.last ? [base.last] : [])];
+  const competitions = [
+    ...new Set(
+      allMatches
+        .map((match) => match.competition.trim())
+        .filter((comp) => comp.length > 0)
+    ),
+  ];
+  const resolvedTimeZone = resolveFixtureTimeZone({
+    userTimeZone: opts.userTimeZone,
+    teamName: base.team.name,
+    competitions,
+  });
+  const effectiveLocale =
+    opts.locale ??
+    (resolvedTimeZone === TURKEY_TIME_ZONE ||
+    isTurkishClubOrCompetition(base.team.name, competitions)
+      ? "tr"
+      : "en");
+  const anchorDate = base.upcoming[0]
+    ? new Date(base.upcoming[0].kickoffUtc)
+    : opts.now;
+  const kickoffTimeZone = formatTimeZoneLabel(resolvedTimeZone, anchorDate);
+
+  const enrichMatch = (match: FixtureMatch): FixtureMatch => {
+    const matchDate = new Date(match.kickoffUtc);
+    const matchTzLabel = Number.isNaN(matchDate.getTime())
+      ? kickoffTimeZone
+      : formatTimeZoneLabel(resolvedTimeZone, matchDate);
+    const local = formatKickoffLocal(
+      match.kickoffUtc,
+      resolvedTimeZone,
+      effectiveLocale
+    );
+    return {
+      ...match,
+      ...(local ? { kickoffLocal: local } : {}),
+      kickoffTimeZone: matchTzLabel,
+    };
+  };
+
+  return {
+    team: base.team,
+    timeZone: resolvedTimeZone,
+    kickoffTimeZone,
+    competitions,
+    coverageNote: FIXTURES_COVERAGE_NOTE,
+    now: opts.now.toISOString(),
+    upcoming: base.upcoming.map(enrichMatch),
+    last: base.last ? enrichMatch(base.last) : null,
   };
 }
 
@@ -448,14 +512,18 @@ export function getFixtures({
   now = () => new Date(),
   fetchImpl = fetch,
   footballDataKey = null,
+  timeZone = null,
+  locale,
 }: {
   now?: () => Date;
   fetchImpl?: typeof fetch;
   footballDataKey?: string | null;
+  timeZone?: string | null;
+  locale?: "en" | "tr";
 } = {}) {
   return tool({
     description:
-      "Look up a football club's upcoming fixtures and most recent result. Pass the club name in English or Turkish spelling (for example Galatasaray or Liverpool). Use this before web search for next-match, fixture, kickoff, and latest-score questions. Results are timed in Europe/London. Never describe a match at or before the owner clock as the next match.",
+      "Look up a single football club's domestic league upcoming fixtures and most recent result. Pass the club name in English or Turkish spelling (for example Galatasaray or Liverpool). Coverage is often domestic league only — for Champions League, Europa League, Conference League, domestic cup, national-team, or league-wide questions, call webSearch instead. Always state kickoff times using kickoffLocal in the user's local time zone and name the zone (for example 'Türkiye saatiyle'); never give raw UTC to the user. Never describe a match at or before the current clock as the next match.",
     inputSchema: z.object({
       team: z
         .string()
@@ -479,15 +547,29 @@ export function getFixtures({
           team: payload.team.name,
           now: payload.now,
           timeZone: payload.timeZone,
+          kickoffTimeZone: payload.kickoffTimeZone,
+          competitions: payload.competitions ?? [],
+          coverageNote: payload.coverageNote ?? FIXTURES_COVERAGE_NOTE,
           next: next
             ? {
                 home: next.home.name,
                 away: next.away.name,
+                kickoffLocal: next.kickoffLocal,
+                kickoffTimeZone:
+                  next.kickoffTimeZone ?? payload.kickoffTimeZone,
                 kickoffUtc: next.kickoffUtc,
                 competition: next.competition,
                 venue: next.venue,
               }
             : null,
+          upcoming: payload.upcoming.map((match) => ({
+            home: match.home.name,
+            away: match.away.name,
+            kickoffLocal: match.kickoffLocal,
+            kickoffTimeZone: match.kickoffTimeZone ?? payload.kickoffTimeZone,
+            competition: match.competition,
+            venue: match.venue,
+          })),
           upcomingCount: payload.upcoming.length,
           last: payload.last
             ? {
@@ -495,10 +577,14 @@ export function getFixtures({
                 away: payload.last.away.name,
                 homeScore: payload.last.homeScore,
                 awayScore: payload.last.awayScore,
+                kickoffLocal: payload.last.kickoffLocal,
+                kickoffTimeZone:
+                  payload.last.kickoffTimeZone ?? payload.kickoffTimeZone,
                 kickoffUtc: payload.last.kickoffUtc,
+                competition: payload.last.competition,
               }
             : null,
-          note: "The fixture card shows crests and the list. Reply with one short sentence and do not repeat the schedule. Do not call the last result the next match.",
+          note: "The fixture card shows crests and the list. Reply with one short sentence using kickoffLocal and naming the local time zone (never raw UTC). Do not repeat the schedule or call the last result the next match. Coverage caveat: European (Champions League/Europa/Conference) and cup matches may be missing here — use webSearch for them.",
         }),
       } as const;
     },
@@ -518,7 +604,11 @@ export function getFixtures({
         if ("error" in hit.value) {
           return hit.value;
         }
-        return { ...hit.value, now: clock.toISOString() };
+        return enrichFixturePayload(hit.value, {
+          now: clock,
+          userTimeZone: timeZone,
+          locale,
+        });
       }
       const signal = AbortSignal.any([
         AbortSignal.timeout(20_000),
@@ -534,7 +624,11 @@ export function getFixtures({
         if ("error" in value) {
           return value;
         }
-        return { ...value, now: clock.toISOString() };
+        return enrichFixturePayload(value, {
+          now: clock,
+          userTimeZone: timeZone,
+          locale,
+        });
       } catch {
         return { error: "fixtures_unavailable" as const, team: name };
       }
