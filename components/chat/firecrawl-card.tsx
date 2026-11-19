@@ -1,6 +1,11 @@
 "use client";
 
 import { ExternalLinkIcon, FlameIcon, GlobeIcon } from "lucide-react";
+import {
+  FIRECRAWL_KEY_CREATE_URL,
+  getCopy,
+  VERCEL_ENV_VARS_URL,
+} from "@/lib/ui-copy";
 
 export function FirecrawlCard({
   toolName,
@@ -13,7 +18,7 @@ export function FirecrawlCard({
 }) {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
   const status = String(output.status ?? "ok");
-  const isTr = locale === "tr";
+  const copy = getCopy(locale);
 
   if (status === "setup_required") {
     const setupHref =
@@ -23,7 +28,11 @@ export function FirecrawlCard({
     const externalKeyUrl =
       typeof output.externalKeyUrl === "string"
         ? output.externalKeyUrl
-        : "https://www.firecrawl.dev/app/api-keys";
+        : FIRECRAWL_KEY_CREATE_URL;
+    const vercelEnvVarsUrl =
+      typeof output.vercelEnvVarsUrl === "string"
+        ? output.vercelEnvVarsUrl
+        : VERCEL_ENV_VARS_URL;
 
     return (
       <div
@@ -38,24 +47,15 @@ export function FirecrawlCard({
           />
           <div className="min-w-0 flex-1">
             <p className="font-medium text-foreground">
-              {isTr ? "Firecrawl bağlı değil" : "Firecrawl isn't connected yet"}
+              {copy.firecrawlNotConnectedTitle}
             </p>
             <p className="mt-0.5 break-words text-muted-foreground text-xs leading-relaxed">
-              {isTr
-                ? "Sunucu taraflı web arama, sayfa okuma (scrape) ve site haritası için FIRECRAWL_API_KEY henüz eklenmemiş. Kurulum sayfasındaki Bağla adımından anahtarınızı ekleyebilirsiniz."
-                : "Add FIRECRAWL_API_KEY in your Vercel environment variables to enable server-side Firecrawl search, URL-to-Markdown scrape, and site mapping."}
+              {copy.firecrawlSetupSteps}
             </p>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2 pl-5">
-          <a
-            className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs transition-colors hover:bg-primary/90"
-            data-testid="firecrawl-open-setup"
-            href={`${basePath}${setupHref}`}
-          >
-            <span>{isTr ? "Kurulumda bağla" : "Open Setup checklist"}</span>
-          </a>
           <a
             className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-foreground text-xs transition-colors hover:bg-muted"
             data-testid="firecrawl-create-key"
@@ -63,10 +63,25 @@ export function FirecrawlCard({
             rel="noopener noreferrer"
             target="_blank"
           >
-            <span>
-              {isTr ? "Firecrawl anahtarı oluştur" : "Create Firecrawl API key"}
-            </span>
+            <span>{copy.firecrawlStep1Button}</span>
             <ExternalLinkIcon className="size-3.5" />
+          </a>
+          <a
+            className="inline-flex min-h-11 items-center gap-1.5 rounded-full bg-primary px-4 font-medium text-primary-foreground text-xs transition-colors hover:bg-primary/90"
+            data-testid="firecrawl-vercel-env"
+            href={vercelEnvVarsUrl}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            <span>{copy.firecrawlStep2VercelButton}</span>
+            <ExternalLinkIcon className="size-3.5" />
+          </a>
+          <a
+            className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-[color:var(--hairline)] bg-background px-3.5 font-medium text-foreground text-xs transition-colors hover:bg-muted"
+            data-testid="firecrawl-open-setup"
+            href={`${basePath}${setupHref}`}
+          >
+            <span>{copy.usageOpenInSetup}</span>
           </a>
         </div>
       </div>
@@ -77,9 +92,7 @@ export function FirecrawlCard({
     const errMessage =
       typeof output.message === "string"
         ? output.message
-        : isTr
-          ? "Firecrawl isteği tamamlanamadı."
-          : "Firecrawl request could not finish.";
+        : copy.firecrawlErrorFallback;
     return (
       <div
         className="w-[min(100%,460px)] rounded-2xl border border-[color:var(--hairline)] bg-card p-3.5 text-sm"
@@ -128,16 +141,10 @@ export function FirecrawlCard({
           <FlameIcon className="size-3.5 text-orange-500" />
           <span>
             {toolName === "firecrawlSearch"
-              ? isTr
-                ? "Firecrawl web araması"
-                : "Firecrawl web search"
+              ? copy.firecrawlCardSearchTitle
               : toolName === "firecrawlScrape"
-                ? isTr
-                  ? "Firecrawl sayfa okuma (Markdown)"
-                  : "Firecrawl page scrape"
-                : isTr
-                  ? "Firecrawl site haritası / tarama"
-                  : "Firecrawl site map / crawl"}
+                ? copy.firecrawlCardScrapeTitle
+                : copy.firecrawlCardMapTitle}
           </span>
         </div>
         {typeof output.fetchedAtIso === "string" ? (
@@ -173,9 +180,7 @@ export function FirecrawlCard({
         </ul>
       ) : mappedLinks.length > 0 ? (
         <p className="text-muted-foreground text-xs">
-          {isTr
-            ? `${mappedLinks.length} sayfa bağlantısı keşfedildi.`
-            : `Discovered ${mappedLinks.length} site URLs.`}
+          {mappedLinks.length} {copy.firecrawlDiscoveredUrlsSuffix}
         </p>
       ) : null}
     </div>

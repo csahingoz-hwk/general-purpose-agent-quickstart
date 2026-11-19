@@ -16,7 +16,12 @@ import {
   type ResumableStreamContext,
 } from "resumable-stream";
 import { auth } from "@/app/(auth)/auth";
-import { resolveLiveCapabilityManifest } from "@/lib/ai/capability-manifest";
+import {
+  extractFailedToolsFromMessages,
+  extractFailedToolsFromModelMessages,
+  formatTurnToolFailuresBlock,
+  resolveLiveCapabilityManifest,
+} from "@/lib/ai/capability-manifest";
 import {
   budgetModelMessages,
   DEFAULT_REPLY_TOKENS,
@@ -726,6 +731,7 @@ export async function POST(request: Request) {
       includeOperatorTools: hasOperatorToolOnTurn || googleConnectedAndHealthy,
       googleConnected: googleConnectedAndHealthy,
       capabilityManifest,
+      turnToolFailures: extractFailedToolsFromMessages(uiMessages),
       setupCapabilities:
         Boolean(premium) && session.user.type !== "guest"
           ? {
@@ -1158,6 +1164,16 @@ export async function POST(request: Request) {
               }
               if (next.tooLarge) {
                 throw new Error("chat_context_budget");
+              }
+              const stepToolFailures =
+                stepNumber > 0
+                  ? extractFailedToolsFromModelMessages(stepMessages)
+                  : [];
+              if (stepToolFailures.length > 0) {
+                return {
+                  messages: next.messages,
+                  instructions: `${replySystemPrompt}\n\n${formatTurnToolFailuresBlock(stepToolFailures)}`,
+                };
               }
               return { messages: next.messages };
             },

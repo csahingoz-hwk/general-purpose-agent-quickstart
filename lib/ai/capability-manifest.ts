@@ -643,19 +643,227 @@ export function connectedToolsFromManifest(
   return out;
 }
 
+export type TurnToolFailure = {
+  toolName: string;
+  reason: string;
+  code?: string;
+};
+
+function extractToolFailureFromOutput(
+  toolName: string,
+  output: unknown,
+  errorText?: string
+): TurnToolFailure | null {
+  if (typeof errorText === "string" && errorText.trim()) {
+    return {
+      toolName,
+      reason: errorText.trim().slice(0, 220),
+      code: "tool_error",
+    };
+  }
+  if (!output || typeof output !== "object" || Array.isArray(output)) {
+    return null;
+  }
+  const obj = output as Record<string, unknown>;
+  const status = typeof obj.status === "string" ? obj.status : "";
+  const code = typeof obj.code === "string" ? obj.code : undefined;
+  const message =
+    typeof obj.message === "string" && obj.message.trim()
+      ? obj.message.trim()
+      : typeof obj.error === "string" && obj.error.trim()
+        ? obj.error.trim()
+        : "";
+
+  if (obj.searchUnavailable === true) {
+    return {
+      toolName,
+      reason:
+        message ||
+        "Live web search was unavailable and returned 0 results on this turn",
+      code: code ?? "search_unavailable",
+    };
+  }
+  if (
+    status === "error" ||
+    status === "connector_error" ||
+    status === "reconnect_required" ||
+    status === "setup_required" ||
+    status === "blocked" ||
+    status === "blocked_data_boundary"
+  ) {
+    return {
+      toolName,
+      reason: message || `Returned status "${status}"`,
+      code: code ?? status,
+    };
+  }
+  if (typeof obj.error === "string" && obj.error.trim()) {
+    return {
+      toolName,
+      reason: obj.error.trim().slice(0, 220),
+      code: code ?? "error",
+    };
+  }
+  return null;
+}
+
+/**
+ * Extracts failed tool calls from the latest assistant turn in persisted UI
+ * messages so follow-up steps or turns never pretend the failed tool succeeded.
+ */
+export function extractFailedToolsFromMessages(
+  messages: readonly { role: string; parts?: readonly unknown[] }[]
+): TurnToolFailure[] {
+  const failures: TurnToolFailure[] = [];
+  const seen = new Set<string>();
+  const lastAssistant = [...messages]
+    .reverse()
+    .find((m) => m.role === "assistant");
+  if (!lastAssistant || !Array.isArray(lastAssistant.parts)) {
+    return failures;
+  }
+  for (const raw of lastAssistant.parts) {
+    if (!raw || typeof raw !== "object") {
+      continue;
+    }
+    const part = raw as Record<string, unknown>;
+    const rawType = typeof part.type === "string" ? part.type : "";
+    if (!rawType.startsWith("tool-")) {
+      continue;
+    }
+    const toolName =
+      typeof part.toolName === "string" && part.toolName.trim()
+        ? part.toolName.trim()
+        : rawType.slice(5);
+    const state = typeof part.state === "string" ? part.state : "";
+    const errorText =
+      state === "output-error"
+        ? typeof part.errorText === "string"
+          ? part.errorText
+          : "Tool execution failed"
+        : undefined;
+    const hit = extractToolFailureFromOutput(toolName, part.output, errorText);
+    if (hit) {
+      const key = `${hit.toolName}:${hit.code ?? hit.reason}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        failures.push(hit);
+      }
+    }
+  }
+  return failures;
+}
+
+/**
+ * Extracts failed tool results from the current multi-step AI SDK `ModelMessage[]`
+ * (since the latest user message) so `prepareStep` can inject exact failed-tool
+ * facts into the next step's instructions.
+ */
+export function extractFailedToolsFromModelMessages(
+  messages: readonly unknown[]
+): TurnToolFailure[] {
+  const failures: TurnToolFailure[] = [];
+  const seen = new Set<string>();
+  let startIdx = 0;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const m = messages[i] as { role?: string } | undefined;
+    if (m?.role === "user") {
+      startIdx = i + 1;
+      break;
+    }
+  }
+  for (let i = startIdx; i < messages.length; i += 1) {
+    const m = messages[i] as
+      | { role?: string; content?: readonly unknown[] }
+      | undefined;
+    if (m?.role !== "tool" || !Array.isArray(m.content)) {
+      continue;
+    }
+    for (const raw of m.content) {
+      if (!raw || typeof raw !== "object") {
+        continue;
+      }
+      const part = raw as Record<string, unknown>;
+      const toolName =
+        typeof part.toolName === "string" ? part.toolName : "tool";
+      if (part.type === "tool-error") {
+        const errMsg =
+          typeof part.error === "string"
+            ? part.error
+            : part.error instanceof Error
+              ? part.error.message
+              : "Tool execution failed";
+        const key = `${toolName}:${errMsg}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          failures.push({ toolName, reason: errMsg, code: "tool_error" });
+        }
+        continue;
+      }
+      if (part.type !== "tool-result") {
+        continue;
+      }
+      const out = part.output as
+        | { type?: string; value?: unknown; reason?: string }
+        | undefined;
+      const value =
+        out && typeof out === "object" && "value" in out ? out.value : out;
+      const errorText =
+        out?.type === "error-text" && typeof out.value === "string"
+          ? out.value
+          : out?.type === "error-json"
+            ? typeof out.value === "string"
+              ? out.value
+              : JSON.stringify(out.value ?? "Tool returned an error")
+            : undefined;
+      const hit = extractToolFailureFromOutput(toolName, value, errorText);
+      if (hit) {
+        const key = `${hit.toolName}:${hit.code ?? hit.reason}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          failures.push(hit);
+        }
+      }
+    }
+  }
+  return failures;
+}
+
+export function formatTurnToolFailuresBlock(
+  failures: readonly TurnToolFailure[]
+): string {
+  if (failures.length === 0) {
+    return "";
+  }
+  const rows = failures.map(
+    (f) =>
+      `- tool=${f.toolName}${f.code ? ` | code=${f.code}` : ""} | reason="${f.reason.replace(/"/g, "'")}"`
+  );
+  return [
+    "### Failed Tools On This Turn (Authoritative — Report Honestly)",
+    ...rows,
+    "- Mandatory honesty rule: One or more tools FAILED on this turn (listed above). Tell the user clearly and plainly (in their language) which tool failed and the real plain-language reason. NEVER claim that all features are active and working smoothly ('tüm özelliklerim aktif ve sorunsuz çalışıyor' / 'all features are active and working smoothly') and NEVER brush off a specific tool failure as a vague 'geçici teknik aksaklık'.",
+  ].join("\n");
+}
+
 /**
  * Renders the authoritative Live Capability Manifest block injected into the
  * system prompt on every turn across all languages (Turkish, English, etc.).
  */
 export function formatCapabilityManifestPrompt(
-  manifest: CapabilityManifest
+  manifest: CapabilityManifest,
+  opts?: { turnToolFailures?: readonly TurnToolFailure[] }
 ): string {
+  const connectedLabels: string[] = [];
+  const unavailableLabels: string[] = [];
   const lines = manifest.entries.map((entry) => {
     const toolsPart =
       entry.tools.length > 0 ? ` | tools=${entry.tools.join(", ")}` : "";
     if (entry.state === "connected_and_healthy") {
+      connectedLabels.push(entry.label);
       return `- [${entry.label}] state=connected_and_healthy${toolsPart} | setup=${entry.setupHref}`;
     }
+    unavailableLabels.push(`${entry.label} (${entry.state})`);
     const connectPart = entry.connectHref
       ? ` | connect=${entry.connectHref}`
       : "";
@@ -663,16 +871,25 @@ export function formatCapabilityManifestPrompt(
     return `- [${entry.label}] state=${entry.state} | cause="${entry.reason ?? "Unavailable"}" | fix=${entry.setupHref}${connectPart}${retryPart}${toolsPart}`;
   });
 
-  return [
-    "## Live App Capability Manifest (Authoritative — Apply in All Languages)",
-    "Every connector, tool, and AI model wired into this app is listed below with its live status for THIS turn:",
-    ...lines,
-    "",
-    "### Mandatory Capability Rules (Apply in Turkish, English, and Every Language)",
-    "1. **Connected & healthy (`state=connected_and_healthy`):** You HAVE live access right now. Use the matching tool directly whenever relevant, and NEVER claim 'no access', 'I cannot access', 'erişimim yok', 'not enabled', or 'bağlı değil' for any capability marked `connected_and_healthy`.",
-    "2. **Not connected (`state=not_connected`):** When the user asks to use or asks about a capability marked `not_connected`, state clearly in plain words (in the user's language) that it is not connected yet, name the exact technical cause from `cause`, and give a clickable Markdown link to the exact owner Setup checklist item (`fix`, e.g. `[Setup checklist](/setup#setup-github)`) or one-tap Connect button (`connect`, e.g. `[Connect Google](/connect/google/start?returnTo=%2Fsetup%3Fconnected%3Dgoogle)`). NEVER direct users to Google Cloud Console (`console.cloud.google.com`), GCP project numbers, or raw API key pages.",
-    "3. **Error (`state=error`):** When a capability is marked `error` (or a tool returns a retryable error), state in plain words (in the user's language) that the integration is wired in the app but currently experiencing an error, name the technical cause from `cause` (except `service_disabled`, where you output only the short neutral status line such as `'Gmail şu an kullanılamıyor, kurulum kontrol ediliyor'`), tell the user to retry or open the exact owner Setup checklist link (`fix`), and NEVER falsely claim the account is 'not connected' ('henüz bağlanmamış') or send users to Google Cloud Console.",
-  ].join("\n");
+  const failuresBlock = opts?.turnToolFailures?.length
+    ? `\n\n${formatTurnToolFailuresBlock(opts.turnToolFailures)}`
+    : "";
+
+  return (
+    [
+      "## Live App Capability Manifest (Authoritative — Apply in All Languages)",
+      "Every connector, tool, and AI model wired into this app is listed below with its live status for THIS turn:",
+      `Summary — Connected: ${connectedLabels.length > 0 ? connectedLabels.join(", ") : "none"}`,
+      `Summary — Not connected / error: ${unavailableLabels.length > 0 ? unavailableLabels.join(", ") : "none"}`,
+      ...lines,
+      "",
+      "### Mandatory Capability Rules (Apply in Turkish, English, and Every Language)",
+      "1. **Connected & healthy (`state=connected_and_healthy`):** You HAVE live access right now. Use the matching tool directly whenever relevant, and NEVER claim 'no access', 'I cannot access', 'erişimim yok', 'not enabled', or 'bağlı değil' for any capability marked `connected_and_healthy`.",
+      "2. **Not connected (`state=not_connected`):** When the user asks to use or asks about a capability marked `not_connected`, state clearly in plain words (in the user's language) that it is not connected yet, name the exact technical cause from `cause`, and give a clickable Markdown link to the exact owner Setup checklist item (`fix`, e.g. `[Setup checklist](/setup#setup-github)`) or one-tap Connect button (`connect`, e.g. `[Connect Google](/connect/google/start?returnTo=%2Fsetup%3Fconnected%3Dgoogle)`). NEVER direct users to Google Cloud Console (`console.cloud.google.com`), GCP project numbers, or raw API key pages.",
+      "3. **Error (`state=error`):** When a capability is marked `error` (or a tool returns a retryable error), state in plain words (in the user's language) that the integration is wired in the app but currently experiencing an error, name the technical cause from `cause` (except `service_disabled`, where you output only the short neutral status line such as `'Gmail şu an kullanılamıyor, kurulum kontrol ediliyor'`), tell the user to retry or open the exact owner Setup checklist link (`fix`), and NEVER falsely claim the account is 'not connected' ('henüz bağlanmamış') or send users to Google Cloud Console.",
+      "4. **Strict Honesty When Any Tool Fails (Never Fake All-Green Status):** Report REAL tool status honestly — name which tools are connected, which specific tool failed on this turn (or is disconnected/erroring), and the plain-language reason. NEVER claim 'tüm özelliklerim aktif ve sorunsuz çalışıyor' ('all my features are active and working smoothly') and NEVER hide a tool failure behind a vague 'geçici teknik aksaklık' ('temporary technical glitch') when any tool failed on this turn or any listed capability is not connected or in error.",
+    ].join("\n") + failuresBlock
+  );
 }
 
 const manifestCache = new Map<

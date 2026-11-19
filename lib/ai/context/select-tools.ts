@@ -76,7 +76,7 @@ const SEARCH_PATTERN_EN =
   /\b(search|look(?:ing)? (?:it |this |that |them )?up|google(?!\s+(?:drive|calendar|docs?|sheets?|slides?|workspace|account|cloud|ai))|find (?:it |this |that |out )?(?:online|on the web)|on the web|web search|latest|news|breaking|who won|(?:current|today'?s|live) (?:price|prices|score|scores|result|results|rate|rates|exchange rate|stats?|statistics?)|latest statistics?|exchange rate|stock price|share price|with (?:sources|citations)|(?:cited|sourced) (?:analysis|brief|summary|report|overview)|fact[- ]?check)\b/;
 
 const SEARCH_PATTERN_TR =
-  /(?<![\p{L}])(?:(?<!drive['’]?(?:da|daki)\s)ara(?!\s+beni)|arar mısın|arama yap\p{L}*|araştır\p{L}*|kaynakl[ıi]\p{L}*|kaynak(?:çalı|larla|lar\s+ile|göstererek|belirterek)|internette|internetten|güncel|haber|haberler\p{L}*|haberi|son dakika|bugünkü|bugunku|kim kazandı|maç sonucu|dolar\s+kaç|dolar\s+kac|euro\s+kaç|euro\s+kac|altın\s+fiyat\p{L}*)(?![\p{L}])/u;
+  /(?<![\p{L}])(?:(?<!drive['’]?(?:da|daki)\s)ara(?!\s+beni)|arar mısın|arama yap\p{L}*|araştır\p{L}*|kaynakl[ıi]\p{L}*|kaynak(?:çalı|larla|lar\s+ile|göstererek|belirterek)|internette|internetten|güncel|haber|haberler\p{L}*|haberi|son dakika|gündem\p{L}*|neler\s+oldu|son\s+gelişme\p{L}*|bugünkü|bugunku|kim kazandı|maç sonucu|dolar\s+kaç|dolar\s+kac|euro\s+kaç|euro\s+kac|altın\s+fiyat\p{L}*)(?![\p{L}])/u;
 
 /**
  * Live-fact signals: fixtures, prices, news, years, comparisons of products,
