@@ -505,10 +505,13 @@ export function createVisualStudioTools(opts: {
             title: z.string().trim().min(1).max(120),
             subtitle: z.string().trim().max(160).optional(),
             heightPx: z.number().int().min(220).max(640).optional(),
-            option: z
-              .record(z.string(), z.unknown())
+            optionJson: z
+              .string()
+              .trim()
+              .min(2)
+              .max(24_000)
               .describe(
-                "Apache ECharts option object (`series`, `xAxis`, `yAxis`, etc.)."
+                'JSON-serialized Apache ECharts option object, e.g. \'{"xAxis":{"type":"category","data":["Q1","Q2"]},"yAxis":{"type":"value"},"series":[{"type":"bar","data":[12,19]}]}\'.'
               ),
           })
         )
@@ -516,14 +519,14 @@ export function createVisualStudioTools(opts: {
         .optional(),
       bodyHtml: z
         .string()
-        .max(120_000)
+        .max(60_000)
         .optional()
         .describe(
           "Optional semantic HTML body content (tables, cards, dated news links)."
         ),
       fullHtml: z
         .string()
-        .max(200_000)
+        .max(96_000)
         .optional()
         .describe("Optional complete single-file HTML document override."),
     }),
@@ -537,6 +540,37 @@ export function createVisualStudioTools(opts: {
         };
       }
 
+      const parsedCharts: DashboardChartInput[] = [];
+      for (const chart of input.charts ?? []) {
+        let parsedOption: unknown;
+        try {
+          parsedOption = JSON.parse(chart.optionJson);
+        } catch {
+          return {
+            status: "error" as const,
+            code: "invalid_echarts_json" as const,
+            message: `Invalid JSON in charts[].optionJson for "${chart.title}". Provide a valid JSON object string.`,
+          };
+        }
+        if (
+          !parsedOption ||
+          typeof parsedOption !== "object" ||
+          Array.isArray(parsedOption)
+        ) {
+          return {
+            status: "error" as const,
+            code: "invalid_echarts_json" as const,
+            message: `charts[].optionJson for "${chart.title}" must serialize a JSON object.`,
+          };
+        }
+        parsedCharts.push({
+          title: chart.title,
+          subtitle: chart.subtitle,
+          heightPx: chart.heightPx,
+          option: parsedOption as Record<string, unknown>,
+        });
+      }
+
       const rawBase = input.filename.toLowerCase().endsWith(".html")
         ? input.filename
         : `${input.filename}.html`;
@@ -545,7 +579,7 @@ export function createVisualStudioTools(opts: {
         title: input.title,
         subtitle: input.subtitle,
         kpis: input.kpis,
-        charts: input.charts,
+        charts: parsedCharts,
         bodyHtml: input.bodyHtml,
         fullHtml: input.fullHtml,
       });

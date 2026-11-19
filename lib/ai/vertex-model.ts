@@ -9,7 +9,7 @@ import type {
 import { containsRestrictedWorkData } from "@/lib/connectors/google-workspace";
 import { isAllowedShortKornFerryContextFact } from "@/lib/memory/bulk-import";
 import { type VertexModelId, WEB_SEARCH_TOOL_ID } from "./routing/catalog";
-import { ModelFailure } from "./routing/policy";
+import { ModelFailure, safeErrorDiagnostic } from "./routing/policy";
 import { getVertexProjectId, getVertexWifAccessToken } from "./vertex-auth";
 
 type VertexPart = {
@@ -124,6 +124,60 @@ export function assertNoKornFerryDataForGoogle(
       throw new ModelFailure("work_boundary");
     }
   }
+}
+
+function sanitizeJsonSchemaForVertex(schema: unknown): unknown {
+  if (!schema || typeof schema !== "object") {
+    return schema;
+  }
+  if (Array.isArray(schema)) {
+    return schema.map((item) => sanitizeJsonSchemaForVertex(item));
+  }
+  const src = schema as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(src)) {
+    if (
+      key === "$schema" ||
+      key === "propertyNames" ||
+      key === "additionalItems"
+    ) {
+      continue;
+    }
+    if (key === "additionalProperties") {
+      if (typeof val === "boolean") {
+        out[key] = val;
+      }
+      continue;
+    }
+    if (key === "items" && Array.isArray(val)) {
+      out[key] =
+        val.length > 0
+          ? sanitizeJsonSchemaForVertex(val[0])
+          : { type: "string" };
+      continue;
+    }
+    out[key] = sanitizeJsonSchemaForVertex(val);
+  }
+  return out;
+}
+
+async function extractSafeVertexErrorCode(res: Response): Promise<string> {
+  try {
+    const raw = await res.text();
+    const parsed = JSON.parse(raw) as {
+      error?: { status?: unknown };
+    };
+    const status =
+      typeof parsed?.error?.status === "string"
+        ? parsed.error.status.trim()
+        : "";
+    if (/^[A-Za-z0-9_.:-]{1,64}$/.test(status)) {
+      return status;
+    }
+  } catch {
+    /* Never inspect or surface raw upstream error text */
+  }
+  return `vertex_http_${res.status || 503}`;
 }
 
 function mapFinishReason(raw?: string): LanguageModelV4FinishReason {
@@ -312,7 +366,7 @@ export function buildVertexRequestBody(
       functionDeclarations.push({
         name: tool.name,
         description: tool.description ?? "",
-        parametersJsonSchema: tool.inputSchema,
+        parametersJsonSchema: sanitizeJsonSchemaForVertex(tool.inputSchema),
       });
     }
   }
@@ -472,7 +526,11 @@ export function createVertexGeminiAdapter(
     const name =
       err && typeof err === "object" && "name" in err ? String(err.name) : "";
     if (name === "TimeoutError" || name === "AbortError") {
-      throw Object.assign(new Error("vertex_timeout"), { statusCode: 504 });
+      throw Object.assign(new Error("vertex_timeout"), {
+        name: "VertexTimeoutError",
+        statusCode: 504,
+        code: "vertex_timeout",
+      });
     }
     throw err;
   }
@@ -499,7 +557,9 @@ export function createVertexGeminiAdapter(
       const projectId = deps?.projectId ?? getVertexProjectId();
       if (!projectId) {
         throw Object.assign(new Error("vertex_project_missing"), {
+          name: "VertexConfigError",
           statusCode: 503,
+          code: "vertex_project_missing",
         });
       }
       const accessToken = await resolveToken().catch((err) =>
@@ -518,8 +578,11 @@ export function createVertexGeminiAdapter(
       }).catch((err) => normalizeUpstreamError(err, params.abortSignal));
 
       if (!res.ok) {
+        const safeCode = await extractSafeVertexErrorCode(res);
         throw Object.assign(new Error(`vertex_http_${res.status}`), {
+          name: "VertexHttpError",
           statusCode: res.status,
+          code: safeCode,
         });
       }
 
@@ -604,7 +667,9 @@ export function createVertexGeminiAdapter(
       const projectId = deps?.projectId ?? getVertexProjectId();
       if (!projectId) {
         throw Object.assign(new Error("vertex_project_missing"), {
+          name: "VertexConfigError",
           statusCode: 503,
+          code: "vertex_project_missing",
         });
       }
       const accessToken = await resolveToken().catch((err) =>
@@ -623,8 +688,13 @@ export function createVertexGeminiAdapter(
       }).catch((err) => normalizeUpstreamError(err, params.abortSignal));
 
       if (!res.ok || !res.body) {
+        const safeCode = res.ok
+          ? "vertex_empty_stream"
+          : await extractSafeVertexErrorCode(res);
         throw Object.assign(new Error(`vertex_http_${res.status}`), {
+          name: "VertexHttpError",
           statusCode: res.status || 503,
+          code: safeCode,
         });
       }
 
@@ -833,6 +903,7 @@ export function createVertexGeminiAdapter(
 
               // If a mixed-tool turn invoked the split search function, execute a
               // dedicated `{ googleSearch: {} }`-only Vertex sub-call (zero functionDeclarations).
+              // A failed search sub-call MUST NOT kill the whole turn.
               if (deferredGroundedQueries.length > 0 && !sawFunctionCall) {
                 const subQuery =
                   deferredGroundedQueries[0] ?? latestUserQuery ?? "";
@@ -844,36 +915,150 @@ export function createVertexGeminiAdapter(
                   input: JSON.stringify({ query: subQuery }),
                   providerExecuted: true,
                 });
-                const subBody = buildVertexRequestBody(modelId, {
-                  ...params,
-                  prompt: [
-                    ...params.prompt.filter((m) => m.role === "system"),
-                    {
-                      role: "user",
-                      content: [{ type: "text", text: subQuery }],
-                    },
-                  ],
-                  tools: [
-                    {
-                      type: "provider",
-                      id: WEB_SEARCH_TOOL_ID,
-                      name: "webSearch",
-                      args: {},
-                    },
-                  ],
-                });
-                const subRes = await fetcher(endpointFor(projectId, true), {
-                  method: "POST",
-                  headers: {
-                    Authorization: `Bearer ${accessToken}`,
-                    "Content-Type": "application/json",
-                  },
-                  body: JSON.stringify(subBody),
-                  signal: withUpstreamTimeout(params.abortSignal),
-                }).catch((err) =>
-                  normalizeUpstreamError(err, params.abortSignal)
+
+                const nonSearchTools = (params.tools ?? []).filter(
+                  (t) =>
+                    !(t.type === "provider" && t.id === WEB_SEARCH_TOOL_ID) &&
+                    !(t.type === "function" && t.name === "webSearch")
                 );
-                if (subRes.ok && subRes.body) {
+
+                const runFollowUpStream = async (followNote: string) => {
+                  const followBody = buildVertexRequestBody(modelId, {
+                    ...params,
+                    prompt: [
+                      ...params.prompt,
+                      {
+                        role: "user",
+                        content: [{ type: "text", text: followNote }],
+                      },
+                    ],
+                    tools: nonSearchTools,
+                  });
+                  const followRes = await fetcher(
+                    endpointFor(projectId, true),
+                    {
+                      method: "POST",
+                      headers: {
+                        Authorization: `Bearer ${accessToken}`,
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify(followBody),
+                      signal: withUpstreamTimeout(params.abortSignal),
+                    }
+                  );
+                  if (!followRes.ok || !followRes.body) {
+                    return false;
+                  }
+                  const followReader = followRes.body
+                    .pipeThrough(new TextDecoderStream())
+                    .getReader();
+                  try {
+                    let followBuf = "";
+                    let followRaw = "";
+                    let sawFollowSse = false;
+                    for (;;) {
+                      const { done: fDone, value: fChunk } =
+                        await followReader.read();
+                      if (fDone) {
+                        break;
+                      }
+                      followRaw += fChunk;
+                      followBuf += fChunk;
+                      const fLines = followBuf.split(/\r?\n/);
+                      followBuf = fLines.pop() ?? "";
+                      for (const fl of fLines) {
+                        const ft = fl.trim();
+                        if (!ft.startsWith("data:")) {
+                          continue;
+                        }
+                        const fd = ft.slice(5).trim();
+                        if (!fd || fd === "[DONE]") {
+                          continue;
+                        }
+                        sawFollowSse = true;
+                        processPayload(
+                          JSON.parse(fd) as VertexResponsePayload,
+                          controller
+                        );
+                      }
+                    }
+                    if (followBuf.trim().startsWith("data:")) {
+                      const fd = followBuf.trim().slice(5).trim();
+                      if (fd && fd !== "[DONE]") {
+                        sawFollowSse = true;
+                        processPayload(
+                          JSON.parse(fd) as VertexResponsePayload,
+                          controller
+                        );
+                      }
+                    }
+                    if (!sawFollowSse && followRaw.trim()) {
+                      processPayload(
+                        JSON.parse(followRaw) as VertexResponsePayload,
+                        controller
+                      );
+                    }
+                  } finally {
+                    if (textOpen) {
+                      controller.enqueue({ type: "text-end", id: textId });
+                      textOpen = false;
+                    }
+                    followReader.releaseLock();
+                  }
+                  return true;
+                };
+
+                let subToolResultEmitted = false;
+                let subTextAcc = "";
+                const subTextId = `vtxt-split-${Math.random().toString(36).slice(2, 8)}`;
+                let subTextOpen = false;
+                let subSearchFailed = false;
+
+                try {
+                  const subBody = buildVertexRequestBody(modelId, {
+                    ...params,
+                    prompt: [
+                      ...params.prompt.filter((m) => m.role === "system"),
+                      {
+                        role: "user",
+                        content: [{ type: "text", text: subQuery }],
+                      },
+                    ],
+                    tools: [
+                      {
+                        type: "provider",
+                        id: WEB_SEARCH_TOOL_ID,
+                        name: "webSearch",
+                        args: {},
+                      },
+                    ],
+                  });
+                  const subRes = await fetcher(endpointFor(projectId, true), {
+                    method: "POST",
+                    headers: {
+                      Authorization: `Bearer ${accessToken}`,
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify(subBody),
+                    signal: withUpstreamTimeout(params.abortSignal),
+                  }).catch((err) =>
+                    normalizeUpstreamError(err, params.abortSignal)
+                  );
+
+                  if (!subRes.ok || !subRes.body) {
+                    const safeCode = subRes.ok
+                      ? "vertex_empty_substream"
+                      : await extractSafeVertexErrorCode(subRes);
+                    throw Object.assign(
+                      new Error(`vertex_subsearch_http_${subRes.status}`),
+                      {
+                        name: "VertexSubSearchError",
+                        statusCode: subRes.status || 503,
+                        code: safeCode,
+                      }
+                    );
+                  }
+
                   const hasFileOrDocWriteTool = (params.tools ?? []).some(
                     (t) =>
                       t.type === "function" &&
@@ -895,215 +1080,204 @@ export function createVertexGeminiAdapter(
                   const subReader = subRes.body
                     .pipeThrough(new TextDecoderStream())
                     .getReader();
-                  let subSseBuf = "";
-                  let rawSubText = "";
-                  let sawSubSseFrame = false;
-                  let subTextAcc = "";
-                  const subTextId = `vtxt-split-${Math.random().toString(36).slice(2, 8)}`;
-                  let subTextOpen = false;
-                  const subQueriesAcc: string[] = [];
-                  const subChunksAcc: NonNullable<
-                    VertexCandidate["groundingMetadata"]
-                  >["groundingChunks"] = [];
+                  try {
+                    let subSseBuf = "";
+                    let rawSubText = "";
+                    let sawSubSseFrame = false;
+                    const subQueriesAcc: string[] = [];
+                    const subChunksAcc: NonNullable<
+                      VertexCandidate["groundingMetadata"]
+                    >["groundingChunks"] = [];
 
-                  const handleSubPayload = (
-                    subPayload: VertexResponsePayload
-                  ) => {
-                    if (subPayload.usageMetadata) {
-                      lastUsage = mapUsage(subPayload.usageMetadata);
-                    }
-                    const subCand = subPayload.candidates?.[0];
-                    if (!subCand) {
-                      return;
-                    }
-                    if (subCand.groundingMetadata?.webSearchQueries) {
-                      for (const q of subCand.groundingMetadata
-                        .webSearchQueries) {
-                        if (q && !subQueriesAcc.includes(q)) {
-                          subQueriesAcc.push(q);
-                        }
+                    const handleSubPayload = (
+                      subPayload: VertexResponsePayload
+                    ) => {
+                      if (subPayload.usageMetadata) {
+                        lastUsage = mapUsage(subPayload.usageMetadata);
                       }
-                    }
-                    if (subCand.groundingMetadata?.groundingChunks) {
-                      subChunksAcc.push(
-                        ...subCand.groundingMetadata.groundingChunks
-                      );
-                    }
-                    for (const p of subCand.content?.parts ?? []) {
-                      if (!p.thought && typeof p.text === "string" && p.text) {
-                        subTextAcc += p.text;
-                        if (!wantsGroundedFileOrDoc) {
-                          if (!subTextOpen) {
-                            controller.enqueue({
-                              type: "text-start",
-                              id: subTextId,
-                            });
-                            subTextOpen = true;
+                      const subCand = subPayload.candidates?.[0];
+                      if (!subCand) {
+                        return;
+                      }
+                      if (subCand.groundingMetadata?.webSearchQueries) {
+                        for (const q of subCand.groundingMetadata
+                          .webSearchQueries) {
+                          if (q && !subQueriesAcc.includes(q)) {
+                            subQueriesAcc.push(q);
                           }
-                          controller.enqueue({
-                            type: "text-delta",
-                            id: subTextId,
-                            delta: p.text,
-                          });
                         }
                       }
-                    }
-                  };
+                      if (subCand.groundingMetadata?.groundingChunks) {
+                        subChunksAcc.push(
+                          ...subCand.groundingMetadata.groundingChunks
+                        );
+                      }
+                      for (const p of subCand.content?.parts ?? []) {
+                        if (
+                          !p.thought &&
+                          typeof p.text === "string" &&
+                          p.text
+                        ) {
+                          subTextAcc += p.text;
+                          if (!wantsGroundedFileOrDoc) {
+                            if (!subTextOpen) {
+                              controller.enqueue({
+                                type: "text-start",
+                                id: subTextId,
+                              });
+                              subTextOpen = true;
+                            }
+                            controller.enqueue({
+                              type: "text-delta",
+                              id: subTextId,
+                              delta: p.text,
+                            });
+                          }
+                        }
+                      }
+                    };
 
-                  for (;;) {
-                    const { done: subDone, value: subChunk } =
-                      await subReader.read();
-                    if (subDone) {
-                      break;
-                    }
-                    rawSubText += subChunk;
-                    subSseBuf += subChunk;
-                    const subLines = subSseBuf.split(/\r?\n/);
-                    subSseBuf = subLines.pop() ?? "";
-                    for (const line of subLines) {
-                      const trimmed = line.trim();
-                      if (!trimmed.startsWith("data:")) {
-                        continue;
+                    for (;;) {
+                      const { done: subDone, value: subChunk } =
+                        await subReader.read();
+                      if (subDone) {
+                        break;
                       }
-                      const dataStr = trimmed.slice(5).trim();
-                      if (!dataStr || dataStr === "[DONE]") {
-                        continue;
+                      rawSubText += subChunk;
+                      subSseBuf += subChunk;
+                      const subLines = subSseBuf.split(/\r?\n/);
+                      subSseBuf = subLines.pop() ?? "";
+                      for (const line of subLines) {
+                        const trimmed = line.trim();
+                        if (!trimmed.startsWith("data:")) {
+                          continue;
+                        }
+                        const dataStr = trimmed.slice(5).trim();
+                        if (!dataStr || dataStr === "[DONE]") {
+                          continue;
+                        }
+                        sawSubSseFrame = true;
+                        handleSubPayload(
+                          JSON.parse(dataStr) as VertexResponsePayload
+                        );
                       }
-                      sawSubSseFrame = true;
-                      handleSubPayload(
-                        JSON.parse(dataStr) as VertexResponsePayload
-                      );
                     }
-                  }
-                  if (subSseBuf.trim().startsWith("data:")) {
-                    const dataStr = subSseBuf.trim().slice(5).trim();
-                    if (dataStr && dataStr !== "[DONE]") {
-                      sawSubSseFrame = true;
-                      handleSubPayload(
-                        JSON.parse(dataStr) as VertexResponsePayload
-                      );
+                    if (subSseBuf.trim().startsWith("data:")) {
+                      const dataStr = subSseBuf.trim().slice(5).trim();
+                      if (dataStr && dataStr !== "[DONE]") {
+                        sawSubSseFrame = true;
+                        handleSubPayload(
+                          JSON.parse(dataStr) as VertexResponsePayload
+                        );
+                      }
                     }
-                  }
-                  if (!sawSubSseFrame && rawSubText.trim()) {
-                    try {
-                      handleSubPayload(
-                        JSON.parse(rawSubText) as VertexResponsePayload
-                      );
-                    } catch {
-                      /* non-JSON empty fallback */
+                    if (!sawSubSseFrame && rawSubText.trim()) {
+                      try {
+                        handleSubPayload(
+                          JSON.parse(rawSubText) as VertexResponsePayload
+                        );
+                      } catch {
+                        /* non-JSON empty fallback */
+                      }
                     }
+                    if (subTextOpen) {
+                      controller.enqueue({ type: "text-end", id: subTextId });
+                      subTextOpen = false;
+                    }
+                    const subGrounding = buildGroundingSearchResults({
+                      webSearchQueries: subQueriesAcc,
+                      groundingChunks: subChunksAcc,
+                    });
+                    subToolResultEmitted = true;
+                    controller.enqueue({
+                      type: "tool-result",
+                      toolCallId: subCallId,
+                      toolName: "webSearch",
+                      result: {
+                        results: subGrounding?.results ?? [],
+                      },
+                      providerExecuted: true,
+                    } as unknown as LanguageModelV4StreamPart);
+
+                    if (wantsGroundedFileOrDoc) {
+                      const sourceLines = (subGrounding?.results ?? [])
+                        .map((r) => `- ${r.title}: ${r.url}`)
+                        .join("\n");
+                      const groundedBrief = [
+                        `Verified Google Search date: ${new Date().toISOString().slice(0, 10)}`,
+                        subTextAcc.trim(),
+                        sourceLines
+                          ? `Verified source URLs:\n${sourceLines}`
+                          : "",
+                        "Now call the appropriate file/document tool (e.g. cloudWriteFile then cloudExportFileToChat, or createDocument) using ONLY the real items, publication dates, and clickable https:// source links above — never invent items.",
+                      ]
+                        .filter(Boolean)
+                        .join("\n\n");
+                      const okFollow = await runFollowUpStream(
+                        groundedBrief
+                      ).catch((followErr) => {
+                        if (params.abortSignal?.aborted) {
+                          throw followErr;
+                        }
+                        console.warn(
+                          "[vertex] grounded file follow-up failed",
+                          safeErrorDiagnostic(followErr)
+                        );
+                        return false;
+                      });
+                      if (!okFollow && subTextAcc) {
+                        controller.enqueue({
+                          type: "text-start",
+                          id: subTextId,
+                        });
+                        controller.enqueue({
+                          type: "text-delta",
+                          id: subTextId,
+                          delta: subTextAcc,
+                        });
+                        controller.enqueue({ type: "text-end", id: subTextId });
+                      }
+                    }
+                  } finally {
+                    subReader.releaseLock();
                   }
+                } catch (subErr) {
+                  if (params.abortSignal?.aborted) {
+                    throw subErr;
+                  }
+                  subSearchFailed = true;
+                  console.warn(
+                    "[vertex] grounded search sub-call failed; continuing without live search",
+                    safeErrorDiagnostic(subErr)
+                  );
                   if (subTextOpen) {
                     controller.enqueue({ type: "text-end", id: subTextId });
+                    subTextOpen = false;
                   }
-                  const subGrounding = buildGroundingSearchResults({
-                    webSearchQueries: subQueriesAcc,
-                    groundingChunks: subChunksAcc,
-                  });
-                  controller.enqueue({
-                    type: "tool-result",
-                    toolCallId: subCallId,
-                    toolName: "webSearch",
-                    result: {
-                      results: subGrounding?.results ?? [],
-                    },
-                    providerExecuted: true,
-                  } as unknown as LanguageModelV4StreamPart);
+                  if (!subToolResultEmitted) {
+                    subToolResultEmitted = true;
+                    controller.enqueue({
+                      type: "tool-result",
+                      toolCallId: subCallId,
+                      toolName: "webSearch",
+                      result: { results: [], searchUnavailable: true },
+                      providerExecuted: true,
+                    } as unknown as LanguageModelV4StreamPart);
+                  }
+                }
 
-                  if (wantsGroundedFileOrDoc) {
-                    const sourceLines = (subGrounding?.results ?? [])
-                      .map((r) => `- ${r.title}: ${r.url}`)
-                      .join("\n");
-                    const groundedBrief = [
-                      `Verified Google Search date: ${new Date().toISOString().slice(0, 10)}`,
-                      subTextAcc.trim(),
-                      sourceLines
-                        ? `Verified source URLs:\n${sourceLines}`
-                        : "",
-                      "Now call the appropriate file/document tool (e.g. cloudWriteFile then cloudExportFileToChat, or createDocument) using ONLY the real items, publication dates, and clickable https:// source links above — never invent items.",
-                    ]
-                      .filter(Boolean)
-                      .join("\n\n");
-                    const nonSearchTools = (params.tools ?? []).filter(
-                      (t) =>
-                        !(
-                          t.type === "provider" && t.id === WEB_SEARCH_TOOL_ID
-                        ) && !(t.type === "function" && t.name === "webSearch")
-                    );
-                    const followBody = buildVertexRequestBody(modelId, {
-                      ...params,
-                      prompt: [
-                        ...params.prompt,
-                        {
-                          role: "user",
-                          content: [{ type: "text", text: groundedBrief }],
-                        },
-                      ],
-                      tools: nonSearchTools,
-                    });
-                    const followRes = await fetcher(
-                      endpointFor(projectId, true),
-                      {
-                        method: "POST",
-                        headers: {
-                          Authorization: `Bearer ${accessToken}`,
-                          "Content-Type": "application/json",
-                        },
-                        body: JSON.stringify(followBody),
-                        signal: withUpstreamTimeout(params.abortSignal),
-                      }
-                    ).catch(() => null);
-                    if (followRes?.ok && followRes.body) {
-                      const followReader = followRes.body
-                        .pipeThrough(new TextDecoderStream())
-                        .getReader();
-                      let followBuf = "";
-                      for (;;) {
-                        const { done: fDone, value: fChunk } =
-                          await followReader.read();
-                        if (fDone) {
-                          break;
-                        }
-                        followBuf += fChunk;
-                        const fLines = followBuf.split(/\r?\n/);
-                        followBuf = fLines.pop() ?? "";
-                        for (const fl of fLines) {
-                          const ft = fl.trim();
-                          if (!ft.startsWith("data:")) {
-                            continue;
-                          }
-                          const fd = ft.slice(5).trim();
-                          if (!fd || fd === "[DONE]") {
-                            continue;
-                          }
-                          processPayload(
-                            JSON.parse(fd) as VertexResponsePayload,
-                            controller
-                          );
-                        }
-                      }
-                      if (textOpen) {
-                        controller.enqueue({ type: "text-end", id: textId });
-                        textOpen = false;
-                      }
-                    } else if (subTextAcc) {
-                      controller.enqueue({ type: "text-start", id: subTextId });
-                      controller.enqueue({
-                        type: "text-delta",
-                        id: subTextId,
-                        delta: subTextAcc,
-                      });
-                      controller.enqueue({ type: "text-end", id: subTextId });
+                if (subSearchFailed && !subTextAcc.trim() && !sawFunctionCall) {
+                  await runFollowUpStream(
+                    "Live Google Search grounding was temporarily unavailable on this turn (0 results returned). Respond helpfully in the user's language without inventing current live facts, dates, or URLs; if live web data was needed, state briefly that live search was temporarily unavailable."
+                  ).catch((followErr) => {
+                    if (params.abortSignal?.aborted) {
+                      throw followErr;
                     }
-                  }
-                } else {
-                  controller.enqueue({
-                    type: "tool-result",
-                    toolCallId: subCallId,
-                    toolName: "webSearch",
-                    result: { results: [] },
-                    providerExecuted: true,
-                  } as unknown as LanguageModelV4StreamPart);
+                    console.warn(
+                      "[vertex] non-search recovery follow-up failed",
+                      safeErrorDiagnostic(followErr)
+                    );
+                  });
                 }
               }
 

@@ -28,6 +28,8 @@ import {
   ModelFailure,
   mayFallback,
   mayFallbackFromVertexToCopilot,
+  type SafeErrorDiagnostic,
+  safeErrorDiagnostic,
 } from "./policy";
 import type { InferenceSession } from "./session";
 
@@ -63,6 +65,8 @@ const READ_ONLY_FALLBACK_SAFE_TOOLS = new Set<string>([
   "driveReadFiles",
   "githubReadPullRequests",
   "recallMemories",
+  "saveProfileFact",
+  "addJournalEntry",
   "listMySchedules",
   "getWeather",
   "getCurrentTime",
@@ -185,6 +189,7 @@ export function createRoutedModel(
     }
     return failure;
   }
+  let primaryFailure: (SafeErrorDiagnostic & { model?: string }) | undefined;
   function next(
     model: PremiumModelId,
     error: unknown,
@@ -193,8 +198,20 @@ export function createRoutedModel(
     stepState?: { stepExposed: boolean; stepToolBoundary: boolean }
   ): { reason: string; target: PremiumModelId } {
     const failure = failureKind(error);
+    const diag = safeErrorDiagnostic(error);
+    const role = visited.size <= 1 ? "primary" : "fallback";
+    if (!primaryFailure) {
+      primaryFailure = { model, ...diag };
+    }
     const target = fallbackTargetFor(model);
     const cancelled = params.abortSignal?.aborted ?? false;
+    if (!cancelled) {
+      console.error("[routing] model attempt failed", {
+        model,
+        role,
+        ...diag,
+      });
+    }
     const vertexStepExposed = stepState
       ? stepState.stepExposed
       : session.exposed;
@@ -223,7 +240,12 @@ export function createRoutedModel(
             cancelled,
           }));
     if (!allowed || !target) {
-      throw new ModelFailure(failure);
+      throw new ModelFailure(failure, {
+        statusCode: diag.statusCode,
+        upstreamCode: diag.code,
+        upstreamName: diag.name,
+        primaryDiagnostic: primaryFailure,
+      });
     }
     session.fallbackUsed = true;
     session.activeModelId = target;

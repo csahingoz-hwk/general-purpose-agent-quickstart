@@ -268,6 +268,27 @@ function stripJsonCodeFence(raw: string): string {
   return match ? (match[1]?.trim() ?? trimmed) : trimmed;
 }
 
+async function extractSafeCopilotErrorCode(res: Response): Promise<string> {
+  try {
+    const raw = await res.text();
+    const parsed = JSON.parse(raw) as {
+      code?: unknown;
+      error?: unknown;
+    };
+    for (const candidate of [parsed?.code, parsed?.error]) {
+      if (
+        typeof candidate === "string" &&
+        /^[A-Za-z0-9_.:-]{1,64}$/.test(candidate.trim())
+      ) {
+        return candidate.trim();
+      }
+    }
+  } catch {
+    /* Never inspect or surface raw upstream error text */
+  }
+  return `copilot_http_${res.status || 502}`;
+}
+
 export function createCopilotHaikuVmAdapter(deps?: {
   fetcher?: typeof fetch;
   relayUrl?: string;
@@ -285,7 +306,9 @@ export function createCopilotHaikuVmAdapter(deps?: {
     const { relayUrl, hmacSecret, copilotToken } = resolveBridgeConfig(deps);
     if (!relayUrl || hmacSecret.length < 16 || !copilotToken) {
       throw Object.assign(new Error("copilot_bridge_unconfigured"), {
+        name: "CopilotBridgeConfigError",
         statusCode: 503,
+        code: "copilot_bridge_unconfigured",
       });
     }
     const pathname = "/copilot/chat";
@@ -318,7 +341,9 @@ export function createCopilotHaikuVmAdapter(deps?: {
         throw err;
       }
       throw Object.assign(new Error("copilot_bridge_unreachable"), {
+        name: "CopilotBridgeNetworkError",
         statusCode: 504,
+        code: "copilot_bridge_unreachable",
       });
     }
   }
@@ -345,8 +370,11 @@ export function createCopilotHaikuVmAdapter(deps?: {
       const payload = buildCopilotTurnPayload(params, false, timeoutMs);
       const res = await postCopilotBridge(payload, params.abortSignal);
       if (!res.ok) {
+        const safeCode = await extractSafeCopilotErrorCode(res);
         throw Object.assign(new Error(`copilot_http_${res.status}`), {
+          name: "CopilotHttpError",
           statusCode: res.status || 502,
+          code: safeCode,
         });
       }
       const data = (await res.json()) as {
@@ -401,8 +429,13 @@ export function createCopilotHaikuVmAdapter(deps?: {
       const payload = buildCopilotTurnPayload(params, true, timeoutMs);
       const res = await postCopilotBridge(payload, params.abortSignal);
       if (!res.ok || !res.body) {
+        const safeCode = res.ok
+          ? "copilot_empty_stream"
+          : await extractSafeCopilotErrorCode(res);
         throw Object.assign(new Error(`copilot_http_${res.status}`), {
+          name: "CopilotHttpError",
           statusCode: res.status || 502,
+          code: safeCode,
         });
       }
 
